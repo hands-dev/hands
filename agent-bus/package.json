@@ -1,0 +1,26 @@
+{
+  "name": "agent-bus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Local stdio MCP server for cross-worktree Claude Code messaging (personal tool).",
+  "scripts": {
+    "start": "tsx src/server.ts",
+    "dashboard": "node dist/server.js serve",
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "check-types": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:watch": "vitest watch"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.25.2",
+    "zod": "4.3.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.14",
+    "tsx": "4.21.0",
+    "typescript": "^5.9.0",
+    "vitest": "^4.0.17"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.log
+# runtime message data — never commit (plaintext cross-worktree history)
+*.db
+*.db-shm
+*.db-wal
+*.notify
+*.last-compact
+*.last-utilization
