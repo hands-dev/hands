@@ -1,0 +1,18 @@
+---
+name: project_opt3_warm_engine_pool
+description: OPT-3 chat cold-attach fix — warm openclaw engine pool; epic ENG-1424; make-or-break + idle-footprint numbers.
+metadata: 
+  node_type: memory
+  type: project
+  originSessionId: a45d0fa5-735b-455c-bf0f-295134fdd2b5
+---
+
+Chat cold-attach is ~54s (staging p50, ENG-1389 host beats: host.exchange 0.18s + host.prepare_checkout/hydrate **0.38s** + host.engine_setup **~54s**). engine_setup = openclaw onboard + models set + ~13-17s `models status --probe`, ×3-4 serial CLI cold-starts — 100% andee-INDEPENDENT. Michael chose **Path A** (keep openclaw as the one runtime, fix via warm-pool + multi-tenancy). Epic **ENG-1424** (I own it), plan `.claude/plans/opt3-cross-andee-warm-serving-plan.md`.
+
+Make-or-break (front-loaded): literal cross-andee "hot-swap" (re-credential a USED resident engine A→B) = **NO-GO** — in-RAM reset can't meet the INN-205/206 bar (RAM not enumerable like a disk manifest; downgrades OS-process boundary to in-process correctness → memory-disclosure leak). Reframe that saves it: a POOL of pre-warmed **UNBOUND** engines; per andee grab-fresh → bind → serve → **teardown+wipe as today** → replenish. Same isolation, no new primitive. Children: ENG-1425 (a)[GATE 1] openclaw warmup/attach split — HELD on openclaw-repo access (Michael-owned, no fleet worktree reaches it); ENG-1426 (b) pool+bind-on-claim+routing (wt6, pool-only — affinity only saves 0.38s); ENG-1427 (c) attestation, YES-CONDITIONAL, blocked-by ENG-1425; ENG-1428 (d) capacity.
+
+Multi-tenancy blockers (a host is NOT N-safe today): singleton gateway (fixed loopback **port 18790**, per-service PrivateTmp, global tools) + shared engine HOME (/var/lib/ampersand-fleet-host/engine). wt3: per-task attestation re-scope is necessary-but-not-sufficient — its ACCEPTANCE needs per-tenant gateway+HOME (openclaw lane). So GATE-1 openclaw access is **doubly load-bearing** (latency fix AND attestation acceptance).
+
+MEASURED (live staging SSH, gcloud IAP, CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.12): idle openclaw runtime = **~330 MB RSS** (single gateway/harness Node proc; codex engine booted per-turn not resident; model = remote API, no weights). Active turn adds ~0.4-0.8GB actual (6GiB cgroup cap is a safety ceiling). e2-standard-2 = 7.9GiB/~$50/mo → **~15-20 mostly-idle pinned andees/host ≈ ~$3/andee/mo**. Pin-per-andee cost is FLAT per andee; fungible-pool scales with concurrent duty cycle (~10-20× cheaper at low concurrency). Crossover = andee duty cycle (needs wt5 activity data). **OUTCOME (07-30): epic bifurcated + PAUSED.** The ~54s LATENCY FIX turned out to be a small in-house diff (wt1's lane): the per-checkout onboard's ~54s is redundant CLI cold-start (gateway already persistent, config identity-neutral, turn uses cwd not --workspace), so re-pointing the warm gateway at the new workspace collapses it to ~1-2s — no pool/CRIU/hot-swap needed. ENG-1424 (the DENSITY track: warm pool + multi-tenancy for pin-vs-pool packing) is PAUSED as a future lever, fully designed. Big de-risk: multi-tenancy = N INDEPENDENT single-tenant stacks (each own systemd unit/PrivateTmp + private-overlay HOME from immutable baseline + own gateway port), NOT a multi-tenant gateway — dissolves the shared-surface attestation blocker (ENG-1427 closes on wt3's per-slot [1] re-scope alone). GATE-1/ENG-1425 shrank to "parameterize --gateway-port + per-instance HOME + one cheap re-point verb"; multi-tenant-gateway change DROPPED. Duty-cycle σ (pin-vs-pool decision) still blocked on staging DB pw.
+
+Relates [[project_host_span_beats_tracing]], [[architecture_agent_runtimes_model]], [[project_fleet_claim_longpoll_probecache]].

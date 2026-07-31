@@ -1,5 +1,8 @@
 # agent-bus workflow — foreman / worker setup
 
+> ⚠️ **Use BOOTSTRAP.md** as the authoritative step-by-step runbook (this file is a quicker overview; BOOTSTRAP.md has the correct hook events + memory/warp/auth steps).
+
+
 Bootstrap the multi-pane Claude Code orchestration (foreman + workers over a local
 message bus) on a fresh laptop. This repo holds the **mechanism**, not the runtime
 message data (that's regenerated locally).

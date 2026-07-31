@@ -1,0 +1,70 @@
+---
+# Ampersand Fleet — foreman and workers in SEPARATE windows.
+# Open via: Warp Command Palette -> "Launch Configuration" -> "Ampersand Fleet".
+#
+# Window 1: foreman alone (main checkout), Blue tab.
+# Window 2: the 6 workers in a 3-col x 2-row grid, Yellow tab
+#           (Warp tab colors are fixed ANSI — Red|Green|Yellow|Blue|Magenta|Cyan —
+#            so "orange" isn't available; Yellow is the closest. Tab color is
+#            per-TAB, not per-pane; per-worktree visual distinctness comes from
+#            each Claude Code instance's own color, set per worktree.)
+#   grid:  wt1 wt2 wt3   (top row)
+#          wt4 wt5 wt6   (bottom row)
+#
+# Warp can't set window position/size from a config, so the two windows open
+# wherever macOS places them — drag them to their monitors (or use a window
+# manager). active_window_index focuses the foreman window on launch.
+#
+# Each pane launches Claude Code in bypass-permissions mode and auto-submits its
+# loop command. `claude -n "<name>"` sets the session display name (shown in the
+# prompt box, /resume picker, and terminal title) so each Warp tab is identifiable.
+# Fresh sessions start a fresh agent-bus MCP, so they pick up the latest tools
+# automatically — no reconnect needed.
+name: Ampersand Fleet
+active_window_index: 0
+windows:
+  # ================= WINDOW 1 — FOREMAN (Blue) =================
+  - tabs:
+      - title: Foreman
+        color: blue
+        layout:
+          cwd: /Users/michaelphillips/Development/ampersand
+          commands:
+            - exec: 'claude -n "Foreman" --dangerously-skip-permissions "/loop /foreman"'
+  # ================= WINDOW 2 — WORKERS (Yellow) =================
+  # Outer split stacks two ROWS top/bottom (split_direction: horizontal);
+  # each row lays its three panes side-by-side as COLUMNS (split_direction:
+  # vertical). In Warp, `vertical` = a vertical divider = columns side-by-side;
+  # `horizontal` = a horizontal divider = rows stacked. (An earlier version had
+  # these inverted, which rendered a 2-col x 3-row grid instead of 3-col x 2-row.)
+  - tabs:
+      - title: Workers
+        color: yellow
+        layout:
+          split_direction: horizontal
+          panes:
+            # --- Top row: wt1 wt2 wt3 ---
+            - split_direction: vertical
+              panes:
+                - cwd: /Users/michaelphillips/Development/ampersand-worktree-1
+                  is_focused: true
+                  commands:
+                    - exec: 'claude -n "Alex" --dangerously-skip-permissions "/loop /worker"'
+                - cwd: /Users/michaelphillips/Development/ampersand-worktree-2
+                  commands:
+                    - exec: 'claude -n "Sam" --dangerously-skip-permissions "/loop /worker"'
+                - cwd: /Users/michaelphillips/Development/ampersand-worktree-3
+                  commands:
+                    - exec: 'claude -n "Jordan" --dangerously-skip-permissions "/loop /worker"'
+            # --- Bottom row: wt4 wt5 wt6 ---
+            - split_direction: vertical
+              panes:
+                - cwd: /Users/michaelphillips/Development/ampersand-worktree-4
+                  commands:
+                    - exec: 'claude -n "Riley" --dangerously-skip-permissions "/loop /worker"'
+                - cwd: /Users/michaelphillips/Development/ampersand-worktree-5
+                  commands:
+                    - exec: 'claude -n "Casey" --dangerously-skip-permissions "/loop /worker"'
+                - cwd: /Users/michaelphillips/Development/ampersand-worktree-6
+                  commands:
+                    - exec: 'claude -n "Taylor" --dangerously-skip-permissions "/loop /worker"'
