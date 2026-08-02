@@ -742,6 +742,93 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
   );
 
+  // --- foreman-directed scaling (spins up/retires local worker sessions) ---
+  // Registered ONLY for the foreman, and only when the config opts in — these
+  // launch local processes, so they're off unless explicitly enabled.
+  if (agentId === "foreman" && cfg.workers.allowForemanScaling) {
+    const presentPlans = (plans: import("./provision.js").LaunchPlan[]) =>
+      plans.map((p) => ({
+        id: p.id,
+        model: p.model,
+        launched: p.launched,
+        launcher: p.launcher,
+        // when not auto-launched, this is the command to hand to the principal
+        pasteCommand: p.launched ? undefined : p.command,
+      }));
+
+    server.registerTool(
+      "agent_bus_worker_add",
+      {
+        title: "Spin up more workers (foreman only)",
+        description:
+          "Provision and launch `count` new worker sessions for this repo. Use when the ranked " +
+          "priorities are under-staffed. Each worker appears on the board as worker-<n> once its " +
+          "session takes its first turn. If the launcher is manual, relay the pasteCommand to " +
+          `${principal} to start the pane.`,
+        inputSchema: { count: z.number().int().min(1).max(12).optional() },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        const { addWorkers } = await import("./provision.js");
+        try {
+          return asToolResult({ ok: true, added: presentPlans(addWorkers(input.count ?? 1)) });
+        } catch (err) {
+          return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
+        }
+      },
+    );
+
+    server.registerTool(
+      "agent_bus_worker_remove",
+      {
+        title: "Retire a worker (foreman only)",
+        description:
+          "Stop a worker's session and remove its managed workspace. Refuses if the worker has " +
+          "uncommitted work unless force:true. Idempotent.",
+        inputSchema: {
+          id: z.string().describe("worker-<n>"),
+          force: z.boolean().optional().describe("true = discard uncommitted work"),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        const { removeWorker } = await import("./provision.js");
+        try {
+          return asToolResult({ ok: true, ...removeWorker(input.id, { force: input.force }) });
+        } catch (err) {
+          return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
+        }
+      },
+    );
+
+    server.registerTool(
+      "agent_bus_scale",
+      {
+        title: "Scale the worker pool (foreman only)",
+        description:
+          "Reconcile the pool to exactly `target` workers — adds or retires as needed (highest " +
+          "index retired first; refuses to discard uncommitted work unless force:true).",
+        inputSchema: {
+          target: z.number().int().min(0).max(12),
+          force: z.boolean().optional(),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        const { scaleWorkers } = await import("./provision.js");
+        try {
+          const res = scaleWorkers(input.target, { force: input.force });
+          return asToolResult({ ok: true, added: presentPlans(res.added), removed: res.removed });
+        } catch (err) {
+          return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
+        }
+      },
+    );
+  }
+
   return server;
 }
 
