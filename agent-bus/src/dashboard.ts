@@ -247,6 +247,16 @@ export function dashboardHtml(principal: string): string {
       '</div>';
   }
 
+  // Wake accounting: each wake is one full model turn over the worker's whole
+  // context, so wakes/hour is the live cost dial. Amber past 6/h, red past 12/h.
+  function wakeBadge(w){
+    var h=w.wakesLastHour||0, d=w.wakes24h||0;
+    if(!h && !d) return '';
+    var style = h>=12? 'color:hsl(var(--destructive));border-color:hsl(var(--destructive))'
+              : h>=6?  'color:hsl(var(--warning));border-color:hsl(var(--warning))' : '';
+    return badge('badge-outline', h+' wakes/h · '+d+'/24h', style);
+  }
+
   function workerCell(s, w, collide){
     var prios=s.priorities||[];
     var cls='wcard'+(w.state==='offline'?' offline':'')+(collide[w.id]?' collide':'');
@@ -269,7 +279,7 @@ export function dashboardHtml(principal: string): string {
         '<span class="st">'+w.state+' '+age(s.now,w.lastActive)+'</span>'+
       '</div>'+
       taskHtml+
-      '<div class="wbot">'+ptag+(w.branch?'<span class="branch mono">'+esc(w.branch)+'</span>':'')+'</div>'+
+      '<div class="wbot">'+ptag+wakeBadge(w)+(w.branch?'<span class="branch mono">'+esc(w.branch)+'</span>':'')+'</div>'+
     '</div>';
   }
 

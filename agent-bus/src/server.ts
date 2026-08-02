@@ -55,6 +55,13 @@ function presentMessage(row: MessageRow) {
 export function buildServer(store: Store, agentId: string, config?: AgentBusConfig): McpServer {
   const cfg = config ?? loadConfig();
   const principal = cfg.principal.name;
+  // Deliver a real wake: append .notify lines AND log them (wake accounting).
+  // Every actual wake goes through here so wakesLastHour on the board stays true.
+  const deliverWake = (recipients: readonly string[], meta: { from: string; subject?: string | null }) => {
+    notify(recipients, meta);
+    store.recordWakes(recipients);
+    store.markWakePending(recipients);
+  };
   const server = new McpServer(
     { name: "agent-bus", version: "0.1.0" },
     {
@@ -147,8 +154,8 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       //  - pending-wake suppression → recipient is already behind, so a wake is
       //    already outstanding and one drain returns everything anyway.
       const wake = input.wake ?? true;
-      const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r, id)) : [];
-      if (woken.length > 0) notify(woken, { from: agentId, subject: input.subject ?? null });
+      const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
+      if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
       return asToolResult({
         ok: true,
         id,
@@ -178,6 +185,9 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       const markRead = input.mark_read ?? true;
       const deadline = Date.now() + waitSeconds * 1000;
       const cursor = store.getCursor(agentId);
+      // Clear the pending-wake flag BEFORE reading: a send racing this drain
+      // then wakes afresh (at worst one redundant wake, never a lost one).
+      if (markRead) store.clearWakePending(agentId);
 
       let messages: MessageRow[] = [];
       // Long-poll: return as soon as something lands, else give up at the deadline.
@@ -270,6 +280,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     async (input) => {
       store.touch(agentId);
       const now = Date.now();
+      const wakes = store.wakeCounts(now);
       const peers = store.listPeers(now).map((p) => {
         const activeAge = p.last_active ? now - p.last_active : null;
         return {
@@ -279,6 +290,10 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
           branch: p.branch ?? undefined,
           state: activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle",
           lastActive: p.last_active ? new Date(p.last_active).toISOString() : undefined,
+          // wake accounting: each wake re-processes this agent's whole context,
+          // so cost ≈ wakes × context size. Spot the chatty hotspots here.
+          wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
+          wakes24h: wakes.get(p.id)?.last24h ?? 0,
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -349,7 +364,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     async (input) => {
       store.touch(agentId);
       const id = store.askQuestion({ asker: agentId, question: input.question, context: input.context ?? null });
-      notify(["foreman"], { from: agentId, subject: "question" });
+      deliverWake(["foreman"], { from: agentId, subject: "question" });
       return asToolResult({ ok: true, id, routedTo: "foreman" });
     },
   );
@@ -413,7 +428,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         resolvedBy: input.by ?? "foreman",
         priorityRef: input.priority ?? null,
       });
-      notify([q.asker], { from: "foreman", subject: "answer" });
+      deliverWake([q.asker], { from: "foreman", subject: "answer" });
       return asToolResult({ ok: true, id: input.id, asker: q.asker });
     },
   );
@@ -550,7 +565,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         body: input.body ?? null,
         priority: input.priority ?? null,
       });
-      if (assignee) notify([assignee], { from: agentId, subject: "task" });
+      if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
       return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue" });
     },
   );
@@ -622,7 +637,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         result: input.result ?? null,
       });
       if (input.state === "returned") {
-        notify([task.created_by], { from: agentId, subject: "task returned" });
+        deliverWake([task.created_by], { from: agentId, subject: "task returned" });
       }
       return asToolResult({ ok: true, id: input.id, state: input.state });
     },

@@ -158,3 +158,49 @@ describe("board stateHash + full bundle", () => {
     expect(computeStateHash(store, now)).toBe(computeStateHash(store, now));
   });
 });
+
+describe("wake accounting (wake_log)", () => {
+  it("counts real wakes only — not wake:false, not suppressed bursts", async () => {
+    const foreman = await connect("foreman");
+    const store = stores[0]!;
+    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
+
+    // 2 FYIs → zero wakes recorded
+    await call(foreman, "agent_bus_send", { to: "worker-1", body: "fyi 1", wake: false });
+    await call(foreman, "agent_bus_send", { to: "worker-1", body: "fyi 2", wake: false });
+    expect(store.wakeCounts().get("worker-1")).toBeUndefined();
+
+    // a 3-message burst → exactly 1 wake (suppression collapses the rest)
+    await call(foreman, "agent_bus_send", { to: "worker-1", body: "real 1" });
+    await call(foreman, "agent_bus_send", { to: "worker-1", body: "real 2" });
+    await call(foreman, "agent_bus_send", { to: "worker-1", body: "real 3" });
+    expect(store.wakeCounts().get("worker-1")).toMatchObject({ lastHour: 1, last24h: 1 });
+
+    // drain, then another waking send → 2 total
+    const w1 = await connect("worker-1");
+    await call(w1, "agent_bus_receive", { wait_seconds: 0 });
+    await call(foreman, "agent_bus_send", { to: "worker-1", body: "again" });
+    expect(store.wakeCounts().get("worker-1")).toMatchObject({ lastHour: 2, last24h: 2 });
+  });
+
+  it("surfaces wakesLastHour on the board and counts delegation wakes", async () => {
+    const foreman = await connect("foreman");
+    const store = stores[0]!;
+    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
+    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "worker-1" });
+    const board = await call(foreman, "agent_bus_board", {});
+    const w1 = (board.body.peers as Array<{ id: string; wakesLastHour: number }>).find(
+      (p) => p.id === "worker-1",
+    );
+    expect(w1?.wakesLastHour).toBe(1);
+  });
+
+  it("prunes wake_log rows older than 24h", () => {
+    const store = new Store({ env });
+    stores.push(store);
+    const now = Date.now();
+    store.recordWakes(["worker-1"], now - 25 * 60 * 60_000);
+    store.recordWakes(["worker-1"], now); // triggers the opportunistic prune
+    expect(store.wakeCounts(now).get("worker-1")).toMatchObject({ lastHour: 1, last24h: 1 });
+  });
+});

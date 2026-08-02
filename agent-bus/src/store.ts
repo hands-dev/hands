@@ -318,6 +318,16 @@ export class Store {
         ON todos (dedup_key) WHERE state = 'open' AND dedup_key IS NOT NULL;
     `);
 
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS wake_log (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id   TEXT NOT NULL,
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_wake_log_agent ON wake_log (agent_id, created_at);
+    `);
+
     // Additive columns on agents (safe to run against a pre-Phase-1 DB).
     this.ensureColumn("agents", "branch", "TEXT");
     this.ensureColumn("agents", "activity", "TEXT");
@@ -428,23 +438,25 @@ export class Store {
   }
 
   /**
-   * True when `agentId` already has an undrained message OLDER than `beforeId`
-   * (directed or broadcast, not their own). Used for redundant-wake
-   * suppression: if a recipient is already behind, a wake is already pending —
-   * one drain returns everything — so the sender can skip the `.notify` append.
+   * Redundant-wake suppression state. A recipient with an OUTSTANDING `.notify`
+   * wake (delivered but not yet drained) doesn't need another — one drain
+   * returns everything. Tracked as an explicit flag (not "any undrained
+   * message") so silent `wake:false` FYIs never mask a real wake: only an
+   * actual notify sets it, and only a drain clears it.
+   *
+   * The drain clears the flag BEFORE reading messages, so a send racing the
+   * drain can at worst cause one redundant wake — never a lost one.
    */
-  hasPendingWake(agentId: string, beforeId: number): boolean {
-    const cursor = this.getCursor(agentId);
-    const row = this.db
-      .prepare(
-        `SELECT 1 AS x FROM messages
-         WHERE (to_id = ? OR to_id IS NULL)
-           AND from_id != ?
-           AND id > ? AND id < ?
-         LIMIT 1`,
-      )
-      .get(agentId, agentId, cursor, beforeId) as { x: number } | undefined;
-    return row !== undefined;
+  hasPendingWake(agentId: string): boolean {
+    return this.getWatermark(agentId, "wake_pending") === "1";
+  }
+
+  markWakePending(agentIds: readonly string[]): void {
+    for (const id of agentIds) this.setWatermark(id, "wake_pending", "1");
+  }
+
+  clearWakePending(agentId: string): void {
+    this.setWatermark(agentId, "wake_pending", "0");
   }
 
   getCursor(agentId: string): number {
@@ -564,6 +576,41 @@ export class Store {
     return this.db
       .prepare("SELECT * FROM journal WHERE created_at > ? ORDER BY created_at ASC, id ASC LIMIT ?")
       .all(since, Math.max(1, Math.min(limit, 200))) as unknown as JournalRow[];
+  }
+
+  // --- wake accounting (observability only — no caps, no throttling) ---
+
+  /**
+   * Record that a real wake (`.notify` append) was just delivered to each
+   * agent. Suppressed/`wake:false` notifies are NOT recorded — the log counts
+   * actual model wakes, the thing that costs a full context turn. Prunes rows
+   * older than ~24h opportunistically to keep the table tiny.
+   */
+  recordWakes(agentIds: readonly string[], now: number = Date.now()): void {
+    if (agentIds.length === 0) return;
+    this.withRetry(() => {
+      const stmt = this.db.prepare("INSERT INTO wake_log (agent_id, created_at) VALUES (?, ?)");
+      for (const id of agentIds) stmt.run(id, now);
+      this.db.prepare("DELETE FROM wake_log WHERE created_at < ?").run(now - 24 * 60 * 60_000);
+    });
+  }
+
+  /** Per-agent wake counts over the trailing hour and 24h. */
+  wakeCounts(now: number = Date.now()): Map<string, { lastHour: number; last24h: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT agent_id,
+                SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END) AS hour,
+                COUNT(*) AS day
+         FROM wake_log WHERE created_at > ?
+         GROUP BY agent_id`,
+      )
+      .all(now - 60 * 60_000, now - 24 * 60 * 60_000) as unknown as Array<{
+      agent_id: string;
+      hour: number;
+      day: number;
+    }>;
+    return new Map(rows.map((r) => [r.agent_id, { lastHour: Number(r.hour), last24h: Number(r.day) }]));
   }
 
   getWatermark(agentId: string, key: string): string | null {
