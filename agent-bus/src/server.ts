@@ -20,7 +20,7 @@ import { z } from "zod";
 import { buildBoard, IDLE_THRESHOLD_MS } from "./board.js";
 import { type AgentBusConfig, loadConfig } from "./config.js";
 import { pollGithub } from "./github.js";
-import { resolveAgentId, resolveAgentRef } from "./identity.js";
+import { isWorker, resolveAgentId, resolveAgentRef } from "./identity.js";
 import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
@@ -98,9 +98,34 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
     async (input) => {
       store.touch(agentId);
-      // Names/labels resolve to the canonical routing id before we touch storage.
       const to = resolveAgentRef(input.to);
       const broadcast = to === "*";
+      // Strict hub-and-spoke: a worker may only address the foreman or the
+      // principal. Rejected BEFORE any DB write or notify — a blocked send
+      // must never wake anyone (that's the whole point of the topology).
+      if (cfg.topology === "strict-hub" && isWorker(agentId)) {
+        if (broadcast) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error:
+                "Only the foreman may broadcast. Send to the foreman instead — it relays what the team needs.",
+            }),
+            isError: true,
+          };
+        }
+        if (isWorker(to)) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error:
+                "Direct worker-to-worker messaging is disabled. Route via the foreman — use agent_bus_ask " +
+                "for a decision, or agent_bus_send({to:'foreman'}) for a handoff.",
+            }),
+            isError: true,
+          };
+        }
+      }
       const id = store.insertMessage({
         from: agentId,
         to: broadcast ? null : to,
@@ -448,7 +473,18 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
     async (input) => {
       store.touch(agentId);
-      // Names/labels resolve to the canonical routing id before we touch storage.
+      // Strict hub-and-spoke: delegation flows downward from the hub only.
+      if (cfg.topology === "strict-hub" && isWorker(agentId)) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error:
+              "Workers don't delegate tasks. Hand work upward instead: agent_bus_ask for a decision, or " +
+              "agent_bus_send({to:'foreman'}) to propose the task — the foreman delegates it.",
+          }),
+          isError: true,
+        };
+      }
       const assignee = input.to ? resolveAgentRef(input.to) : null;
       const id = store.createTask({
         createdBy: agentId,
