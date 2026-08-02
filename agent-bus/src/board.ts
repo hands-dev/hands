@@ -1,5 +1,4 @@
 import * as path from "node:path";
-import { displayName } from "./identity.js";
 import { type JournalRow, type Peer, Store } from "./store.js";
 
 /** Past this much silence (but still online), a peer reads as "idle" not "active". */
@@ -67,9 +66,9 @@ export function buildBoard(
     const a = parseFiles(p.activity);
     const sharedFile = a.files.find((f) => myFiles.has(f));
     if (sharedFile) {
-      collisionLines.push(`⚠ ${displayName(p.id)} also touching ${path.basename(sharedFile)}`);
+      collisionLines.push(`⚠ ${p.id} also touching ${path.basename(sharedFile)}`);
     } else if (mine.ticket && a.ticket === mine.ticket) {
-      collisionLines.push(`⚠ ${displayName(p.id)} also on ${mine.ticket}`);
+      collisionLines.push(`⚠ ${p.id} also on ${mine.ticket}`);
     }
   }
 
@@ -138,7 +137,7 @@ export function buildBoard(
   for (const msg of shownMsgs) {
     const to = msg.to_id === null ? "all" : "you";
     const subject = msg.subject ? `${msg.subject} — ` : "";
-    lines.push(`  ✉ ${displayName(msg.from_id)} → ${to}: ${subject}${msg.body}`);
+    lines.push(`  ✉ ${msg.from_id} → ${to}: ${subject}${msg.body}`);
   }
   if (inbox.length > MAX_MSGS) {
     lines.push(`  ✉ (+${inbox.length - MAX_MSGS} earlier — agent_bus_history)`);
@@ -148,20 +147,20 @@ export function buildBoard(
     lines.push(`  ✔ foreman answered "${q.question}" → ${q.answer}`);
   }
   for (const q of openForForeman) {
-    lines.push(`  ? ${displayName(q.asker)} asks: "${q.question}" — adjudicate or escalate`);
+    lines.push(`  ? ${q.asker} asks: "${q.question}" — adjudicate or escalate`);
   }
   for (const t of assignedToMe) {
-    lines.push(`  📋 ${displayName(t.created_by)} delegated: "${t.title}" — start with agent_bus_task_update`);
+    lines.push(`  📋 ${t.created_by} delegated: "${t.title}" — start with agent_bus_task_update`);
   }
   for (const t of returnedToMe) {
-    lines.push(`  📋 ${displayName(t.assignee ?? "")} returned: "${t.title}" — review it`);
+    lines.push(`  📋 ${t.assignee ?? ""} returned: "${t.title}" — review it`);
   }
   if (journal.length > 0) {
     const items = journal
       .slice(-6)
       .map((j) => {
         const verb = VERB[j.kind] ?? j.kind;
-        const who = j.kind === "memory" ? "memory" : displayName(j.agent_id);
+        const who = j.kind === "memory" ? "memory" : j.agent_id;
         return `${who} ${verb} "${j.text}" (${fmtAge(now - j.created_at)})`;
       })
       .join("; ");
@@ -180,7 +179,7 @@ export function buildBoard(
 function peerLabel(p: Peer, now: number): string {
   const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
   const where = p.branch ?? "?";
-  const who = displayName(p.id);
+  const who = p.id;
   if (!p.online) return `${who}·offline`;
   if (activeAge > IDLE_THRESHOLD_MS) return `${who}·idle ${fmtAge(activeAge)}·${where}`;
   return `${who}·${where}`;

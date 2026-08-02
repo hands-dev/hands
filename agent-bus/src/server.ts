@@ -1,13 +1,14 @@
 #!/usr/bin/env tsx
 /**
- * agent-bus — a local stdio MCP coordination server for cross-worktree Claude
- * Code messaging (INN-239).
+ * agent-bus — a local stdio MCP coordination server for foreman/worker Claude
+ * Code messaging.
  *
- * One process per Claude Code instance, all pointed at a shared SQLite DB at
- * `~/.claude/coordination/agent-bus.db` (WAL). No daemon — the DB file is the
- * single source of truth. Identity is derived at runtime from the cwd (the
- * `.mcp.json` entry is committed and shared across every worktree), so each
- * worktree's process auto-registers under its own `wt<n>` id.
+ * One process per Claude Code instance. State is a shared SQLite DB (WAL) under
+ * `~/.claude/coordination/<repo-slug>/agent-bus.db` — auto-scoped per git repo,
+ * so two projects on one machine never share a bus. No daemon — the DB file is
+ * the single source of truth. Identity is derived at runtime from env + cwd
+ * (the MCP registration is shared machine-wide): the repo's main checkout is
+ * `foreman`, provisioned workers are `worker-<n>`.
  *
  * Known limitation: MCP cannot wake an idle interactive Claude Code. Delivery
  * is: the model calls `agent_bus_receive` at natural checkpoints (optionally a
@@ -17,9 +18,11 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { buildBoard, IDLE_THRESHOLD_MS } from "./board.js";
+import { type AgentBusConfig, loadConfig } from "./config.js";
 import { pollGithub } from "./github.js";
-import { displayName, pronounsFor, resolveAgentId, resolveAgentRef } from "./identity.js";
+import { resolveAgentId, resolveAgentRef } from "./identity.js";
 import { notify } from "./notify.js";
+import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
 import { type MessageRow, Store } from "./store.js";
@@ -40,11 +43,8 @@ function asToolResult(value: unknown) {
 function presentMessage(row: MessageRow) {
   return {
     id: row.id,
-    // Human-facing display name; the raw routing ids stay on *Id for programmatic use.
-    from: displayName(row.from_id),
-    fromId: row.from_id,
-    to: row.to_id ? displayName(row.to_id) : "*",
-    toId: row.to_id ?? "*",
+    from: row.from_id,
+    to: row.to_id ?? "*",
     subject: row.subject ?? undefined,
     body: row.body,
     thread: row.thread_id ?? undefined,
@@ -52,28 +52,30 @@ function presentMessage(row: MessageRow) {
   };
 }
 
-export function buildServer(store: Store, agentId: string): McpServer {
+export function buildServer(store: Store, agentId: string, config?: AgentBusConfig): McpServer {
+  const cfg = config ?? loadConfig();
+  const principal = cfg.principal.name;
   const server = new McpServer(
     { name: "agent-bus", version: "0.1.0" },
     {
       instructions:
-        `Cross-worktree message bus. You are agent "${displayName(agentId)}" (${pronounsFor(agentId)}). ` +
-        "Refer to teammates by name and their stated pronouns (see agent_bus_peers). Use agent_bus_peers to " +
-        "discover other worktrees, agent_bus_send to message one (or \"*\" to broadcast), and " +
+        `Per-repo agent message bus. You are agent "${agentId}". ` +
+        "Refer to teammates by their canonical id (foreman, worker-1, …; see agent_bus_peers). " +
+        "Use agent_bus_peers to discover the team, agent_bus_send to message one, and " +
         "agent_bus_receive to read messages addressed to you. Call agent_bus_receive at natural " +
         "checkpoints — MCP cannot wake you unprompted. Never put secrets in message bodies (the " +
         "shared DB stores them in plaintext). When you hit an open question or decision you can't " +
         "resolve alone, escalate it with agent_bus_ask — the foreman (the main checkout) adjudicates " +
-        "against the day's priorities or bubbles it to Michael. When a PR is ready to merge, ask the " +
+        `against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the ` +
         "foreman for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) " +
         "call rather than deciding it yourself." +
         (agentId === "foreman"
           ? " You ARE the foreman / command center: run agent_bus_questions to see open questions, " +
             "agent_bus_priorities to read/set the ranked priorities, agent_bus_answer to resolve, " +
-            "agent_bus_escalate to bubble one up to Michael. You also self-manage Michael's personal " +
-            "to-do list: agent_bus_todo_add concrete things only he can do (idempotent via dedupKey), " +
+            `agent_bus_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal ` +
+            "to-do list: agent_bus_todo_add concrete things only they can do (idempotent via dedupKey), " +
             "and agent_bus_todo_update state='done' with a doneSignal when a strong signal (merged PR, " +
-            "commit, memory write, answered escalation) shows he finished one."
+            "commit, memory write, answered escalation) shows they finished one."
           : ""),
     },
   );
@@ -81,13 +83,13 @@ export function buildServer(store: Store, agentId: string): McpServer {
   server.registerTool(
     "agent_bus_send",
     {
-      title: "Send a message to another worktree",
+      title: "Send a message to another agent",
       description:
-        'Enqueue a message to another Claude Code worktree. `to` is a peer agent id (see ' +
-        'agent_bus_peers), a human name ("Riley" or "Riley (wt4)"), or "*" to broadcast to ' +
-        "everyone. Do not include secrets.",
+        "Enqueue a message to another agent on this repo's bus. `to` is a peer agent id " +
+        `(foreman, worker-2, … — see agent_bus_peers), the principal ("${principal}"), or "*" to ` +
+        "broadcast to everyone. Do not include secrets.",
       inputSchema: {
-        to: z.string().describe('recipient agent id or human name, or "*" for broadcast'),
+        to: z.string().describe('recipient agent id, or "*" for broadcast'),
         body: z.string(),
         subject: z.string().optional(),
         thread: z.string().optional(),
@@ -169,20 +171,13 @@ export function buildServer(store: Store, agentId: string): McpServer {
       store.touch(agentId);
       const peers = store.listPeers().map((p) => ({
         id: p.id,
-        name: displayName(p.id),
-        pronouns: pronounsFor(p.id),
         online: p.online,
         cwd: p.cwd,
         pid: p.pid,
         lastSeenAt: new Date(p.last_seen_at).toISOString(),
         isSelf: p.id === agentId,
       }));
-      return asToolResult({
-        me: agentId,
-        meName: displayName(agentId),
-        mePronouns: pronounsFor(agentId),
-        peers,
-      });
+      return asToolResult({ me: agentId, peers });
     },
   );
 
@@ -229,8 +224,6 @@ export function buildServer(store: Store, agentId: string): McpServer {
         const activeAge = p.last_active ? now - p.last_active : null;
         return {
           id: p.id,
-          name: displayName(p.id),
-          pronouns: pronounsFor(p.id),
           isSelf: p.id === agentId,
           online: p.online,
           branch: p.branch ?? undefined,
@@ -239,8 +232,7 @@ export function buildServer(store: Store, agentId: string): McpServer {
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
-        by: displayName(j.agent_id),
-        byId: j.agent_id,
+        by: j.agent_id,
         kind: j.kind,
         text: j.text,
         at: new Date(j.created_at).toISOString(),
@@ -249,7 +241,6 @@ export function buildServer(store: Store, agentId: string): McpServer {
       const board = buildBoard(store, { agentId, since: now, advance: false, now });
       return asToolResult({
         me: agentId,
-        meName: displayName(agentId),
         peers,
         recentJournal: journal,
         collisions: board.collisions,
@@ -265,7 +256,7 @@ export function buildServer(store: Store, agentId: string): McpServer {
       title: "Escalate an open question to the foreman",
       description:
         "Raise an open question or decision you can't resolve alone. The foreman (main checkout) " +
-        "adjudicates against the day's priorities or bubbles it up to Michael. Include enough " +
+        `adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough ` +
         "context to decide; propose options if you have them.",
       inputSchema: {
         question: z.string(),
@@ -321,7 +312,7 @@ export function buildServer(store: Store, agentId: string): McpServer {
       title: "Answer a question (resolve it)",
       description:
         "Resolve a question and route the answer back to the asker. Set by='human' when relaying " +
-        "Michael's decision, 'foreman' when you auto-resolved it. Cite which priority it mapped to.",
+        `${principal}'s decision, 'foreman' when you auto-resolved it. Cite which priority it mapped to.`,
       inputSchema: {
         id: z.number().int(),
         answer: z.string(),
@@ -348,9 +339,9 @@ export function buildServer(store: Store, agentId: string): McpServer {
   server.registerTool(
     "agent_bus_escalate",
     {
-      title: "Bubble a question up to Michael",
+      title: "Bubble a question up to the principal",
       description:
-        "Mark a question as needing Michael's decision (shows in the dashboard 'Needs you' lane). " +
+        `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). ` +
         "Include your recommendation and the priority it touches. Then present it to him and, once " +
         "he decides, call agent_bus_answer with by='human'.",
       inputSchema: {
@@ -378,12 +369,12 @@ export function buildServer(store: Store, agentId: string): McpServer {
     {
       title: "Record a recommendation's hindsight outcome (foreman self-audit)",
       description:
-        "Leo's introspection. After one of your recommendations has played out, record whether it " +
+        "The foreman's introspection. After one of your recommendations has played out, record whether it " +
         "HELD UP ('validated') or was OVERTURNED by a later finding ('contradicted'), with a short " +
-        "reason. This grades YOUR OWN judgment in hindsight — not whether Michael accepted the advice " +
+        `reason. This grades YOUR OWN judgment in hindsight — not whether ${principal} accepted the advice ` +
         "— and feeds the foreman-effectiveness score on the dashboard. Run it as part of your routine: " +
         "revisit recent recommendations, and when a worker's later finding overturns a call you made, " +
-        "mark it 'contradicted' honestly (that is the signal Michael wants to see degrade the score).",
+        `mark it 'contradicted' honestly (that is the signal ${principal} wants to see degrade the score).`,
       inputSchema: {
         id: z.number().int().describe("the question/recommendation id to grade"),
         outcome: z.enum(["validated", "contradicted"]),
@@ -407,7 +398,7 @@ export function buildServer(store: Store, agentId: string): McpServer {
       description:
         "No args: read the current ranked priorities (+ whether they're stale/unset). Pass `set` to " +
         "replace them (ranked, most-important first). Pass confirm=true to mark the existing list " +
-        "still-current. If items is empty/unset, ask Michael for today's priorities.",
+        `still-current. If items is empty/unset, ask ${principal} for today's priorities.`,
       inputSchema: {
         set: z.array(z.string()).optional(),
         confirm: z.boolean().optional(),
@@ -442,10 +433,10 @@ export function buildServer(store: Store, agentId: string): McpServer {
   server.registerTool(
     "agent_bus_delegate",
     {
-      title: "Delegate a task to a worktree",
+      title: "Delegate a task to a worker",
       description:
-        "Hand a unit of real work to a worktree (foreman use). `to` = a worktree agent id or human " +
-        'name ("Riley" or "Riley (wt4)"), or omit for the unassigned queue ("any available WT"). The ' +
+        "Hand a unit of real work to a worker (foreman use). `to` = a worker agent id " +
+        '(worker-1, worker-2, …), or omit for the unassigned queue ("any available worker"). The ' +
         "first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.",
       inputSchema: {
         title: z.string(),
@@ -544,14 +535,14 @@ export function buildServer(store: Store, agentId: string): McpServer {
     },
   );
 
-  // --- todos (foreman-managed personal to-do list for Michael) ---
+  // --- todos (foreman-managed personal to-do list for the principal) ---
 
   server.registerTool(
     "agent_bus_todos",
     {
-      title: "Read Michael's to-do list",
+      title: "Read the principal's to-do list",
       description:
-        "List the personal to-do items the foreman is tracking for Michael. No args: everything " +
+        `List the personal to-do items the foreman is tracking for ${principal}. No args: everything ` +
         "(open first). Pass state to filter: open | done | dismissed. Read-only — the foreman " +
         "manages the list via agent_bus_todo_add / agent_bus_todo_update.",
       inputSchema: {
@@ -587,9 +578,9 @@ export function buildServer(store: Store, agentId: string): McpServer {
   server.registerTool(
     "agent_bus_todo_add",
     {
-      title: "Add an item to Michael's to-do list",
+      title: "Add an item to the principal's to-do list",
       description:
-        "Add a concrete thing only Michael can personally do (a decision, a merge/review click, a " +
+        `Add a concrete thing only ${principal} can personally do (a decision, a merge/review click, a ` +
         "reply he owes) to his to-do list. Foreman-managed. Idempotent while open: pass a stable " +
         "`dedupKey` (e.g. the PR#, question id, or a normalized title) so re-deriving the same item " +
         "each pass never duplicates it — an existing open match is returned untouched. Set " +
@@ -646,8 +637,35 @@ export function buildServer(store: Store, agentId: string): McpServer {
   return server;
 }
 
+/** Resolve this process's agent id (config foreman.basename included). */
+function resolveSelf(): string {
+  return resolveAgentId({ foremanBasename: loadConfig().foreman.basename });
+}
+
 function runCli(subcommand: string, argv: string[]): number {
-  const agentId = resolveAgentId();
+  if (subcommand === "paths") {
+    // Debug: where does this cwd resolve? (isolation check — no DB touch)
+    const info = repoInfo();
+    const agentId = resolveSelf();
+    process.stdout.write(
+      `${JSON.stringify(
+        {
+          cwd: process.cwd(),
+          agentId,
+          repoRoot: info?.repoRoot ?? null,
+          isMainWorktree: info?.isMainWorktree ?? null,
+          slug: info?.slug ?? "_global",
+          coordinationDir: coordinationDir(),
+          db: dbPath(),
+          notify: notifyPath(agentId),
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    return 0;
+  }
+  const agentId = resolveSelf();
   const store = new Store();
   try {
     if (subcommand === "publish") {
@@ -682,7 +700,12 @@ function runCli(subcommand: string, argv: string[]): number {
 
 async function main(): Promise<void> {
   const subcommand = process.argv[2];
-  if (subcommand === "publish" || subcommand === "board" || subcommand === "gh-poll") {
+  if (
+    subcommand === "publish" ||
+    subcommand === "board" ||
+    subcommand === "gh-poll" ||
+    subcommand === "paths"
+  ) {
     process.exit(runCli(subcommand, process.argv.slice(3)));
   }
   if (subcommand === "serve") {
@@ -699,7 +722,7 @@ async function main(): Promise<void> {
     }
     return; // the http server keeps the process alive
   }
-  const agentId = resolveAgentId();
+  const agentId = resolveSelf();
   const store = new Store();
   store.registerAgent({ id: agentId, cwd: process.cwd(), pid: process.pid });
   const server = buildServer(store, agentId);

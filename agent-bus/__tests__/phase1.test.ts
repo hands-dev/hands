@@ -151,7 +151,7 @@ describe("buildBoard", () => {
     const res = buildBoard(store, { agentId: "wt1", since: now - 120_000, advance: false, now });
     expect(res.journalCount).toBe(1);
     expect(res.collisions).toBe(1);
-    expect(res.text).toContain("Toby (wt2) committed");
+    expect(res.text).toContain("wt2 committed");
     expect(res.text).toContain("also touching store.ts");
     store.close();
   });

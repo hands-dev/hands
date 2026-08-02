@@ -52,7 +52,7 @@ export interface SnapshotQuestion {
   resolvedBy: string | null;
   recommendation: string | null;
   priority: string | null;
-  /** Leo's hindsight self-audit: "validated" | "contradicted" | null (unassessed) */
+  /** foreman hindsight self-audit: "validated" | "contradicted" | null (unassessed) */
   outcome: string | null;
   outcomeNote: string | null;
   outcomeAt: number | null;

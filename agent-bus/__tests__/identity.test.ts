@@ -1,18 +1,25 @@
-import { describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentIdFromArgv,
-  displayName,
   indexFromDirName,
+  isForeman,
+  isWorker,
   resolveAgentId,
   resolveAgentRef,
 } from "../src/identity.js";
+import { repoInfo, resetRepoInfoCache } from "../src/paths.js";
 
 describe("indexFromDirName", () => {
-  it("parses the worktree-N convention", () => {
-    expect(indexFromDirName("/Users/x/Development/ampersand-worktree-4")).toBe(4);
+  it("parses the managed worker-<n> dirs", () => {
+    expect(indexFromDirName("/Users/x/.agent-bus/worktrees/repo-abc/worker-3")).toBe(3);
   });
 
-  it("parses the -wtN convention", () => {
+  it("parses the legacy worktree-N / -wtN conventions", () => {
+    expect(indexFromDirName("/Users/x/Development/ampersand-worktree-4")).toBe(4);
     expect(indexFromDirName("/tmp/thing-wt2")).toBe(2);
   });
 
@@ -37,7 +44,19 @@ describe("agentIdFromArgv", () => {
   });
 });
 
-describe("resolveAgentId precedence", () => {
+describe("isWorker / isForeman", () => {
+  it("classifies canonical ids", () => {
+    expect(isWorker("worker-1")).toBe(true);
+    expect(isWorker("worker-12")).toBe(true);
+    expect(isWorker("foreman")).toBe(false);
+    expect(isWorker("wt4")).toBe(false);
+    expect(isWorker("Michael")).toBe(false);
+    expect(isForeman("foreman")).toBe(true);
+    expect(isForeman("worker-1")).toBe(false);
+  });
+});
+
+describe("resolveAgentId precedence (non-git cwds)", () => {
   const base = { cwd: "/Users/x/Development/ampersand-worktree-4", argv: ["node", "s"] as string[] };
 
   it("prefers AGENT_BUS_ID env", () => {
@@ -50,61 +69,82 @@ describe("resolveAgentId precedence", () => {
     );
   });
 
-  it("derives wt<n> from the cwd basename", () => {
-    expect(resolveAgentId({ ...base, env: {} })).toBe("wt4");
+  it("derives worker-<n> from the cwd basename", () => {
+    expect(resolveAgentId({ ...base, env: {} })).toBe("worker-4");
   });
 
-  it("resolves the main checkout to the foreman", () => {
-    expect(resolveAgentId({ cwd: "/Users/x/Development/ampersand", env: {}, argv: ["node", "s"] })).toBe(
-      "foreman",
-    );
+  it("honours the foreman-basename override (env and option)", () => {
+    expect(
+      resolveAgentId({
+        cwd: "/Users/x/Development/ampersand",
+        env: { AGENT_BUS_FOREMAN_BASENAME: "ampersand" },
+        argv: ["node", "s"],
+      }),
+    ).toBe("foreman");
+    expect(
+      resolveAgentId({
+        cwd: "/Users/x/Development/ampersand",
+        env: {},
+        argv: ["node", "s"],
+        foremanBasename: "ampersand",
+      }),
+    ).toBe("foreman");
   });
 
-  it("uses the basename for any other non-worktree dir", () => {
+  it("uses the basename for any other non-worker dir", () => {
     expect(resolveAgentId({ cwd: "/Users/x/Development/some-tool", env: {}, argv: ["node", "s"] })).toBe(
       "some-tool",
     );
   });
 });
 
-describe("displayName (presentation layer)", () => {
-  it("decorates a mapped worktree id with its human name", () => {
-    expect(displayName("wt4")).toBe("C.J. (wt4)");
-    expect(displayName("wt1")).toBe("Josh (wt1)");
-    expect(displayName("foreman")).toBe("Leo (foreman)");
+describe("resolveAgentId in a real repo (main-worktree autodetect)", () => {
+  let root: string;
+  let main: string;
+  let linked: string;
+
+  beforeAll(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "agent-bus-idrepo-"));
+    main = path.join(root, "myproj");
+    fs.mkdirSync(main);
+    const git = (cwd: string, args: string[]) =>
+      execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    git(main, ["init", "-q", "-b", "main"]);
+    git(main, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"]);
+    linked = path.join(root, "myproj-feature");
+    git(main, ["worktree", "add", "-q", linked, "-b", "feature"]);
+    resetRepoInfoCache();
   });
 
-  it("passes an unmapped id through unchanged", () => {
-    expect(displayName("mobile")).toBe("mobile");
-    expect(displayName("api")).toBe("api");
+  afterAll(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    resetRepoInfoCache();
+  });
+
+  it("resolves any repo's MAIN worktree to foreman, regardless of its name", () => {
+    expect(resolveAgentId({ cwd: main, env: {}, argv: ["node", "s"] })).toBe("foreman");
+  });
+
+  it("does NOT make a linked worktree the foreman (basename fallback)", () => {
+    expect(resolveAgentId({ cwd: linked, env: {}, argv: ["node", "s"] })).toBe("myproj-feature");
+  });
+
+  it("both worktrees resolve to the same repo slug", () => {
+    const a = repoInfo(main);
+    const b = repoInfo(linked);
+    expect(a?.slug).toBeTruthy();
+    expect(a?.slug).toBe(b?.slug);
+    expect(a?.isMainWorktree).toBe(true);
+    expect(b?.isMainWorktree).toBe(false);
   });
 });
 
-describe("resolveAgentRef (name/label/id → routing id)", () => {
-  it("resolves a bare human name, case-insensitively", () => {
-    expect(resolveAgentRef("Toby")).toBe("wt2");
-    expect(resolveAgentRef("toby")).toBe("wt2");
-    expect(resolveAgentRef("DONNA")).toBe("wt5");
-  });
-
-  it("resolves a decorated label back to the parenthesised id", () => {
-    expect(resolveAgentRef("C.J. (wt4)")).toBe("wt4");
-    expect(resolveAgentRef("Josh (wt1)")).toBe("wt1");
-  });
-
-  it("leaves a canonical id untouched", () => {
-    expect(resolveAgentRef("wt4")).toBe("wt4");
+describe("resolveAgentRef (passthrough — no roster)", () => {
+  it("passes ids, principal names, and broadcast through unchanged", () => {
+    expect(resolveAgentRef("worker-4")).toBe("worker-4");
     expect(resolveAgentRef("foreman")).toBe("foreman");
-  });
-
-  it("passes through broadcast and unknown refs unchanged", () => {
+    expect(resolveAgentRef("Michael")).toBe("Michael");
     expect(resolveAgentRef("*")).toBe("*");
-    expect(resolveAgentRef("mobile")).toBe("mobile");
-  });
-
-  it("round-trips displayName → resolveAgentRef for every mapped id", () => {
-    for (const id of ["wt1", "wt2", "wt3", "wt4", "wt5", "wt6"]) {
-      expect(resolveAgentRef(displayName(id))).toBe(id);
-    }
+    expect(resolveAgentRef("  worker-2  ")).toBe("worker-2");
   });
 });

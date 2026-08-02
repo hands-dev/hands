@@ -5,26 +5,26 @@
  * Badge / Table / Separator / Progress primitives. Three panels:
  *   1. Overall utilization — workers active/idle/offline + how the fleet is
  *      resourced across the ranked daily priorities.
- *   2. Workers — a 2-column x 3-row grid mirroring the physical pane layout
- *      (left col wt1,2,3 · right col wt4,5,6): name (+pronouns), current task,
- *      and which daily priority it serves (assigned = filled badge, inferred from
+ *   2. Workers — a 2-column grid: canonical id (worker-<n>), current task, and
+ *      which daily priority it serves (assigned = filled badge, inferred from
  *      branch = outlined ~badge).
- *   3. Foreman effectiveness — Leo's OWN hindsight verdict on his recommendations
- *      (validated vs later-contradicted), recency-weighted. Not Michael's
- *      acceptance rate.
+ *   3. Foreman effectiveness — the foreman's OWN hindsight verdict on its
+ *      recommendations (validated vs later-contradicted), recency-weighted. Not
+ *      the principal's acceptance rate.
  *
- * Names + pronouns come from identity.ts (pure presentation); the raw `wt<n>` id
- * stays the key for all comparison sites. Polls /api/state every 2s.
+ * Agents are addressed by canonical id everywhere (foreman, worker-<n>) — there
+ * is no persona/roster layer. Polls /api/state every 2s.
  */
-import { AGENT_DISPLAY_NAMES, AGENT_PRONOUNS } from "./identity.js";
 
-export const DASHBOARD_HTML = `<!doctype html>
+/** Render the dashboard page (principal name comes from agent-bus.config.json). */
+export function dashboardHtml(principal: string): string {
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href="data:," />
-<title>the west wing · agent-bus</title>
+<title>agent-bus</title>
 <style>
   /* shadcn/ui baseline theme tokens (default / "zinc") */
   :root {
@@ -153,7 +153,7 @@ export const DASHBOARD_HTML = `<!doctype html>
 <body>
 <header>
   <div>
-    <div class="title">the west wing <span class="accent">· agent-bus</span></div>
+    <div class="title">agent-bus <span class="accent">· fleet</span></div>
   </div>
   <div class="spacer"></div>
   <span class="live"><span class="pulse"></span> <span id="livetxt">live</span></span>
@@ -163,17 +163,15 @@ export const DASHBOARD_HTML = `<!doctype html>
   <div class="card"><div class="card-header"><span class="card-title">Overall utilization</span><span id="util-badge"></span></div><div class="card-content" id="util-body"></div></div>
   <div class="card"><div class="card-header"><span class="card-title">Workers</span><span id="workers-badge"></span></div><div class="card-content" id="workers-body"></div></div>
   <div id="collstrip"></div>
-  <div class="card"><div class="card-header"><span class="card-title">Foreman effectiveness · Leo</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Foreman effectiveness</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
   <div id="others"></div>
 </main>
 <script>
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function age(now,t){ if(t==null) return '—'; var ms=now-t; if(ms<60000) return 'now'; var m=Math.floor(ms/60000); if(m<60) return m+'m'; var h=Math.floor(m/60); return h<24? h+'h':Math.floor(h/24)+'d'; }
-  function wtNum(id){ var m=/^wt(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
-  var NAMES=${JSON.stringify(AGENT_DISPLAY_NAMES)};
-  var PRONS=${JSON.stringify(AGENT_PRONOUNS)};
-  function nmeOnly(id){ return NAMES[id]||id; }
-  function pron(id){ return PRONS[id]||'they/them'; }
+  function wtNum(id){ var m=/^worker-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
+  var PRINCIPAL=${JSON.stringify(principal)};
+  function nmeOnly(id){ return id; }
   function dotColor(s){ return s==='active'?'hsl(var(--success))':s==='idle'?'hsl(var(--warning))':'hsl(var(--muted-foreground))'; }
   var PVAR=['hsl(var(--chart-1))','hsl(var(--chart-2))','hsl(var(--chart-3))','hsl(var(--chart-4))','hsl(var(--chart-5))'];
   function pcolor(i){ return PVAR[i]||'hsl(var(--muted-foreground))'; }
@@ -245,7 +243,7 @@ export const DASHBOARD_HTML = `<!doctype html>
           '<div class="stat idle"><div class="n">'+idle+'</div><div class="l">Idle</div></div>'+
           '<div class="stat offline"><div class="n">'+off+'</div><div class="l">Offline</div></div>'+
         '</div>'+
-        '<div>'+(rows||'<div class="empty">no priorities set — ask Leo</div>')+'</div>'+
+        '<div>'+(rows||'<div class="empty">no priorities set — ask the foreman</div>')+'</div>'+
       '</div>';
   }
 
@@ -267,9 +265,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     return '<div class="'+cls+'">'+
       '<div class="wtop">'+
         '<span class="dot" style="background:'+dotColor(w.state)+'"></span>'+
-        '<span class="nm">'+esc(nmeOnly(w.id))+'</span>'+
-        badge('badge-outline', esc(pron(w.id)))+
-        '<span class="wt mono">'+esc(w.id)+'</span>'+
+        '<span class="nm mono">'+esc(w.id)+'</span>'+
         '<span class="st">'+w.state+' '+age(s.now,w.lastActive)+'</span>'+
       '</div>'+
       taskHtml+
@@ -322,9 +318,9 @@ export const DASHBOARD_HTML = `<!doctype html>
           badge('badge-secondary','<b>'+pend+'</b>&nbsp;not yet judged')+
         '</div>'+
       '</div>'+
-      '<p class="card-desc" style="padding:0 0 12px">Leo grades his own calls in hindsight — did each recommendation hold up, or did a later finding overturn it? '+
-        'Score = held up ÷ (held up + overturned), recency-weighted. It measures Leo\\'s judgment, not whether you accepted his advice.'+
-        (assessed?'':' Nothing judged yet — the score appears once Leo starts introspecting on how his recommendations played out.')+'</p>'+
+      '<p class="card-desc" style="padding:0 0 12px">The foreman grades its own calls in hindsight — did each recommendation hold up, or did a later finding overturn it? '+
+        'Score = held up ÷ (held up + overturned), recency-weighted. It measures the foreman\\'s judgment, not whether '+esc(PRINCIPAL)+' accepted its advice.'+
+        (assessed?'':' Nothing judged yet — the score appears once the foreman starts introspecting on how its recommendations played out.')+'</p>'+
       table;
   }
 
@@ -334,7 +330,7 @@ export const DASHBOARD_HTML = `<!doctype html>
       return d.indexOf('settings')<0 && d.indexOf('.bak')<0 && d.indexOf('.local')<0 && d.indexOf('.lock')<0;
     });
 
-    // needs-you (escalations awaiting Michael)
+    // needs-you (escalations awaiting the principal)
     var qs=s.questions||[];
     var needs=qs.filter(function(q){return q.state==='needs_human';});
     document.getElementById('needs').innerHTML = needs.length
@@ -380,3 +376,4 @@ export const DASHBOARD_HTML = `<!doctype html>
 </script>
 </body>
 </html>`;
+}

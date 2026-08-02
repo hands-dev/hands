@@ -56,7 +56,7 @@ export interface QuestionRow {
   priority_ref: string | null;
   /** the foreman's recommended answer when escalated */
   recommendation: string | null;
-  /** Leo's hindsight self-audit: validated | contradicted | null (unassessed) */
+  /** foreman hindsight self-audit: validated | contradicted | null (unassessed) */
   outcome: string | null;
   /** short reason for the outcome verdict */
   outcome_note: string | null;
@@ -88,7 +88,7 @@ export interface TodoRow {
   detail: string | null;
   /** open | done | dismissed */
   state: string;
-  /** foreman (inferred) | human (Michael added) */
+  /** foreman (inferred) | human (principal added) */
   source: string;
   /** what spawned it — PR#, question id, priority text, etc. (provenance) */
   origin_ref: string | null;
@@ -324,7 +324,7 @@ export class Store {
     this.ensureColumn("agents", "state", "TEXT");
     this.ensureColumn("agents", "last_active", "INTEGER");
 
-    // Foreman self-audit: Leo's hindsight verdict on each recommendation.
+    // Foreman self-audit: hindsight verdict on each recommendation.
     this.ensureColumn("questions", "outcome", "TEXT");
     this.ensureColumn("questions", "outcome_note", "TEXT");
     this.ensureColumn("questions", "outcome_at", "INTEGER");
@@ -624,9 +624,9 @@ export class Store {
   }
 
   /**
-   * Record Leo's hindsight verdict on a recommendation he made (foreman self-audit):
+   * Record the foreman's hindsight verdict on a recommendation it made (self-audit):
    * `validated` (held up) or `contradicted` (a later finding overturned it). Feeds the
-   * foreman-effectiveness score. Grades Leo's judgment, not Michael's acceptance.
+   * foreman-effectiveness score. Grades the foreman's judgment, not the principal's acceptance.
    */
   setQuestionOutcome(input: {
     id: number;
@@ -846,10 +846,10 @@ export class Store {
       .all(createdBy, since) as unknown as TaskRow[];
   }
 
-  // --- todos (foreman-managed personal to-do list for Michael) ---
+  // --- todos (foreman-managed personal to-do list for the principal) ---
 
   /**
-   * Add an item to Michael's to-do list. Idempotent while open: if `dedupKey`
+   * Add an item to the principal's to-do list. Idempotent while open: if `dedupKey`
    * is given and an open todo already carries it, the existing row is returned
    * untouched (isNew:false) — so the self-managing foreman can re-derive the
    * same item every pass without spawning duplicates.
@@ -907,7 +907,7 @@ export class Store {
   /**
    * Cross an item off (state 'done'), drop it ('dismissed'), or re-open it.
    * `doneSignal` records HOW completion was inferred — the auto-cross-off stays
-   * transparent and reversible (Michael can re-open with the signal in view).
+   * transparent and reversible (the principal can re-open with the signal in view).
    */
   updateTodoState(input: {
     id: number;
