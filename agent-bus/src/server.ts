@@ -17,7 +17,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { buildBoard, IDLE_THRESHOLD_MS } from "./board.js";
+import { buildBoard, computeStateHash, IDLE_THRESHOLD_MS } from "./board.js";
 import { type AgentBusConfig, loadConfig } from "./config.js";
 import { pollGithub } from "./github.js";
 import { isWorker, resolveAgentId, resolveAgentRef } from "./identity.js";
@@ -87,12 +87,18 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       description:
         "Enqueue a message to another agent on this repo's bus. `to` is a peer agent id " +
         `(foreman, worker-2, … — see agent_bus_peers), the principal ("${principal}"), or "*" to ` +
-        "broadcast to everyone. Do not include secrets.",
+        "broadcast to everyone. Do not include secrets. Waking the recipient costs a full model " +
+        "turn — for an FYI / status update that needs no immediate action, pass wake:false so it is " +
+        "delivered on their next natural drain instead.",
       inputSchema: {
         to: z.string().describe('recipient agent id, or "*" for broadcast'),
         body: z.string(),
         subject: z.string().optional(),
         thread: z.string().optional(),
+        wake: z
+          .boolean()
+          .optional()
+          .describe("false = deliver silently on the recipient's next drain (no wake). Default true."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -136,8 +142,20 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       const recipients = broadcast
         ? store.listPeers().map((p) => p.id).filter((peerId) => peerId !== agentId)
         : [to];
-      notify(recipients, { from: agentId, subject: input.subject ?? null });
-      return asToolResult({ ok: true, id, to: broadcast ? "*" : to, delivered: recipients });
+      // The DB row is unconditional; only the wake (.notify append) is managed:
+      //  - wake:false → an FYI, read on the recipient's next natural drain.
+      //  - pending-wake suppression → recipient is already behind, so a wake is
+      //    already outstanding and one drain returns everything anyway.
+      const wake = input.wake ?? true;
+      const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r, id)) : [];
+      if (woken.length > 0) notify(woken, { from: agentId, subject: input.subject ?? null });
+      return asToolResult({
+        ok: true,
+        id,
+        to: broadcast ? "*" : to,
+        delivered: recipients,
+        woken,
+      });
     },
   );
 
@@ -236,13 +254,20 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     {
       title: "Read the standup board",
       description:
-        "Snapshot of every worktree: who's active (branch + last-active age), recent learnings " +
-        "(commits + memory writes), and any file/ticket collisions with you. Use to catch up on what " +
-        "the other worktrees are doing.",
-      inputSchema: {},
+        "Snapshot of every agent: who's active (branch + last-active age), recent learnings " +
+        "(commits + memory writes), and any file/ticket collisions with you. Always includes a cheap " +
+        "`stateHash` fingerprint — if it matches your last pass, nothing moved and you can skip a " +
+        "deeper re-scan. Pass full:true to bundle active tasks + open questions + the priorities " +
+        "digest into this ONE read (instead of separate tasks/questions/priorities calls).",
+      inputSchema: {
+        full: z
+          .boolean()
+          .optional()
+          .describe("true = also bundle active tasks, open questions, and the priorities digest"),
+      },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async () => {
+    async (input) => {
       store.touch(agentId);
       const now = Date.now();
       const peers = store.listPeers(now).map((p) => {
@@ -264,11 +289,43 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       }));
       // Reuse the delta builder purely to surface current collisions (no advance).
       const board = buildBoard(store, { agentId, since: now, advance: false, now });
-      return asToolResult({
+      const base = {
         me: agentId,
+        stateHash: computeStateHash(store, now),
         peers,
         recentJournal: journal,
         collisions: board.collisions,
+      };
+      if (!input.full) return asToolResult(base);
+
+      // full:true — the foreman's bundled pass: one read instead of four.
+      const activeTasks = store.listTasks({ active: true }).map((t) => ({
+        id: t.id,
+        title: t.title,
+        assignee: t.assignee ?? "queue",
+        state: t.state,
+        priority: t.priority_ref ?? undefined,
+        updatedAt: new Date(t.updated_at).toISOString(),
+      }));
+      const openQuestions = store.listQuestions({ state: "open" }).map((q) => ({
+        id: q.id,
+        asker: q.asker,
+        question: q.question,
+        context: q.context ?? undefined,
+        askedAt: new Date(q.created_at).toISOString(),
+      }));
+      const p = readPriorities();
+      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
+      const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
+      return asToolResult({
+        ...base,
+        activeTasks,
+        openQuestions,
+        priorities: {
+          items: p.items,
+          set: p.items.length > 0,
+          stale: confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS,
+        },
       });
     },
   );

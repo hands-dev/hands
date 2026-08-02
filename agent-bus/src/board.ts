@@ -1,8 +1,32 @@
+import { createHash } from "node:crypto";
 import * as path from "node:path";
 import { type JournalRow, type Peer, Store } from "./store.js";
 
 /** Past this much silence (but still online), a peer reads as "idle" not "active". */
 export const IDLE_THRESHOLD_MS = 3 * 60_000;
+
+/**
+ * Cheap fingerprint of the team state: peer ids + presence band + branch, plus
+ * active-task assignments. The foreman gates its expensive utilization re-map
+ * on this changing — same hash as last pass means nothing moved, skip the
+ * re-pull/re-map.
+ */
+export function computeStateHash(store: Store, now: number = Date.now()): string {
+  const peers = store.listPeers(now).map((p) => {
+    const activeAge = p.last_active ? now - p.last_active : null;
+    const state = !p.online
+      ? "offline"
+      : activeAge !== null && activeAge <= IDLE_THRESHOLD_MS
+        ? "active"
+        : "idle";
+    return `${p.id}|${state}|${p.branch ?? ""}`;
+  });
+  const tasks = store
+    .listTasks({ active: true })
+    .map((t) => `${t.id}|${t.assignee ?? ""}|${t.state}`)
+    .sort();
+  return createHash("sha1").update([...peers, ...tasks].join("\n")).digest("hex").slice(0, 12);
+}
 
 function fmtAge(ms: number): string {
   if (ms < 60_000) return "just now";

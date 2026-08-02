@@ -427,6 +427,26 @@ export class Store {
       .all(agentId, agentId, sinceTs) as unknown as MessageRow[];
   }
 
+  /**
+   * True when `agentId` already has an undrained message OLDER than `beforeId`
+   * (directed or broadcast, not their own). Used for redundant-wake
+   * suppression: if a recipient is already behind, a wake is already pending —
+   * one drain returns everything — so the sender can skip the `.notify` append.
+   */
+  hasPendingWake(agentId: string, beforeId: number): boolean {
+    const cursor = this.getCursor(agentId);
+    const row = this.db
+      .prepare(
+        `SELECT 1 AS x FROM messages
+         WHERE (to_id = ? OR to_id IS NULL)
+           AND from_id != ?
+           AND id > ? AND id < ?
+         LIMIT 1`,
+      )
+      .get(agentId, agentId, cursor, beforeId) as { x: number } | undefined;
+    return row !== undefined;
+  }
+
   getCursor(agentId: string): number {
     const row = this.db
       .prepare("SELECT last_read_message_id AS c FROM cursors WHERE agent_id = ?")
