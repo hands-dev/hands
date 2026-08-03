@@ -82,7 +82,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     store.markWakePending(recipients);
   };
   const server = new McpServer(
-    { name: "roundhouse", version: "0.1.0" },
+    { name: "yes-chef", version: "0.1.0" },
     {
       instructions:
         `Per-repo agent message bus. You are agent "${agentId}". ` +
@@ -986,7 +986,7 @@ function resolveSelf(): string {
 
 /**
  * Where does this process resolve? Shared by the `paths` CLI subcommand, the
- * `roundhouse paths` CLI, and the agent_bus_paths MCP tool — the one authority
+ * `yes-chef paths` CLI, and the agent_bus_paths MCP tool — the one authority
  * agents consult instead of guessing per-repo paths.
  */
 export function pathsReport(agentId: string, cfg: AgentBusConfig) {
@@ -1067,7 +1067,7 @@ async function main(): Promise<void> {
   if (subcommand === "serve") {
     const { serve } = await import("./serve.js");
     const handle = await serve();
-    process.stdout.write(`roundhouse dashboard → ${handle.url}\n(Ctrl-C to stop)\n`);
+    process.stdout.write(`yes-chef dashboard → ${handle.url}\n(Ctrl-C to stop)\n`);
     if (!process.argv.includes("--no-open") && process.platform === "darwin") {
       const { spawn } = await import("node:child_process");
       try {

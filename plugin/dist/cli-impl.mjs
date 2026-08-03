@@ -8131,7 +8131,7 @@ function buildBoard(store, opts) {
   if (journal.length === 0 && collisionLines.length === 0 && answered.length === 0 && openForExpo.length === 0 && inbox.length === 0 && ghLines.length === 0 && assignedToMe.length === 0 && returnedToMe.length === 0) {
     return { text: "", journalCount: 0, collisions: 0 };
   }
-  const lines = ["[agent-bus] update:"];
+  const lines = ["[yes-chef] update:"];
   const shownMsgs = inbox.slice(-MAX_MSGS);
   for (const msg of shownMsgs) {
     const to = msg.to_id === null ? "all" : "you";
@@ -8464,7 +8464,7 @@ function dashboardHtml(principal) {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href="data:," />
-<title>roundhouse</title>
+<title>yes-chef</title>
 <style>
   /* shadcn/ui baseline theme tokens (default / "zinc") */
   :root {
@@ -8593,7 +8593,7 @@ function dashboardHtml(principal) {
 <body>
 <header>
   <div>
-    <div class="title">roundhouse <span class="accent">\xB7 fleet</span></div>
+    <div class="title">yes-chef <span class="accent">\xB7 the pass</span></div>
   </div>
   <div class="spacer"></div>
   <span class="live"><span class="pulse"></span> <span id="livetxt">live</span></span>
@@ -9203,7 +9203,7 @@ async function runInit(argv) {
         }
         for (const s of oldSkills) {
           fs11.rmSync(path11.join(home, ".claude", "skills", s), { recursive: true, force: true });
-          out(`\u2714 removed old ~/.claude/skills/${s} (the plugin ships /rh:${s})`);
+          out(`\u2714 removed old ~/.claude/skills/${s} (the plugin ships the /yc: skills)`);
         }
       } else {
         out("\u25CF left the old install in place \u2014 expect duplicate board injections and two MCP servers");
@@ -9223,15 +9223,15 @@ async function runInit(argv) {
         out(`\u2714 migrated ${legacy.length} file(s) \u2192 ${target}`);
       } else {
         out(
-          `\u25CF left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; to migrate later, re-run: roundhouse init --migrate`
+          `\u25CF left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; to migrate later, re-run: yes-chef init --migrate`
         );
       }
     }
     out("");
     out("Done. Next steps:");
-    out("  1. main checkout: /rh:foreman   (or /loop /rh:foreman)");
-    out("  2. add workers:   roundhouse worker add -n 2");
-    out("  3. dashboard:     roundhouse serve   \u2192 http://localhost:4319");
+    out("  1. main checkout: /yc:expo   (or /loop /yc:expo)");
+    out("  2. open stations: yes-chef station add -n 2");
+    out("  3. dashboard:     yes-chef serve   \u2192 http://localhost:4319");
     out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");
   } finally {
     rl?.close();
@@ -32653,9 +32653,9 @@ import * as path8 from "node:path";
 import * as fs7 from "node:fs";
 import * as path7 from "node:path";
 var DIGEST_VERSION = 1;
-var STAMP_PREFIX = "<!-- roundhouse digest v";
+var STAMP_PREFIX = "<!-- yes-chef digest v";
 var STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
-var STAMP_RE = /^<!-- roundhouse digest v(\d+) -->/;
+var STAMP_RE = /^<!-- yes-chef digest v(\d+) -->/;
 var RESULT_MAX = 120;
 function dayOf(ts) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -32965,7 +32965,7 @@ function validateJournal(dir, opts) {
     if (marker.journal > JOURNAL_LAYOUT) {
       return {
         ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer roundhouse \u2014 update the plugin`
+        reason: `journal layout v${marker.journal} was written by a newer yes-chef \u2014 update the plugin`
       };
     }
     if (marker.journal < JOURNAL_LAYOUT && opts?.write) {
@@ -32987,7 +32987,7 @@ function validateJournal(dir, opts) {
     return {
       ok: false,
       needsAdopt: true,
-      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `roundhouse sync --adopt` once to initialize the journal structure alongside the existing content."
+      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `yes-chef sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
   fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
@@ -33238,7 +33238,7 @@ function buildServer(store, agentId, config2) {
     store.markWakePending(recipients);
   };
   const server = new McpServer(
-    { name: "roundhouse", version: "0.1.0" },
+    { name: "yes-chef", version: "0.1.0" },
     {
       instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see agent_bus_peers). Use agent_bus_peers to discover the team, agent_bus_send to message one, and agent_bus_receive to read messages addressed to you. Call agent_bus_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with agent_bus_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run agent_bus_questions, agent_bus_priorities to read/set the ranked priorities, agent_bus_answer to resolve, agent_bus_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: agent_bus_todo_add concrete things only they can do (idempotent via dedupKey), and agent_bus_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "")
     }
@@ -34039,7 +34039,7 @@ async function main() {
   if (subcommand === "serve") {
     const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
     const handle = await serve2();
-    process.stdout.write(`roundhouse dashboard \u2192 ${handle.url}
+    process.stdout.write(`yes-chef dashboard \u2192 ${handle.url}
 (Ctrl-C to stop)
 `);
     if (!process.argv.includes("--no-open") && process.platform === "darwin") {
@@ -34088,7 +34088,7 @@ function out2(line) {
 `);
 }
 function fail(message) {
-  process.stderr.write(`roundhouse: ${message}
+  process.stderr.write(`yes-chef: ${message}
 `);
   process.exit(1);
 }
@@ -34152,7 +34152,7 @@ function cmdScale(argv) {
 function requireRemote() {
   const j = openJournal();
   if (!j) {
-    fail('no remote journal configured \u2014 set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/roundhouse-state.git"}}');
+    fail('no remote journal configured \u2014 set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/yes-chef-books.git"}}');
   }
   if (!fs12.existsSync(path12.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
@@ -34195,14 +34195,14 @@ function cmdDigest(argv) {
   syncPull(j.dir);
   const i = argv.indexOf("--date");
   const date5 = i !== -1 ? argv[i + 1] : void 0;
-  if (date5 && !/^\d{4}-\d{2}-\d{2}$/.test(date5)) fail("usage: roundhouse digest [--date YYYY-MM-DD]");
+  if (date5 && !/^\d{4}-\d{2}-\d{2}$/.test(date5)) fail("usage: yes-chef digest [--date YYYY-MM-DD]");
   const changed = regenerateDigests(j, date5 ? /* @__PURE__ */ new Set([date5]) : void 0);
   if (changed.length === 0) {
     out2("digests already up to date");
     return;
   }
   for (const f of changed) out2(`\u2714 ${f}`);
-  out2("(committed + pushed on the next sync \u2014 or run: roundhouse sync)");
+  out2("(committed + pushed on the next sync \u2014 or run: yes-chef sync)");
 }
 function cmdPaths() {
   const cfg = loadConfig();
@@ -34233,26 +34233,26 @@ async function main2() {
       case "dashboard": {
         const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
         const handle = await serve2();
-        out2(`roundhouse dashboard \u2192 ${handle.url}
+        out2(`yes-chef dashboard \u2192 ${handle.url}
 (Ctrl-C to stop)`);
         return;
       }
       case "paths":
         return cmdPaths();
       default: {
-        out2("roundhouse \u2014 foreman/worker fleet for Claude Code");
+        out2("yes-chef \u2014 an expo/station agent fleet for Claude Code");
         out2("");
-        out2("  roundhouse init                scaffold agent-bus.config.json + clean up pre-plugin installs");
-        out2("  roundhouse worker add [-n N]   spin up N workers");
-        out2("  roundhouse worker ls           list this repo's workers");
-        out2("  roundhouse worker rm <id>      retire a worker (--force discards uncommitted work)");
-        out2("  roundhouse scale <N>           reconcile the pool to exactly N workers");
-        out2("  roundhouse restore             rebuild local bus state from the remote journal (remote.url)");
-        out2("  roundhouse sync [--adopt]      push pending journal appends now (--adopt initializes a");
+        out2("  yes-chef init                scaffold agent-bus.config.json + clean up pre-plugin installs");
+        out2("  yes-chef station add [-n N]   spin up N workers");
+        out2("  yes-chef station ls           list this repo's workers");
+        out2("  yes-chef station rm <id>      retire a worker (--force discards uncommitted work)");
+        out2("  yes-chef scale <N>           reconcile the pool to exactly N workers");
+        out2("  yes-chef restore             rebuild local bus state from the remote journal (remote.url)");
+        out2("  yes-chef sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out2("                                non-empty repo as a journal \u2014 explicit by design)");
-        out2("  roundhouse digest [--date D]  re-render journal digests (normally automatic on sync)");
-        out2("  roundhouse serve               live dashboard \u2192 http://localhost:4319");
-        out2("  roundhouse paths               show where this directory resolves (debug)");
+        out2("  yes-chef digest [--date D]  re-render journal digests (normally automatic on sync)");
+        out2("  yes-chef serve               live dashboard \u2192 http://localhost:4319");
+        out2("  yes-chef paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
       }
     }

@@ -1,9 +1,9 @@
 {
-  "name": "rh",
-  "displayName": "Roundhouse",
-  "description": "Foreman/worker fleet on a per-repo coordination bus: strict hub-and-spoke topology, wake-cost accounting, worker provisioning, and an opt-in durable journal.",
+  "name": "yc",
+  "displayName": "Yes, Chef",
+  "description": "Yes, Chef \u2014 an expo/station agent fleet for Claude Code on a per-repo coordination bus: strict pass discipline (hub-and-spoke), wake-cost accounting, station provisioning with focus labels, and the books \u2014 an opt-in durable journal with browsable daily digests.",
   "author": {
     "name": "Michael Phillips"
   },
-  "homepage": "https://github.com/heymichaelp/roundhouse"
+  "homepage": "https://github.com/heymichaelp/yes-chef"
 }

@@ -1,7 +1,7 @@
-# roundhouse — setup
+# yes-chef — setup
 
 > **Normal install is the plugin — see [README.md](README.md).** Two slash commands, then
-> `roundhouse init` per repo. This file covers development setup and the manual bits the plugin
+> `yes-chef init` per repo. This file covers development setup and the manual bits the plugin
 > doesn't own.
 
 ## Development setup
@@ -26,9 +26,9 @@ claude plugin validate ./plugin     # manifest sanity
 claude plugin validate .            # marketplace sanity
 ```
 
-## Per-repo pieces (what `roundhouse init` handles)
+## Per-repo pieces (what `yes-chef init` handles)
 
-- `agent-bus.config.json` scaffold at the repo root — principal, topology, worker tiers/launcher,
+- `agent-bus.config.json` scaffold at the repo root — principal, topology, station tiers/launcher,
   optional journal (`remote.url` + `remote.handle`). Full reference in README.
 - **Pre-plugin cleanup:** removes an old user-scope `mcpServers["agent-bus"]`, old
   `server.js publish|board` hooks, and copied `~/.claude/skills/{foreman,worker}` so nothing
@@ -45,13 +45,13 @@ wanted; fix the `ABS_PATH…` placeholders.
 ## Seed priorities (optional)
 
 ```bash
-cp coordination/priorities.example.md "$(roundhouse paths | jq -r .coordinationDir)/priorities.md"
+cp coordination/priorities.example.md "$(yes-chef paths | jq -r .coordinationDir)/priorities.md"
 ```
 
-Or just answer the foreman when it asks for the day's ranked priorities.
+Or just answer the expo when it asks for the day's ranked priorities.
 
 ## Two repos side by side
 
-Nothing to do — each repo's bus auto-scopes by git common-dir. Run `roundhouse init` in each repo
+Nothing to do — each repo's bus auto-scopes by git common-dir. Run `yes-chef init` in each repo
 for its config; the plugin registration is machine-wide. `AGENT_BUS_HOME` pins a bus location
 explicitly if you ever need to.

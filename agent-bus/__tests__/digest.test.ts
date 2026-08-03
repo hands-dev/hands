@@ -47,7 +47,7 @@ describe("renderDigest", () => {
     const a = renderDigest(SAMPLE, { project: "p", handle: "h", date: DAY });
     const b = renderDigest([...SAMPLE], { project: "p", handle: "h", date: DAY });
     expect(a.body).toBe(b.body);
-    expect(a.body.startsWith(`<!-- roundhouse digest v${DIGEST_VERSION} -->`)).toBe(true);
+    expect(a.body.startsWith(`<!-- yes-chef digest v${DIGEST_VERSION} -->`)).toBe(true);
     const foremanIdx = a.body.indexOf("## foreman");
     const workerIdx = a.body.indexOf("## worker-2");
     const unattributedIdx = a.body.indexOf("## unattributed");
@@ -129,7 +129,7 @@ describe("regenerateDigests", () => {
     expect(regenerateDigests(j)).toEqual([]);
     // a NEWER renderer's file is never downgraded
     const file = path.join(j.dir, "journal", "proj", "michael", `${DAY}.md`);
-    fs.writeFileSync(file, "<!-- roundhouse digest v999 -->\nfrom the future\n");
+    fs.writeFileSync(file, "<!-- yes-chef digest v999 -->\nfrom the future\n");
     expect(regenerateDigests(j)).toEqual([]);
     expect(fs.readFileSync(file, "utf8")).toContain("from the future");
     const readme = fs.readFileSync(path.join(j.dir, "journal", "proj", "michael", "README.md"), "utf8");

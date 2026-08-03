@@ -5,7 +5,7 @@ import * as readline from "node:readline/promises";
 import { coordinationDir, repoInfo } from "./paths.js";
 
 /**
- * `roundhouse init` — per-repo setup, run from inside the target repo. The
+ * `yes-chef init` — per-repo setup, run from inside the target repo. The
  * PLUGIN now owns what the old installer hand-wired (MCP registration, hooks,
  * skills); this command handles what must stay per-repo/per-user:
  *
@@ -196,7 +196,7 @@ export async function runInit(argv: string[]): Promise<void> {
         }
         for (const s of oldSkills) {
           fs.rmSync(path.join(home, ".claude", "skills", s), { recursive: true, force: true });
-          out(`✔ removed old ~/.claude/skills/${s} (the plugin ships /rh:${s})`);
+          out(`✔ removed old ~/.claude/skills/${s} (the plugin ships the /yc: skills)`);
         }
       } else {
         out("● left the old install in place — expect duplicate board injections and two MCP servers");
@@ -221,7 +221,7 @@ export async function runInit(argv: string[]): Promise<void> {
       } else {
         out(
           `● left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; ` +
-            "to migrate later, re-run: roundhouse init --migrate",
+            "to migrate later, re-run: yes-chef init --migrate",
         );
       }
     }
@@ -229,9 +229,9 @@ export async function runInit(argv: string[]): Promise<void> {
     // 4. next steps
     out("");
     out("Done. Next steps:");
-    out("  1. main checkout: /rh:foreman   (or /loop /rh:foreman)");
-    out("  2. add workers:   roundhouse worker add -n 2");
-    out("  3. dashboard:     roundhouse serve   → http://localhost:4319");
+    out("  1. main checkout: /yc:expo   (or /loop /yc:expo)");
+    out("  2. open stations: yes-chef station add -n 2");
+    out("  3. dashboard:     yes-chef serve   → http://localhost:4319");
     out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");
   } finally {
     rl?.close();

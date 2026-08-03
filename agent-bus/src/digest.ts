@@ -20,9 +20,9 @@ import { type JournalEvent, type JournalRef, readEvents } from "./remote.js";
  */
 
 export const DIGEST_VERSION = 1;
-const STAMP_PREFIX = "<!-- roundhouse digest v";
+const STAMP_PREFIX = "<!-- yes-chef digest v";
 const STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
-const STAMP_RE = /^<!-- roundhouse digest v(\d+) -->/;
+const STAMP_RE = /^<!-- yes-chef digest v(\d+) -->/;
 
 const RESULT_MAX = 120;
 

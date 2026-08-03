@@ -1,5 +1,5 @@
 /**
- * Self-contained status dashboard served by `roundhouse serve`. No external assets,
+ * Self-contained status dashboard served by `yes-chef serve`. No external assets,
  * no framework — styled with shadcn/ui's BASELINE design system ported to plain CSS:
  * the default theme tokens (light + dark via prefers-color-scheme) and the Card /
  * Badge / Table / Separator / Progress primitives. Three panels:
@@ -24,7 +24,7 @@ export function dashboardHtml(principal: string): string {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href="data:," />
-<title>roundhouse</title>
+<title>yes-chef</title>
 <style>
   /* shadcn/ui baseline theme tokens (default / "zinc") */
   :root {
@@ -153,7 +153,7 @@ export function dashboardHtml(principal: string): string {
 <body>
 <header>
   <div>
-    <div class="title">roundhouse <span class="accent">· fleet</span></div>
+    <div class="title">yes-chef <span class="accent">· the pass</span></div>
   </div>
   <div class="spacer"></div>
   <span class="live"><span class="pulse"></span> <span id="livetxt">live</span></span>
