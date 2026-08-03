@@ -7,6 +7,8 @@
  *   agent-bus worker ls           list this repo's workers
  *   agent-bus worker rm <id>      retire a worker (idempotent; --force discards)
  *   agent-bus scale <N>           reconcile the pool to exactly N workers
+ *   agent-bus restore             rebuild local bus state from the remote journal
+ *   agent-bus sync                push pending journal appends now
  *   agent-bus paths               where this cwd resolves (debug)
  *
  * The MCP server itself stays `server.js` (registered by `init`); this bin is
@@ -23,6 +25,16 @@ import {
   removeWorker,
   scaleWorkers,
 } from "./provision.js";
+import {
+  ensureRepo,
+  journalDir,
+  readEvents,
+  replayInto,
+  resolveHandle,
+  syncPull,
+  syncPush,
+} from "./remote.js";
+import { Store } from "./store.js";
 
 function out(line: string): void {
   process.stdout.write(`${line}\n`);
@@ -94,6 +106,44 @@ function cmdScale(argv: string[]): void {
   if (added.length === 0 && removed.length === 0) out(`already at ${target} workers`);
 }
 
+function requireRemote(): { dir: string; handle: string } {
+  const cfg = loadConfig();
+  const url = cfg.remote.url?.trim();
+  if (!url) {
+    fail('no remote journal configured — set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/agent-bus-state.git"}}');
+  }
+  const dir = journalDir();
+  if (!ensureRepo(dir, url)) fail(`could not set up the journal clone at ${dir}`);
+  return { dir, handle: resolveHandle(cfg) };
+}
+
+/** Pull the remote journal and materialize this handle's events into the local bus. */
+function cmdRestore(): void {
+  const { dir, handle } = requireRemote();
+  if (!syncPull(dir)) fail("could not pull the journal remote (offline? empty repo is fine, a failed fetch is not)");
+  const events = readEvents(dir, handle);
+  if (events.length === 0) {
+    out(`no events for handle "${handle}" in the journal — nothing to restore`);
+    return;
+  }
+  const store = new Store(); // deliberately NOT journal-wired: replay must not re-append
+  try {
+    const res = replayInto(store, events);
+    out(`✔ restored ${res.applied} event(s) for "${handle}" into ${dbPath()}`);
+    if (res.skipped > 0) out(`  (${res.skipped} event(s) of unknown type skipped — journal written by a newer build?)`);
+  } finally {
+    store.close();
+  }
+}
+
+/** Push any pending journal appends now (no debounce) — mostly for testing/cutover. */
+function cmdSync(): void {
+  const { dir, handle } = requireRemote();
+  const res = syncPush(dir, { force: true });
+  if (res.status === "error") fail(`sync failed: ${res.detail}`);
+  out(`✔ journal ${res.status} (handle "${handle}")`);
+}
+
 function cmdPaths(): void {
   const info = repoInfo();
   const agentId = resolveAgentId({ foremanBasename: loadConfig().foreman.basename });
@@ -128,6 +178,10 @@ async function main(): Promise<void> {
         return cmdWorker(rest);
       case "scale":
         return cmdScale(rest);
+      case "restore":
+        return cmdRestore();
+      case "sync":
+        return cmdSync();
       case "paths":
         return cmdPaths();
       default: {
@@ -138,6 +192,8 @@ async function main(): Promise<void> {
         out("  agent-bus worker ls           list this repo's workers");
         out("  agent-bus worker rm <id>      retire a worker (--force discards uncommitted work)");
         out("  agent-bus scale <N>           reconcile the pool to exactly N workers");
+        out("  agent-bus restore             rebuild local bus state from the remote journal (remote.url)");
+        out("  agent-bus sync                push pending journal appends now (normally automatic)");
         out("  agent-bus paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
       }

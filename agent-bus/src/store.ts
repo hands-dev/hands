@@ -172,6 +172,7 @@ function isBusy(err: unknown): boolean {
  */
 export class Store {
   private readonly db: DatabaseSync;
+  private journalFn: ((type: string, data: Record<string, unknown>) => void) | null = null;
 
   constructor(options?: { env?: NodeJS.ProcessEnv; path?: string }) {
     const env = options?.env ?? process.env;
@@ -347,6 +348,26 @@ export class Store {
     }
   }
 
+  /**
+   * Wire the durable remote journal (remote.ts). When set, every
+   * state-changing method below mirrors its action as one event AFTER the DB
+   * write succeeds — the DB stays authoritative; the journal is the rebuild
+   * log. Ephemeral state (presence, wake_log, board watermarks, github cache)
+   * is deliberately NOT journaled.
+   */
+  setJournal(fn: (type: string, data: Record<string, unknown>) => void): void {
+    this.journalFn = fn;
+  }
+
+  /** Emit a journal event (no-op when no journal is wired; never throws). */
+  journal(type: string, data: Record<string, unknown>): void {
+    try {
+      this.journalFn?.(type, data);
+    } catch {
+      // the journal is best-effort by contract
+    }
+  }
+
   /** Retry a write closure on transient SQLITE_BUSY/LOCKED contention. */
   private withRetry<T>(fn: () => T): T {
     const maxAttempts = 6;
@@ -388,7 +409,7 @@ export class Store {
   /** Enqueue a message; returns its autoincrement id. */
   insertMessage(input: SendInput): number {
     const now = input.now ?? Date.now();
-    return this.withRetry(() => {
+    const id = this.withRetry(() => {
       const result = this.db
         .prepare(
           `INSERT INTO messages (from_id, to_id, subject, body, thread_id, created_at)
@@ -404,6 +425,16 @@ export class Store {
         );
       return Number(result.lastInsertRowid);
     });
+    this.journal("message", {
+      id,
+      from: input.from,
+      to: input.to,
+      subject: input.subject ?? null,
+      body: input.body,
+      thread: input.thread ?? null,
+      at: now,
+    });
+    return id;
   }
 
   /**
@@ -476,6 +507,7 @@ export class Store {
         )
         .run(agentId, lastReadMessageId),
     );
+    this.journal("cursor", { agent: agentId, last: lastReadMessageId });
   }
 
   listPeers(now: number = Date.now()): Peer[] {
@@ -554,7 +586,7 @@ export class Store {
     now?: number;
   }): number {
     const now = input.now ?? Date.now();
-    return this.withRetry(() => {
+    const id = this.withRetry(() => {
       const result = this.db
         .prepare(
           `INSERT INTO journal (agent_id, kind, ref, text, created_at) VALUES (?, ?, ?, ?, ?)`,
@@ -562,6 +594,15 @@ export class Store {
         .run(input.agentId, input.kind, input.ref ?? null, input.text, now);
       return Number(result.lastInsertRowid);
     });
+    this.journal("journal.add", {
+      id,
+      agent: input.agentId,
+      kind: input.kind,
+      ref: input.ref ?? null,
+      text: input.text,
+      at: now,
+    });
+    return id;
   }
 
   /** True if a journal row with this (kind, ref) already exists — commit dedup. */
@@ -635,7 +676,7 @@ export class Store {
 
   askQuestion(input: { asker: string; question: string; context?: string | null; now?: number }): number {
     const now = input.now ?? Date.now();
-    return this.withRetry(() => {
+    const id = this.withRetry(() => {
       const result = this.db
         .prepare(
           `INSERT INTO questions (asker, question, context, state, created_at, updated_at)
@@ -644,6 +685,14 @@ export class Store {
         .run(input.asker, input.question, input.context ?? null, now, now);
       return Number(result.lastInsertRowid);
     });
+    this.journal("question.ask", {
+      id,
+      asker: input.asker,
+      question: input.question,
+      context: input.context ?? null,
+      at: now,
+    });
+    return id;
   }
 
   listQuestions(options?: { state?: string; asker?: string; limit?: number }): QuestionRow[] {
@@ -688,6 +737,13 @@ export class Store {
         )
         .run(input.answer, input.resolvedBy, input.priorityRef ?? null, now, input.id),
     );
+    this.journal("question.answer", {
+      id: input.id,
+      answer: input.answer,
+      by: input.resolvedBy,
+      priority: input.priorityRef ?? null,
+      at: now,
+    });
   }
 
   /**
@@ -711,6 +767,12 @@ export class Store {
         )
         .run(input.outcome, input.note ?? null, now, now, input.id),
     );
+    this.journal("question.outcome", {
+      id: input.id,
+      outcome: input.outcome,
+      note: input.note ?? null,
+      at: now,
+    });
   }
 
   escalateQuestion(input: {
@@ -730,6 +792,12 @@ export class Store {
         )
         .run(input.recommendation ?? null, input.priorityRef ?? null, now, input.id),
     );
+    this.journal("question.escalate", {
+      id: input.id,
+      recommendation: input.recommendation ?? null,
+      priority: input.priorityRef ?? null,
+      at: now,
+    });
   }
 
   /** Answered questions for an asker updated since `since` — for its board delta. */
@@ -813,7 +881,7 @@ export class Store {
   }): number {
     const now = input.now ?? Date.now();
     const state = input.assignee ? "assigned" : "open";
-    return this.withRetry(() => {
+    const id = this.withRetry(() => {
       const result = this.db
         .prepare(
           `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, thread_id, created_at, updated_at)
@@ -832,6 +900,18 @@ export class Store {
         );
       return Number(result.lastInsertRowid);
     });
+    this.journal("task.create", {
+      id,
+      by: input.createdBy,
+      assignee: input.assignee ?? null,
+      title: input.title,
+      body: input.body ?? null,
+      state,
+      priority: input.priority ?? null,
+      thread: input.thread ?? null,
+      at: now,
+    });
+    return id;
   }
 
   listTasks(options?: {
@@ -889,6 +969,13 @@ export class Store {
         )
         .run(input.state, input.assignee ?? null, input.result ?? null, now, input.id),
     );
+    this.journal("task.update", {
+      id: input.id,
+      state: input.state,
+      assignee: input.assignee ?? null,
+      result: input.result ?? null,
+      at: now,
+    });
   }
 
   /** Tasks freshly assigned to a worktree (for its board delta). */
@@ -931,7 +1018,7 @@ export class Store {
     now?: number;
   }): { id: number; isNew: boolean } {
     const now = input.now ?? Date.now();
-    return this.withRetry(() => {
+    const created = this.withRetry(() => {
       if (input.dedupKey) {
         const existing = this.db
           .prepare("SELECT id FROM todos WHERE dedup_key = ? AND state = 'open' LIMIT 1")
@@ -955,6 +1042,19 @@ export class Store {
         );
       return { id: Number(result.lastInsertRowid), isNew: true };
     });
+    if (created.isNew) {
+      this.journal("todo.create", {
+        id: created.id,
+        title: input.title,
+        detail: input.detail ?? null,
+        source: input.source ?? "foreman",
+        origin: input.originRef ?? null,
+        dedupKey: input.dedupKey ?? null,
+        priority: input.priority ?? null,
+        at: now,
+      });
+    }
+    return created;
   }
 
   listTodos(options?: { state?: string; limit?: number }): TodoRow[] {
@@ -992,6 +1092,165 @@ export class Store {
         )
         .run(input.state, input.doneSignal ?? null, now, input.id),
     );
+    this.journal("todo.update", {
+      id: input.id,
+      state: input.state,
+      doneSignal: input.doneSignal ?? null,
+      at: now,
+    });
+  }
+
+  // --- journal replay (remote.ts restore path) ---
+
+  /**
+   * Materialize one journal event into the DB. Inserts carry their original
+   * ids (OR IGNORE), updates re-apply — so replay is idempotent over a fresh
+   * OR an existing DB. Returns false for an unrecognized event type (a newer
+   * journal replayed by an older build skips rather than corrupts).
+   * Deliberately does NOT re-emit to the journal.
+   */
+  applyEvent(type: string, data: Record<string, unknown>): boolean {
+    // journal fields arrive as unknown JSON — coerce absent/undefined to null
+    const f = (key: string): string | number | null => {
+      const v = data[key];
+      return typeof v === "string" || typeof v === "number" ? v : null;
+    };
+    const at = Number(data.at ?? Date.now());
+    switch (type) {
+      case "message":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT OR IGNORE INTO messages (id, from_id, to_id, subject, body, thread_id, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(f("id"), f("from"), f("to"), f("subject"), f("body"), f("thread"), at),
+        );
+        return true;
+      case "cursor":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT INTO cursors (agent_id, last_read_message_id) VALUES (?, ?)
+               ON CONFLICT(agent_id) DO UPDATE SET last_read_message_id = excluded.last_read_message_id`,
+            )
+            .run(f("agent"), f("last")),
+        );
+        return true;
+      case "journal.add":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT OR IGNORE INTO journal (id, agent_id, kind, ref, text, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+            )
+            .run(f("id"), f("agent"), f("kind"), f("ref"), f("text"), at),
+        );
+        return true;
+      case "question.ask":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT OR IGNORE INTO questions (id, asker, question, context, state, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'open', ?, ?)`,
+            )
+            .run(f("id"), f("asker"), f("question"), f("context"), at, at),
+        );
+        return true;
+      case "question.answer":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `UPDATE questions SET state = 'answered', answer = ?, resolved_by = ?,
+               priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`,
+            )
+            .run(f("answer"), f("by"), f("priority"), at, f("id")),
+        );
+        return true;
+      case "question.escalate":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `UPDATE questions SET state = 'needs_human', recommendation = ?,
+               priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`,
+            )
+            .run(f("recommendation"), f("priority"), at, f("id")),
+        );
+        return true;
+      case "question.outcome":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `UPDATE questions SET outcome = ?, outcome_note = ?, outcome_at = ?, updated_at = ?
+               WHERE id = ?`,
+            )
+            .run(f("outcome"), f("note"), at, at, f("id")),
+        );
+        return true;
+      case "task.create":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, thread_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              f("id"),
+              f("by"),
+              f("assignee"),
+              f("title"),
+              f("body"),
+              f("state"),
+              f("priority"),
+              f("thread"),
+              at,
+              at,
+            ),
+        );
+        return true;
+      case "task.update":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `UPDATE tasks SET state = ?, assignee = COALESCE(?, assignee),
+               result = COALESCE(?, result), updated_at = ? WHERE id = ?`,
+            )
+            .run(f("state"), f("assignee"), f("result"), at, f("id")),
+        );
+        return true;
+      case "todo.create":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT OR IGNORE INTO todos (id, title, detail, state, source, origin_ref, dedup_key, priority_ref, created_at, updated_at)
+               VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(
+              f("id"),
+              f("title"),
+              f("detail"),
+              f("source") ?? "foreman",
+              f("origin"),
+              f("dedupKey"),
+              f("priority"),
+              at,
+              at,
+            ),
+        );
+        return true;
+      case "todo.update":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `UPDATE todos SET state = ?, done_signal = COALESCE(?, done_signal), updated_at = ?
+               WHERE id = ?`,
+            )
+            .run(f("state"), f("doneSignal"), at, f("id")),
+        );
+        return true;
+      default:
+        return false;
+    }
   }
 
   close(): void {

@@ -64,6 +64,7 @@ Non-interactive: `… init --yes --principal "Ada"`. Verify with
     "allowForemanScaling": true              // may the foreman spin workers up/down itself
   },
   "merge": { "adminMergeLowRisk": false },   // may the foreman admin-merge low-risk PRs
+  "remote": { "url": null, "handle": null }, // opt-in durable journal (git repo) — see README
   "gh": { "poll": true }
 }
 ```

@@ -25,6 +25,7 @@ import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
+import { openJournal, syncPush } from "./remote.js";
 import { type MessageRow, Store } from "./store.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
@@ -508,6 +509,8 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       if (input.set) {
         writePriorities(input.set);
         store.setWatermark("*", "priorities_confirmed_at", String(now));
+        // priorities live in a file, not the DB — journal them explicitly
+        store.journal("priorities.set", { items: input.set, at: now });
       } else if (input.confirm) {
         store.setWatermark("*", "priorities_confirmed_at", String(now));
       }
@@ -862,9 +865,13 @@ function runCli(subcommand: string, argv: string[]): number {
   }
   const agentId = resolveSelf();
   const store = new Store();
+  const journal = openJournal();
+  if (journal) store.setJournal(journal.append);
   try {
     if (subcommand === "publish") {
       runPublish(store, { agentId, cwd: process.cwd() });
+      // Durable-journal push rides the turn-end publish (debounced inside).
+      if (journal) syncPush(journal.dir);
       return 0;
     }
     if (subcommand === "board") {
@@ -919,6 +926,8 @@ async function main(): Promise<void> {
   }
   const agentId = resolveSelf();
   const store = new Store();
+  const journal = openJournal();
+  if (journal) store.setJournal(journal.append);
   store.registerAgent({ id: agentId, cwd: process.cwd(), pid: process.pid });
   const server = buildServer(store, agentId);
   await server.connect(new StdioServerTransport());
