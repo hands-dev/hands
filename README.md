@@ -55,22 +55,46 @@ worker's entire context. The bus minimizes and meters wakes structurally:
 ## Durable journal (opt-in) — restarts, machine moves, multiplayer
 
 Point the bus at a **separate, private** git repo and every state-changing action (messages,
-tasks, questions, todos, priorities, cursors) mirrors to an NDJSON event log there:
+tasks, questions, todos, priorities, cursors) mirrors there — organized for BROWSING, so the repo
+reads as a team activity feed on GitHub:
 
-```jsonc
-"remote": { "url": "git@github.com:you/roundhouse-state.git", "handle": "michael" }
+```
+agent-bus.json                                          layout marker
+journal/<project>/<handle>/<date>.md                    daily digest — the primary artifact
+journal/<project>/<handle>/README.md                    per-contributor index
+journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
 ```
 
+```jsonc
+"remote": {
+  "url": "git@github.com:you/roundhouse-state.git",
+  "handle": "michael",          // contributor namespace
+  "project": null               // null = derived from the repo's origin (owner--repo)
+}
+```
+
+- **Digests are generated, deterministic markdown** — foreman notes first (see
+  `agent_bus_digest_note`), then per-agent sections (foreman, worker-N): task lifecycle, questions
+  + answers, todos, priorities, message *counts*. Message **bodies never render** — they stay in
+  the NDJSON layer. Regenerated automatically on every sync, including past days when their events
+  arrive late; `roundhouse digest [--date]` re-renders manually.
+- **One journal repo serves every project and contributor.** `project` derives from the code
+  repo's origin (`owner--repo`), so all machines agree on it; set `remote.project` explicitly for
+  origin-less repos. Writers only ever touch their own `journal/<project>/<handle>/` — plus the
+  marker — so sync needs no merge logic, and same-handle machines write per-machine log files.
+  Digest files are the one shared surface; conflicts there auto-resolve and re-render from the
+  merged events (both sides converge on identical bytes).
 - Pushes ride the turn-end hook (debounced ~1/min, offline-tolerant, never fails a bus action).
-- `roundhouse restore` rebuilds the whole coordination state on a restart or a new machine.
-- **The repo's shape is validated, not assumed:** an empty repo initializes itself
-  (`agent-bus.json` layout marker) on first sync; a repo with other content is refused until an
-  explicit `roundhouse sync --adopt`; a journal written by a newer roundhouse fails loudly. The tool
-  only ever touches `agent-bus.json` + `log/` — anything else in the repo is left alone.
-- **Multiplayer:** two fleets pointed at one shared journal repo each write only under their own
-  `handle`, so writers never conflict. (Peer visibility on the board/dashboard builds on this log —
-  next phase.)
-- **Plaintext:** message bodies are stored as-is. Private repo only; never put secrets on the bus.
+- `roundhouse restore` rebuilds the whole coordination state on a restart or a new machine, and
+  lists the journal's projects if your key doesn't match.
+- **The repo's shape is validated, not assumed:** an empty repo initializes itself on first sync;
+  a repo with other content is refused until an explicit `roundhouse sync --adopt`; a journal
+  written by a newer roundhouse fails loudly. Anything outside the tool's namespace is left alone.
+- **Upgrading from the v1 layout is automatic**: the old `log/<handle>` tree is frozen in place
+  (still read on restore) and new writes use the v2 tree. ⚠ The first v2 sync bumps the layout
+  marker, which **locks out machines still on an older plugin** (sync *and* restore) until they
+  update — their unpushed events wait safely in the local clone (`agent_bus_paths` → journalSync).
+- **Plaintext:** event bodies are stored as-is. Private repo only; never put secrets on the bus.
 
 Why a separate repo (not the project repo): journal pushes are frequent small commits — history
 that belongs next to the coordination data, not in your project's git log.
