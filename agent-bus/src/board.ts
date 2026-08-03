@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isExpo } from "./identity.js";
 import * as path from "node:path";
 import { type JournalRow, type Peer, Store } from "./store.js";
 
@@ -7,7 +8,7 @@ export const IDLE_THRESHOLD_MS = 3 * 60_000;
 
 /**
  * Cheap fingerprint of the team state: peer ids + presence band + branch, plus
- * active-task assignments. The foreman gates its expensive utilization re-map
+ * active-task assignments. The expo gates its expensive utilization re-map
  * on this changing — same hash as last pass means nothing moved, skip the
  * re-pull/re-map.
  */
@@ -102,20 +103,19 @@ export function buildBoard(
   const MAX_MSGS = 8;
   const inbox = store.messagesForSince(opts.agentId, since);
 
-  // Answers to my escalated questions (passive unblock) + foreman's new inbox.
+  // Answers to my escalated questions (passive unblock) + expo's new inbox.
   const answered = store.answeredForAsker(opts.agentId, since);
-  const openForForeman =
-    opts.agentId === "foreman"
-      ? store.listQuestions({ state: "open" }).filter((q) => q.created_at > since)
-      : [];
+  const openForExpo = isExpo(opts.agentId)
+    ? store.listQuestions({ state: "open" }).filter((q) => q.created_at > since)
+    : [];
 
-  // External (other engineers') PRs — the foreman gets a team overview; each
-  // worktree gets only PRs that touch its files or its ticket. New since `since`.
+  // External (other engineers') PRs — the expo gets a team overview; each
+  // station gets only PRs that touch its files or its ticket. New since `since`.
   const MAX_GH = 5;
   const ghLines: string[] = [];
   for (const pr of store.listGithubPrs({ state: "open" })) {
     if (pr.updated_at <= since || ghLines.length >= MAX_GH) continue;
-    if (opts.agentId === "foreman") {
+    if (isExpo(opts.agentId)) {
       ghLines.push(`🔗 ${pr.author}: ${pr.title} (#${pr.number})`);
       continue;
     }
@@ -147,7 +147,7 @@ export function buildBoard(
     journal.length === 0 &&
     collisionLines.length === 0 &&
     answered.length === 0 &&
-    openForForeman.length === 0 &&
+    openForExpo.length === 0 &&
     inbox.length === 0 &&
     ghLines.length === 0 &&
     assignedToMe.length === 0 &&
@@ -168,9 +168,9 @@ export function buildBoard(
   }
   for (const line of ghLines) lines.push(`  ${line}`);
   for (const q of answered) {
-    lines.push(`  ✔ foreman answered "${q.question}" → ${q.answer}`);
+    lines.push(`  ✔ expo answered "${q.question}" → ${q.answer}`);
   }
-  for (const q of openForForeman) {
+  for (const q of openForExpo) {
     lines.push(`  ? ${q.asker} asks: "${q.question}" — adjudicate or escalate`);
   }
   for (const t of assignedToMe) {

@@ -57,12 +57,12 @@ function requireRepo(cwd: string): RepoInfo {
 /** Where this repo's managed worker worktrees live. */
 export function workerRoot(cwd: string = process.cwd(), config?: AgentBusConfig): string {
   const cfg = config ?? loadConfig({ cwd });
-  if (cfg.workers.worktreeRoot) return cfg.workers.worktreeRoot;
+  if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
   return path.join(os.homedir(), ".agent-bus", "worktrees", requireRepo(cwd).slug);
 }
 
 export function workerBranch(index: number): string {
-  return `roundhouse/station-${index}`;
+  return `yc/station-${index}`;
 }
 
 /** Pre-brigade branch name — still recognized for teardown. */
@@ -106,7 +106,7 @@ function branchExists(cwd: string, branch: string): boolean {
 
 /** Compose the paste-able launch command for a station (plugin-namespaced skill). */
 export function launchCommand(worker: { id: string; dir: string; model: string }): string {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /rh:station")}`;
+  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /yc:station")}`;
 }
 
 function shellQuote(s: string): string {
@@ -129,7 +129,7 @@ function tmuxAvailable(): boolean {
  */
 function launch(
   plan: { id: string; dir: string; model: string },
-  launcher: AgentBusConfig["workers"]["launcher"],
+  launcher: AgentBusConfig["stations"]["launcher"],
   env: NodeJS.ProcessEnv = process.env,
 ): { launcher: "tmux" | "iterm" | "manual"; launched: boolean } {
   const command = launchCommand(plan);
@@ -200,7 +200,7 @@ export function addWorkers(
     const id = `station-${index}`;
     const dir = path.join(root, id);
     const branch = workerBranch(index);
-    const base = cfg.workers.baseBranch ?? "HEAD";
+    const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
       // left over from a prior rm that kept the branch — reuse it
       git(info.repoRoot, ["worktree", "add", dir, branch]);
@@ -208,8 +208,8 @@ export function addWorkers(
       git(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
     }
     const model =
-      cfg.workers.overrides[id] ?? cfg.workers.overrides[`worker-${index}`] ?? cfg.workers.model;
-    const res = launch({ id, dir, model }, cfg.workers.launcher, opts?.env);
+      cfg.stations.overrides[id] ?? cfg.stations.overrides[`worker-${index}`] ?? cfg.stations.model;
+    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,
       dir,

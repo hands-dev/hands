@@ -35,11 +35,11 @@ beforeEach(() => {
   // manual launcher: provision only, never spawn sessions; keep worktrees in the sandbox
   cfg = {
     ...DEFAULT_CONFIG,
-    workers: {
-      ...DEFAULT_CONFIG.workers,
+    stations: {
+      ...DEFAULT_CONFIG.stations,
       launcher: "manual",
       worktreeRoot: path.join(root, "managed"),
-      overrides: { "worker-2": "opus" },
+      overrides: { "worker-2": "opus" }, // legacy key form — still honored per index
     },
   };
 });
@@ -49,10 +49,10 @@ afterEach(() => {
   resetRepoInfoCache();
 });
 
-describe("worker provisioning (manual launcher)", () => {
-  it("adds N workers as hidden worktrees on agent-bus/worker-<n> branches", () => {
+describe("station provisioning (manual launcher)", () => {
+  it("adds N stations as hidden worktrees on yc/station-<n> branches", () => {
     const plans = addWorkers(2, { cwd: repo, config: cfg });
-    expect(plans.map((p) => p.id)).toEqual(["worker-1", "worker-2"]);
+    expect(plans.map((p) => p.id)).toEqual(["station-1", "station-2"]);
     expect(plans.every((p) => p.launched === false && p.launcher === "manual")).toBe(true);
     // model tier: default + per-worker override
     expect(plans[0]!.model).toBe("sonnet");
@@ -63,44 +63,44 @@ describe("worker provisioning (manual launcher)", () => {
       expect(git(p.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(p.branch);
     }
     // the paste command carries identity + loop
-    expect(plans[0]!.command).toContain("AGENT_BUS_ID=worker-1");
-    expect(plans[0]!.command).toContain("claude --model sonnet '/loop /rh:worker'");
+    expect(plans[0]!.command).toContain("AGENT_BUS_ID=station-1");
+    expect(plans[0]!.command).toContain("claude --model sonnet '/loop /yc:station'");
   });
 
   it("ls reflects the pool; add fills the lowest free index", () => {
     addWorkers(2, { cwd: repo, config: cfg });
-    removeWorker("worker-1", { cwd: repo, config: cfg });
-    expect(listWorkers(repo, cfg).map((w) => w.id)).toEqual(["worker-2"]);
+    removeWorker("station-1", { cwd: repo, config: cfg });
+    expect(listWorkers(repo, cfg).map((w) => w.id)).toEqual(["station-2"]);
     const plans = addWorkers(1, { cwd: repo, config: cfg });
-    expect(plans[0]!.id).toBe("worker-1");
-    expect(listWorkers(repo, cfg).map((w) => w.id)).toEqual(["worker-1", "worker-2"]);
+    expect(plans[0]!.id).toBe("station-1");
+    expect(listWorkers(repo, cfg).map((w) => w.id)).toEqual(["station-1", "station-2"]);
   });
 
   it("rm removes worktree + branch and is idempotent", () => {
     addWorkers(1, { cwd: repo, config: cfg });
-    const dir = path.join(workerRoot(repo, cfg), "worker-1");
+    const dir = path.join(workerRoot(repo, cfg), "station-1");
     expect(fs.existsSync(dir)).toBe(true);
-    expect(removeWorker("worker-1", { cwd: repo, config: cfg }).removed).toBe(true);
+    expect(removeWorker("station-1", { cwd: repo, config: cfg }).removed).toBe(true);
     expect(fs.existsSync(dir)).toBe(false);
-    expect(git(repo, ["branch", "--list", "agent-bus/worker-1"])).toBe("");
+    expect(git(repo, ["branch", "--list", "yc/station-1"])).toBe("");
     // idempotent
-    expect(removeWorker("worker-1", { cwd: repo, config: cfg }).removed).toBe(false);
+    expect(removeWorker("station-1", { cwd: repo, config: cfg }).removed).toBe(false);
   });
 
   it("rm refuses to discard uncommitted work without force", () => {
     addWorkers(1, { cwd: repo, config: cfg });
-    const dir = path.join(workerRoot(repo, cfg), "worker-1");
+    const dir = path.join(workerRoot(repo, cfg), "station-1");
     fs.writeFileSync(path.join(dir, "wip.txt"), "uncommitted\n");
-    expect(() => removeWorker("worker-1", { cwd: repo, config: cfg })).toThrow(ProvisionError);
+    expect(() => removeWorker("station-1", { cwd: repo, config: cfg })).toThrow(ProvisionError);
     expect(removeWorker("worker-1", { cwd: repo, config: cfg, force: true }).removed).toBe(true);
   });
 
   it("scale reconciles up and down (highest index retired first)", () => {
     const up = scaleWorkers(3, { cwd: repo, config: cfg });
-    expect(up.added.map((p) => p.id)).toEqual(["worker-1", "worker-2", "worker-3"]);
+    expect(up.added.map((p) => p.id)).toEqual(["station-1", "station-2", "station-3"]);
     const down = scaleWorkers(1, { cwd: repo, config: cfg });
-    expect(down.removed).toEqual(["worker-2", "worker-3"]);
-    expect(listWorkers(repo, cfg).map((w) => w.id)).toEqual(["worker-1"]);
+    expect(down.removed).toEqual(["station-2", "station-3"]);
+    expect(listWorkers(repo, cfg).map((w) => w.id)).toEqual(["station-1"]);
     const same = scaleWorkers(1, { cwd: repo, config: cfg });
     expect(same.added).toEqual([]);
     expect(same.removed).toEqual([]);
@@ -114,7 +114,7 @@ describe("worker provisioning (manual launcher)", () => {
   });
 
   it("launchCommand quotes odd paths", () => {
-    const cmd = launchCommand({ id: "worker-1", dir: "/tmp/has space/w", model: "sonnet" });
+    const cmd = launchCommand({ id: "station-1", dir: "/tmp/has space/w", model: "sonnet" });
     expect(cmd).toContain("'/tmp/has space/w'");
   });
 });

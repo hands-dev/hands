@@ -69,7 +69,7 @@ describe("board routing", () => {
     const id = store.askQuestion({ asker: "wt3", question: "which venue lens?", now: 1000 });
     store.answerQuestion({ id, answer: "use the skill pick", resolvedBy: "foreman", now: 2000 });
     const res = buildBoard(store, { agentId: "wt3", since: 1500, advance: false, now: 2500 });
-    expect(res.text).toContain("foreman answered");
+    expect(res.text).toContain("expo answered");
     expect(res.text).toContain("use the skill pick");
     store.close();
   });

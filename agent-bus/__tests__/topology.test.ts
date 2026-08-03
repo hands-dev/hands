@@ -62,54 +62,54 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 
 describe("strict-hub topology (server-enforced)", () => {
   it("rejects worker→worker sends with guidance and writes NO notify line", async () => {
-    const w1 = await connect("worker-1");
-    const res = await call(w1, "agent_bus_send", { to: "worker-2", body: "psst" });
+    const w1 = await connect("station-1");
+    const res = await call(w1, "agent_bus_send", { to: "station-2", body: "psst" });
     expect(res.isError).toBe(true);
-    expect(String(res.body.error)).toContain("Route via the foreman");
-    expect(notifyLines("worker-2")).toHaveLength(0);
+    expect(String(res.body.error)).toContain("Route via the expo");
+    expect(notifyLines("station-2")).toHaveLength(0);
     // and nothing landed in the DB either
     expect(stores[0]!.history({ limit: 10 })).toHaveLength(0);
   });
 
   it("rejects worker broadcasts", async () => {
-    const w1 = await connect("worker-1");
+    const w1 = await connect("station-1");
     const res = await call(w1, "agent_bus_send", { to: "*", body: "hi all" });
     expect(res.isError).toBe(true);
-    expect(String(res.body.error)).toContain("Only the foreman may broadcast");
-    expect(notifyLines("foreman")).toHaveLength(0);
+    expect(String(res.body.error)).toContain("Only the expo may broadcast");
+    expect(notifyLines("expo")).toHaveLength(0);
   });
 
   it("allows worker→foreman and worker→principal", async () => {
-    const w1 = await connect("worker-1");
-    const toForeman = await call(w1, "agent_bus_send", { to: "foreman", body: "done" });
+    const w1 = await connect("station-1");
+    const toForeman = await call(w1, "agent_bus_send", { to: "expo", body: "done" });
     expect(toForeman.isError).toBe(false);
-    expect(notifyLines("foreman")).toHaveLength(1);
+    expect(notifyLines("expo")).toHaveLength(1);
     const toHuman = await call(w1, "agent_bus_send", { to: "Michael", body: "fyi" });
     expect(toHuman.isError).toBe(false);
   });
 
   it("lets the foreman broadcast and address any worker", async () => {
-    const foreman = await connect("foreman");
-    stores[0]!.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
-    stores[0]!.registerAgent({ id: "worker-2", cwd: "/", pid: 3 });
-    const dm = await call(foreman, "agent_bus_send", { to: "worker-2", body: "do X" });
+    const foreman = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
+    const dm = await call(foreman, "agent_bus_send", { to: "station-2", body: "do X" });
     expect(dm.isError).toBe(false);
     const bc = await call(foreman, "agent_bus_send", { to: "*", body: "all hands" });
     expect(bc.isError).toBe(false);
-    expect(notifyLines("worker-1").length).toBeGreaterThan(0);
+    expect(notifyLines("station-1").length).toBeGreaterThan(0);
   });
 
   it("rejects worker delegation (foreman-only under strict-hub)", async () => {
-    const w1 = await connect("worker-1");
-    const res = await call(w1, "agent_bus_delegate", { title: "do my chores", to: "worker-2" });
+    const w1 = await connect("station-1");
+    const res = await call(w1, "agent_bus_delegate", { title: "do my chores", to: "station-2" });
     expect(res.isError).toBe(true);
-    expect(String(res.body.error)).toContain("the foreman delegates");
+    expect(String(res.body.error)).toContain("the expo delegates");
     expect(stores[0]!.listTasks()).toHaveLength(0);
   });
 
   it("still lets a worker return/claim its own tasks", async () => {
-    const foreman = await connect("foreman");
-    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "worker-1" });
+    const foreman = await connect("expo");
+    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "station-1" });
     const w1 = await connect("worker-1", DEFAULT_CONFIG);
     const start = await call(w1, "agent_bus_task_update", { id: 1, state: "in_progress" });
     expect(start.isError).toBe(false);
@@ -123,30 +123,30 @@ describe("open topology (opt-out)", () => {
 
   it("restores worker↔worker sends and worker broadcasts", async () => {
     const w1 = await connect("worker-1", open);
-    stores[0]!.registerAgent({ id: "worker-2", cwd: "/", pid: 2 });
-    const dm = await call(w1, "agent_bus_send", { to: "worker-2", body: "psst" });
+    stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 2 });
+    const dm = await call(w1, "agent_bus_send", { to: "station-2", body: "psst" });
     expect(dm.isError).toBe(false);
-    expect(notifyLines("worker-2").length).toBeGreaterThan(0);
+    expect(notifyLines("station-2").length).toBeGreaterThan(0);
     const bc = await call(w1, "agent_bus_send", { to: "*", body: "hi" });
     expect(bc.isError).toBe(false);
-    const del = await call(w1, "agent_bus_delegate", { title: "task", to: "worker-2" });
+    const del = await call(w1, "agent_bus_delegate", { title: "task", to: "station-2" });
     expect(del.isError).toBe(false);
   });
 });
 
 describe("paths + gh-poll tools", () => {
   it("agent_bus_paths is available to every agent and reports identity", async () => {
-    const w1 = await connect("worker-1");
+    const w1 = await connect("station-1");
     const res = await call(w1, "agent_bus_paths", {});
     expect(res.isError).toBe(false);
-    expect(res.body.agentId).toBe("worker-1");
+    expect(res.body.agentId).toBe("station-1");
     expect(res.body.journalSync).toBe("disabled"); // no remote configured
-    expect(String(res.body.notify)).toContain("worker-1.notify");
+    expect(String(res.body.notify)).toContain("station-1.notify");
   });
 
   it("agent_bus_gh_poll registers for the foreman only", async () => {
-    const foreman = await connect("foreman");
-    const w1 = await connect("worker-1");
+    const foreman = await connect("expo");
+    const w1 = await connect("station-1");
     const foremanTools = (await foreman.listTools()).tools.map((t) => t.name);
     const workerTools = (await w1.listTools()).tools.map((t) => t.name);
     expect(foremanTools).toContain("agent_bus_gh_poll");

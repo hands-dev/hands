@@ -112,10 +112,10 @@ describe("loadConfig", () => {
     try {
       const cfg = loadConfig({ cwd: repoA, env: { AGENT_BUS_TEST_HOME: home } });
       expect(cfg.principal.name).toBe("Ada"); // user layer
-      expect(cfg.workers.model).toBe("opus"); // user layer
+      expect(cfg.stations.model).toBe("opus"); // user layer (via legacy `workers` key)
       expect(cfg.topology).toBe("open"); // repo layer
-      expect(cfg.workers.overrides).toEqual({ "worker-2": "haiku" }); // repo layer
-      expect(cfg.workers.launcher).toBe("auto"); // default
+      expect(cfg.stations.overrides).toEqual({ "worker-2": "haiku" }); // repo layer (legacy key accepted)
+      expect(cfg.stations.launcher).toBe("auto"); // default
     } finally {
       fs.rmSync(path.join(repoA, "agent-bus.config.json"), { force: true });
     }

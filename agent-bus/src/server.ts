@@ -547,7 +547,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
   );
 
-  // --- delegation (foreman → worktree tasks) ---
+  // --- tickets (expo → station delegation) ---
 
   server.registerTool(
     "agent_bus_delegate",
@@ -821,7 +821,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
   // --- expo-directed scaling (opens/closes local station sessions) ---
   // Registered ONLY for the expo, and only when the config opts in — these
   // launch local processes, so they're off unless explicitly enabled.
-  if (isExpo(agentId) && cfg.workers.allowForemanScaling) {
+  if (isExpo(agentId) && cfg.stations.allowScaling) {
     const presentPlans = (plans: import("./provision.js").LaunchPlan[]) =>
       plans.map((p) => ({
         id: p.id,
@@ -908,9 +908,9 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
   return server;
 }
 
-/** Resolve this process's agent id (config foreman.basename included). */
+/** Resolve this process's agent id (config expo.basename included). */
 function resolveSelf(): string {
-  return resolveAgentId({ foremanBasename: loadConfig().foreman.basename });
+  return resolveAgentId({ foremanBasename: loadConfig().expo.basename });
 }
 
 /**

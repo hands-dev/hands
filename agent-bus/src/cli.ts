@@ -174,7 +174,7 @@ function cmdDigest(argv: string[]): void {
 
 function cmdPaths(): void {
   const cfg = loadConfig();
-  const agentId = resolveAgentId({ foremanBasename: cfg.foreman.basename });
+  const agentId = resolveAgentId({ foremanBasename: cfg.expo.basename });
   out(JSON.stringify(pathsReport(agentId, cfg), null, 2));
 }
 

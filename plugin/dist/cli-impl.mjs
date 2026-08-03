@@ -128,23 +128,32 @@ function readJson(file2) {
 }
 function merge(base, layer) {
   if (!layer) return base;
-  const overrides = { ...base.workers.overrides };
-  for (const [key, value] of Object.entries(layer.workers?.overrides ?? {})) {
+  const expoLayer = layer.expo ?? layer.foreman;
+  const stationsLayer = layer.stations ?? {
+    model: layer.workers?.model,
+    overrides: layer.workers?.overrides,
+    launcher: layer.workers?.launcher,
+    worktreeRoot: layer.workers?.worktreeRoot,
+    baseBranch: layer.workers?.baseBranch,
+    allowScaling: layer.workers?.allowForemanScaling
+  };
+  const overrides = { ...base.stations.overrides };
+  for (const [key, value] of Object.entries(stationsLayer?.overrides ?? {})) {
     if (typeof value === "string") overrides[key] = value;
   }
   return {
     principal: { name: layer.principal?.name ?? base.principal.name },
     topology: layer.topology === "open" || layer.topology === "strict-hub" ? layer.topology : base.topology,
-    foreman: {
-      basename: layer.foreman?.basename !== void 0 ? layer.foreman.basename : base.foreman.basename
+    expo: {
+      basename: expoLayer?.basename !== void 0 ? expoLayer.basename : base.expo.basename
     },
-    workers: {
-      model: layer.workers?.model ?? base.workers.model,
+    stations: {
+      model: stationsLayer?.model ?? base.stations.model,
       overrides,
-      launcher: layer.workers?.launcher ?? base.workers.launcher,
-      worktreeRoot: layer.workers?.worktreeRoot !== void 0 ? layer.workers.worktreeRoot : base.workers.worktreeRoot,
-      baseBranch: layer.workers?.baseBranch !== void 0 ? layer.workers.baseBranch : base.workers.baseBranch,
-      allowForemanScaling: layer.workers?.allowForemanScaling ?? base.workers.allowForemanScaling
+      launcher: stationsLayer?.launcher ?? base.stations.launcher,
+      worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
+      baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
+      allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling
     },
     remote: {
       url: layer.remote?.url !== void 0 ? layer.remote.url : base.remote.url,
@@ -183,20 +192,80 @@ var init_config = __esm({
     DEFAULT_CONFIG = {
       principal: { name: "Michael" },
       topology: "strict-hub",
-      foreman: { basename: null },
-      workers: {
+      expo: { basename: null },
+      stations: {
         model: "sonnet",
         overrides: {},
         launcher: "auto",
         worktreeRoot: null,
         baseBranch: null,
-        allowForemanScaling: true
+        allowScaling: true
       },
       remote: { url: null, handle: null, project: null },
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
     cache = /* @__PURE__ */ new Map();
+  }
+});
+
+// src/identity.ts
+import * as path3 from "node:path";
+function isStation(id) {
+  return STATION_ID.test(id);
+}
+function isExpo(id) {
+  return id === "expo" || id === "foreman";
+}
+function resolveAgentRef(nameOrId) {
+  const raw = nameOrId.trim();
+  if (raw === "foreman") return "expo";
+  const legacyStation = raw.match(/^worker-(\d+)$/);
+  if (legacyStation) return `station-${legacyStation[1]}`;
+  return raw;
+}
+function indexFromDirName(dir) {
+  const base = path3.basename(dir);
+  const match = base.match(/(?:^station-|^worker-|worktree-|-wt)(\d+)$/i);
+  if (!match) return null;
+  const n = Number.parseInt(match[1], 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+function agentIdFromArgv(argv = process.argv) {
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--agent-id") {
+      const next = argv[i + 1];
+      return next && !next.startsWith("--") ? next : null;
+    }
+    if (arg.startsWith("--agent-id=")) {
+      return arg.slice("--agent-id=".length) || null;
+    }
+  }
+  return null;
+}
+function resolveAgentId(options) {
+  const cwd = options?.cwd ?? process.cwd();
+  const env = options?.env ?? process.env;
+  const argv = options?.argv ?? process.argv;
+  const fromEnv = env.AGENT_BUS_ID?.trim();
+  if (fromEnv) return resolveAgentRef(fromEnv);
+  const fromArg = agentIdFromArgv(argv)?.trim();
+  if (fromArg) return resolveAgentRef(fromArg);
+  const base = path3.basename(cwd);
+  const expoBasename = env.AGENT_BUS_FOREMAN_BASENAME?.trim() || options?.foremanBasename;
+  if (expoBasename && base === expoBasename) return "expo";
+  if (repoInfo(cwd)?.isMainWorktree) return "expo";
+  const index = indexFromDirName(cwd);
+  if (index !== null) return `station-${index}`;
+  return base;
+}
+var STATION_ID;
+var init_identity = __esm({
+  "src/identity.ts"() {
+    "use strict";
+    init_paths();
+    STATION_ID = /^(?:station|worker)-(\d+)$/;
   }
 });
 
@@ -7998,12 +8067,12 @@ function buildBoard(store, opts) {
   const MAX_MSGS = 8;
   const inbox = store.messagesForSince(opts.agentId, since);
   const answered = store.answeredForAsker(opts.agentId, since);
-  const openForForeman = opts.agentId === "foreman" ? store.listQuestions({ state: "open" }).filter((q) => q.created_at > since) : [];
+  const openForExpo = isExpo(opts.agentId) ? store.listQuestions({ state: "open" }).filter((q) => q.created_at > since) : [];
   const MAX_GH = 5;
   const ghLines = [];
   for (const pr of store.listGithubPrs({ state: "open" })) {
     if (pr.updated_at <= since || ghLines.length >= MAX_GH) continue;
-    if (opts.agentId === "foreman") {
+    if (isExpo(opts.agentId)) {
       ghLines.push(`\u{1F517} ${pr.author}: ${pr.title} (#${pr.number})`);
       continue;
     }
@@ -8025,7 +8094,7 @@ function buildBoard(store, opts) {
   const assignedToMe = store.tasksAssignedSince(opts.agentId, since);
   const returnedToMe = store.tasksReturnedForCreator(opts.agentId, since);
   if (opts.advance) store.setWatermark(opts.agentId, wmKey, String(now));
-  if (journal.length === 0 && collisionLines.length === 0 && answered.length === 0 && openForForeman.length === 0 && inbox.length === 0 && ghLines.length === 0 && assignedToMe.length === 0 && returnedToMe.length === 0) {
+  if (journal.length === 0 && collisionLines.length === 0 && answered.length === 0 && openForExpo.length === 0 && inbox.length === 0 && ghLines.length === 0 && assignedToMe.length === 0 && returnedToMe.length === 0) {
     return { text: "", journalCount: 0, collisions: 0 };
   }
   const lines = ["[agent-bus] update:"];
@@ -8040,9 +8109,9 @@ function buildBoard(store, opts) {
   }
   for (const line of ghLines) lines.push(`  ${line}`);
   for (const q of answered) {
-    lines.push(`  \u2714 foreman answered "${q.question}" \u2192 ${q.answer}`);
+    lines.push(`  \u2714 expo answered "${q.question}" \u2192 ${q.answer}`);
   }
-  for (const q of openForForeman) {
+  for (const q of openForExpo) {
     lines.push(`  ? ${q.asker} asks: "${q.question}" \u2014 adjudicate or escalate`);
   }
   for (const t of assignedToMe) {
@@ -8076,6 +8145,7 @@ var IDLE_THRESHOLD_MS, VERB;
 var init_board = __esm({
   "src/board.ts"() {
     "use strict";
+    init_identity();
     init_store();
     IDLE_THRESHOLD_MS = 3 * 6e4;
     VERB = { commit: "committed", memory: "learned", note: "noted" };
@@ -8154,10 +8224,13 @@ function requireRepo(cwd) {
 }
 function workerRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
-  if (cfg.workers.worktreeRoot) return cfg.workers.worktreeRoot;
+  if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
   return path9.join(os5.homedir(), ".agent-bus", "worktrees", requireRepo(cwd).slug);
 }
 function workerBranch(index) {
+  return `yc/station-${index}`;
+}
+function legacyBranch(index) {
   return `agent-bus/worker-${index}`;
 }
 function listWorkers(cwd = process.cwd(), config2) {
@@ -8170,13 +8243,14 @@ function listWorkers(cwd = process.cwd(), config2) {
   }
   const workers = [];
   for (const name of names) {
-    const m = name.match(/^worker-(\d+)$/);
+    const m = name.match(/^(?:station|worker)-(\d+)$/);
     if (!m) continue;
     const index = Number.parseInt(m[1], 10);
     workers.push({
-      id: name,
+      id: `station-${index}`,
       index,
       dir: path9.join(root, name),
+      // legacy worker-<n> dirs keep their path
       branch: workerBranch(index),
       present: true
     });
@@ -8192,7 +8266,7 @@ function branchExists(cwd, branch) {
   }
 }
 function launchCommand(worker) {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /rh:worker")}`;
+  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /yc:station")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
@@ -8254,17 +8328,17 @@ function addWorkers(count, opts) {
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
-    const id = `worker-${index}`;
+    const id = `station-${index}`;
     const dir = path9.join(root, id);
     const branch = workerBranch(index);
-    const base = cfg.workers.baseBranch ?? "HEAD";
+    const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
       git4(info.repoRoot, ["worktree", "add", dir, branch]);
     } else {
       git4(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
     }
-    const model = cfg.workers.overrides[id] ?? cfg.workers.model;
-    const res = launch({ id, dir, model }, cfg.workers.launcher, opts?.env);
+    const model = cfg.stations.overrides[id] ?? cfg.stations.overrides[`worker-${index}`] ?? cfg.stations.model;
+    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,
       dir,
@@ -8281,17 +8355,22 @@ function addWorkers(count, opts) {
 function removeWorker(id, opts) {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
-  const m = id.match(/^worker-(\d+)$/);
-  if (!m) throw new ProvisionError(`not a worker id: ${id} (expected worker-<n>)`);
+  const m = id.match(/^(?:station|worker)-(\d+)$/);
+  if (!m) throw new ProvisionError(`not a station id: ${id} (expected station-<n>)`);
+  const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
-  const dir = path9.join(workerRoot(cwd, cfg), id);
-  try {
-    execFileSync5("pkill", ["-f", `tail -F -n0 .*${id}\\.notify`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
-  }
-  try {
-    execFileSync5("tmux", ["kill-session", "-t", `agent-bus-${id}`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
+  const root = workerRoot(cwd, cfg);
+  const candidates = [path9.join(root, `station-${index}`), path9.join(root, `worker-${index}`)];
+  const dir = candidates.find((d) => fs9.existsSync(d)) ?? candidates[0];
+  for (const alias of [`station-${index}`, `worker-${index}`]) {
+    try {
+      execFileSync5("pkill", ["-f", `tail -F -n0 .*${alias}\\.notify`], { stdio: "ignore", timeout: 5e3 });
+    } catch {
+    }
+    try {
+      execFileSync5("tmux", ["kill-session", "-t", `agent-bus-${alias}`], { stdio: "ignore", timeout: 5e3 });
+    } catch {
+    }
   }
   let removed = false;
   if (fs9.existsSync(dir)) {
@@ -8307,14 +8386,15 @@ function removeWorker(id, opts) {
     removed = true;
   }
   git4(info.repoRoot, ["worktree", "prune"]);
-  const branch = workerBranch(Number.parseInt(m[1], 10));
-  if (branchExists(info.repoRoot, branch)) {
-    try {
-      git4(info.repoRoot, ["branch", "-D", branch]);
-    } catch {
+  for (const branch of [workerBranch(index), legacyBranch(index)]) {
+    if (branchExists(info.repoRoot, branch)) {
+      try {
+        git4(info.repoRoot, ["branch", "-D", branch]);
+      } catch {
+      }
     }
   }
-  return { id, removed };
+  return { id: `station-${index}`, removed };
 }
 function scaleWorkers(target, opts) {
   if (!Number.isInteger(target) || target < 0) throw new ProvisionError(`bad target: ${target}`);
@@ -9129,55 +9209,7 @@ var init_init = __esm({
 
 // src/cli.ts
 init_config();
-
-// src/identity.ts
-init_paths();
-import * as path3 from "node:path";
-var WORKER_ID = /^worker-(\d+)$/;
-function isWorker(id) {
-  return WORKER_ID.test(id);
-}
-function resolveAgentRef(nameOrId) {
-  return nameOrId.trim();
-}
-function indexFromDirName(dir) {
-  const base = path3.basename(dir);
-  const match = base.match(/(?:^worker-|worktree-|-wt)(\d+)$/i);
-  if (!match) return null;
-  const n = Number.parseInt(match[1], 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-function agentIdFromArgv(argv = process.argv) {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--agent-id") {
-      const next = argv[i + 1];
-      return next && !next.startsWith("--") ? next : null;
-    }
-    if (arg.startsWith("--agent-id=")) {
-      return arg.slice("--agent-id=".length) || null;
-    }
-  }
-  return null;
-}
-function resolveAgentId(options) {
-  const cwd = options?.cwd ?? process.cwd();
-  const env = options?.env ?? process.env;
-  const argv = options?.argv ?? process.argv;
-  const fromEnv = env.AGENT_BUS_ID?.trim();
-  if (fromEnv) return fromEnv;
-  const fromArg = agentIdFromArgv(argv)?.trim();
-  if (fromArg) return fromArg;
-  const base = path3.basename(cwd);
-  const foremanBasename = env.AGENT_BUS_FOREMAN_BASENAME?.trim() || options?.foremanBasename;
-  if (foremanBasename && base === foremanBasename) return "foreman";
-  if (repoInfo(cwd)?.isMainWorktree) return "foreman";
-  const index = indexFromDirName(cwd);
-  if (index !== null) return `worker-${index}`;
-  return base;
-}
-
-// src/cli.ts
+init_identity();
 init_paths();
 
 // src/server.ts
@@ -32454,6 +32486,9 @@ function pollGithub(store, opts) {
   return result;
 }
 
+// src/server.ts
+init_identity();
+
 // src/notify.ts
 init_paths();
 import * as fs4 from "node:fs";
@@ -33140,14 +33175,14 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "roundhouse", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (foreman, worker-1, \u2026; see agent_bus_peers). Use agent_bus_peers to discover the team, agent_bus_send to message one, and agent_bus_receive to read messages addressed to you. Call agent_bus_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with agent_bus_ask \u2014 the foreman (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the foreman for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (agentId === "foreman" ? ` You ARE the foreman / command center: run agent_bus_questions to see open questions, agent_bus_priorities to read/set the ranked priorities, agent_bus_answer to resolve, agent_bus_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: agent_bus_todo_add concrete things only they can do (idempotent via dedupKey), and agent_bus_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "")
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see agent_bus_peers). Use agent_bus_peers to discover the team, agent_bus_send to message one, and agent_bus_receive to read messages addressed to you. Call agent_bus_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with agent_bus_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run agent_bus_questions, agent_bus_priorities to read/set the ranked priorities, agent_bus_answer to resolve, agent_bus_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: agent_bus_todo_add concrete things only they can do (idempotent via dedupKey), and agent_bus_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "")
     }
   );
   server.registerTool(
     "agent_bus_send",
     {
       title: "Send a message to another agent",
-      description: `Enqueue a message to another agent on this repo's bus. \`to\` is a peer agent id (foreman, worker-2, \u2026 \u2014 see agent_bus_peers), the principal ("${principal}"), or "*" to broadcast to everyone. Do not include secrets. Waking the recipient costs a full model turn \u2014 for an FYI / status update that needs no immediate action, pass wake:false so it is delivered on their next natural drain instead.`,
+      description: `Enqueue a message to another agent on this repo's bus. \`to\` is a peer agent id (expo, station-2, \u2026 \u2014 see agent_bus_peers), the principal ("${principal}"), or "*" to broadcast to everyone. Do not include secrets. Waking the recipient costs a full model turn \u2014 for an FYI / status update that needs no immediate action, pass wake:false so it is delivered on their next natural drain instead.`,
       inputSchema: {
         to: external_exports3.string().describe('recipient agent id, or "*" for broadcast'),
         body: external_exports3.string(),
@@ -33161,21 +33196,21 @@ function buildServer(store, agentId, config2) {
       store.touch(agentId);
       const to = resolveAgentRef(input.to);
       const broadcast = to === "*";
-      if (cfg.topology === "strict-hub" && isWorker(agentId)) {
+      if (cfg.topology === "strict-hub" && isStation(agentId)) {
         if (broadcast) {
           return {
             ...asToolResult({
               ok: false,
-              error: "Only the foreman may broadcast. Send to the foreman instead \u2014 it relays what the team needs."
+              error: "Only the expo may broadcast. Send to the expo instead \u2014 it relays what the team needs."
             }),
             isError: true
           };
         }
-        if (isWorker(to)) {
+        if (isStation(to)) {
           return {
             ...asToolResult({
               ok: false,
-              error: "Direct worker-to-worker messaging is disabled. Route via the foreman \u2014 use agent_bus_ask for a decision, or agent_bus_send({to:'foreman'}) for a handoff."
+              error: "Direct station-to-station messaging is disabled. Route via the expo \u2014 use agent_bus_ask for a decision, or agent_bus_send({to:'expo'}) for a handoff."
             }),
             isError: true
           };
@@ -33369,8 +33404,8 @@ function buildServer(store, agentId, config2) {
   server.registerTool(
     "agent_bus_ask",
     {
-      title: "Escalate an open question to the foreman",
-      description: `Raise an open question or decision you can't resolve alone. The foreman (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them.`,
+      title: "Escalate an open question to the expo",
+      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them.`,
       inputSchema: {
         question: external_exports3.string(),
         context: external_exports3.string().optional().describe("what's blocked, options, your lean")
@@ -33380,15 +33415,15 @@ function buildServer(store, agentId, config2) {
     async (input) => {
       store.touch(agentId);
       const id = store.askQuestion({ asker: agentId, question: input.question, context: input.context ?? null });
-      deliverWake(["foreman"], { from: agentId, subject: "question" });
-      return asToolResult({ ok: true, id, routedTo: "foreman" });
+      deliverWake(["expo"], { from: agentId, subject: "question" });
+      return asToolResult({ ok: true, id, routedTo: "expo" });
     }
   );
   server.registerTool(
     "agent_bus_questions",
     {
       title: "List questions on the bus",
-      description: "List questions. Foreman inbox = state 'open'. States: open | needs_human | answered. Omit state for all recent.",
+      description: "List questions. Expo inbox = state 'open'. States: open | needs_human | answered. Omit state for all recent.",
       inputSchema: {
         state: external_exports3.enum(["open", "needs_human", "answered"]).optional(),
         limit: external_exports3.number().int().min(1).max(200).optional()
@@ -33419,7 +33454,7 @@ function buildServer(store, agentId, config2) {
     "agent_bus_answer",
     {
       title: "Answer a question (resolve it)",
-      description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'foreman' when you auto-resolved it. Cite which priority it mapped to.`,
+      description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'foreman' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
       inputSchema: {
         id: external_exports3.number().int(),
         answer: external_exports3.string(),
@@ -33438,7 +33473,7 @@ function buildServer(store, agentId, config2) {
         resolvedBy: input.by ?? "foreman",
         priorityRef: input.priority ?? null
       });
-      deliverWake([q.asker], { from: "foreman", subject: "answer" });
+      deliverWake([q.asker], { from: "expo", subject: "answer" });
       return asToolResult({ ok: true, id: input.id, asker: q.asker });
     }
   );
@@ -33469,8 +33504,8 @@ function buildServer(store, agentId, config2) {
   server.registerTool(
     "agent_bus_rec_outcome",
     {
-      title: "Record a recommendation's hindsight outcome (foreman self-audit)",
-      description: `The foreman's introspection. After one of your recommendations has played out, record whether it HELD UP ('validated') or was OVERTURNED by a later finding ('contradicted'), with a short reason. This grades YOUR OWN judgment in hindsight \u2014 not whether ${principal} accepted the advice \u2014 and feeds the foreman-effectiveness score on the dashboard. Run it as part of your routine: revisit recent recommendations, and when a worker's later finding overturns a call you made, mark it 'contradicted' honestly (that is the signal ${principal} wants to see degrade the score).`,
+      title: "Record a recommendation's hindsight outcome (expo self-audit)",
+      description: `The expo's introspection. After one of your recommendations has played out, record whether it HELD UP ('validated') or was OVERTURNED by a later finding ('contradicted'), with a short reason. This grades YOUR OWN judgment in hindsight \u2014 not whether ${principal} accepted the advice \u2014 and feeds the expo-effectiveness score on the dashboard. Run it as part of your routine: revisit recent recommendations, and when a station's later finding overturns a call you made, mark it 'contradicted' honestly (that is the signal ${principal} wants to see degrade the score).`,
       inputSchema: {
         id: external_exports3.number().int().describe("the question/recommendation id to grade"),
         outcome: external_exports3.enum(["validated", "contradicted"]),
@@ -33489,8 +33524,8 @@ function buildServer(store, agentId, config2) {
   server.registerTool(
     "agent_bus_priorities",
     {
-      title: "Read or set the foreman's ranked priorities",
-      description: `No args: read the current ranked priorities (+ whether they're stale/unset). Pass \`set\` to replace them (ranked, most-important first). Pass confirm=true to mark the existing list still-current. If items is empty/unset, ask ${principal} for today's priorities.`,
+      title: "Read or set the menu \u2014 the expo's ranked priorities",
+      description: `No args: read the current ranked priorities (+ whether they're stale/unset). Pass \`set\` to replace them (ranked, most-important first). Pass confirm=true to mark the existing list still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
       inputSchema: {
         set: external_exports3.array(external_exports3.string()).optional(),
         confirm: external_exports3.boolean().optional()
@@ -33523,8 +33558,8 @@ function buildServer(store, agentId, config2) {
   server.registerTool(
     "agent_bus_delegate",
     {
-      title: "Delegate a task to a worker",
-      description: 'Hand a unit of real work to a worker (foreman use). `to` = a worker agent id (worker-1, worker-2, \u2026), or omit for the unassigned queue ("any available worker"). The first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.',
+      title: "Fire a ticket to a station (delegate a task)",
+      description: 'Hand a ticket (a unit of real work) to a station \u2014 expo use. `to` = a station agent id (station-1, station-2, \u2026), or omit for the unassigned rail ("any available station"). The first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.',
       inputSchema: {
         title: external_exports3.string(),
         body: external_exports3.string().optional(),
@@ -33535,11 +33570,11 @@ function buildServer(store, agentId, config2) {
     },
     async (input) => {
       store.touch(agentId);
-      if (cfg.topology === "strict-hub" && isWorker(agentId)) {
+      if (cfg.topology === "strict-hub" && isStation(agentId)) {
         return {
           ...asToolResult({
             ok: false,
-            error: "Workers don't delegate tasks. Hand work upward instead: agent_bus_ask for a decision, or agent_bus_send({to:'foreman'}) to propose the task \u2014 the foreman delegates it."
+            error: "Stations don't fire tickets. Hand work upward instead: agent_bus_ask for a decision, or agent_bus_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
           }),
           isError: true
         };
@@ -33560,7 +33595,7 @@ function buildServer(store, agentId, config2) {
     "agent_bus_tasks",
     {
       title: "List delegated tasks",
-      description: "List tasks. A worktree checks its own with assignee=<me>; the foreman omits filters or uses active=true. States: open | assigned | in_progress | returned | done | cancelled.",
+      description: "List tickets (tasks). A station checks its own with assignee=<me>; the expo omits filters or uses active=true. States: open | assigned | in_progress | returned | done | cancelled.",
       inputSchema: {
         state: external_exports3.enum(["open", "assigned", "in_progress", "returned", "done", "cancelled"]).optional(),
         assignee: external_exports3.string().optional(),
@@ -33596,8 +33631,8 @@ function buildServer(store, agentId, config2) {
   server.registerTool(
     "agent_bus_task_update",
     {
-      title: "Advance a delegated task",
-      description: "Move a task through its lifecycle. Worker: 'in_progress' when you start (claims an unassigned one), 'returned' with result when you report back. Foreman: 'done' to accept, 'cancelled' to drop.",
+      title: "Advance a ticket (fire / plate / serve / 86)",
+      description: "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), 'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it.",
       inputSchema: {
         id: external_exports3.number().int(),
         state: external_exports3.enum(["in_progress", "returned", "done", "cancelled"]),
@@ -33626,7 +33661,7 @@ function buildServer(store, agentId, config2) {
     "agent_bus_todos",
     {
       title: "Read the principal's to-do list",
-      description: `List the personal to-do items the foreman is tracking for ${principal}. No args: everything (open first). Pass state to filter: open | done | dismissed. Read-only \u2014 the foreman manages the list via agent_bus_todo_add / agent_bus_todo_update.`,
+      description: `List the personal to-do items the expo is tracking for ${principal}. No args: everything (open first). Pass state to filter: open | done | dismissed. Read-only \u2014 the expo manages the list via agent_bus_todo_add / agent_bus_todo_update.`,
       inputSchema: {
         state: external_exports3.enum(["open", "done", "dismissed"]).optional(),
         limit: external_exports3.number().int().min(1).max(200).optional()
@@ -33703,11 +33738,11 @@ function buildServer(store, agentId, config2) {
       return asToolResult({ ok: true, id: input.id, state: input.state });
     }
   );
-  if (agentId === "foreman") {
+  if (isExpo(agentId)) {
     server.registerTool(
       "agent_bus_digest_note",
       {
-        title: "Add a prose note to today's journal digest (foreman only)",
+        title: "Add a prose note to today's journal digest (expo only)",
         description: "Record a short narrative note (2\u20135 lines) into the durable journal's daily digest \u2014 the end-of-day wrap-up a human reads when browsing the journal repo. Renders under 'Notes' in journal/<project>/<handle>/<date>.md on the next sync. No-op guidance: requires remote journaling (config remote.url); notes are plaintext in the journal repo.",
         inputSchema: { text: external_exports3.string().min(1).max(2e3) },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
@@ -33727,8 +33762,8 @@ function buildServer(store, agentId, config2) {
     server.registerTool(
       "agent_bus_gh_poll",
       {
-        title: "Poll GitHub for other engineers' PRs (foreman only)",
-        description: "Record what OTHER engineers are shipping (open + recently-merged PRs on this repo, excluding the principal's) for the dashboard team lane and per-worker relevance matching. Network call \u2014 run once every few passes, not every tick" + (cfg.gh.poll ? "." : ". NOTE: gh.poll is disabled in this repo's config \u2014 skip it."),
+        title: "Poll GitHub for other engineers' PRs (expo only)",
+        description: "Record what OTHER engineers are shipping (open + recently-merged PRs on this repo, excluding the principal's) for the dashboard team lane and per-station relevance matching. Network call \u2014 run once every few passes, not every tick" + (cfg.gh.poll ? "." : ". NOTE: gh.poll is disabled in this repo's config \u2014 skip it."),
         inputSchema: {},
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
       },
@@ -33746,7 +33781,7 @@ function buildServer(store, agentId, config2) {
       }
     );
   }
-  if (agentId === "foreman" && cfg.workers.allowForemanScaling) {
+  if (isExpo(agentId) && cfg.stations.allowScaling) {
     const presentPlans = (plans) => plans.map((p) => ({
       id: p.id,
       model: p.model,
@@ -33758,8 +33793,8 @@ function buildServer(store, agentId, config2) {
     server.registerTool(
       "agent_bus_worker_add",
       {
-        title: "Spin up more workers (foreman only)",
-        description: `Provision and launch \`count\` new worker sessions for this repo. Use when the ranked priorities are under-staffed. Each worker appears on the board as worker-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
+        title: "Open more stations (expo only)",
+        description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu (ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
         inputSchema: { count: external_exports3.number().int().min(1).max(12).optional() },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
       },
@@ -33776,10 +33811,10 @@ function buildServer(store, agentId, config2) {
     server.registerTool(
       "agent_bus_worker_remove",
       {
-        title: "Retire a worker (foreman only)",
-        description: "Stop a worker's session and remove its managed workspace. Refuses if the worker has uncommitted work unless force:true. Idempotent.",
+        title: "Close a station (expo only)",
+        description: "Stop a station's session and remove its managed workspace. Refuses if the station has uncommitted work unless force:true. Idempotent.",
         inputSchema: {
-          id: external_exports3.string().describe("worker-<n>"),
+          id: external_exports3.string().describe("station-<n>"),
           force: external_exports3.boolean().optional().describe("true = discard uncommitted work")
         },
         annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
@@ -33797,8 +33832,8 @@ function buildServer(store, agentId, config2) {
     server.registerTool(
       "agent_bus_scale",
       {
-        title: "Scale the worker pool (foreman only)",
-        description: "Reconcile the pool to exactly `target` workers \u2014 adds or retires as needed (highest index retired first; refuses to discard uncommitted work unless force:true).",
+        title: "Scale the station line (expo only)",
+        description: "Reconcile the line to exactly `target` stations \u2014 adds or opens/closes as needed (highest index retired first; refuses to discard uncommitted work unless force:true).",
         inputSchema: {
           target: external_exports3.number().int().min(0).max(12),
           force: external_exports3.boolean().optional()
@@ -33820,7 +33855,7 @@ function buildServer(store, agentId, config2) {
   return server;
 }
 function resolveSelf() {
-  return resolveAgentId({ foremanBasename: loadConfig().foreman.basename });
+  return resolveAgentId({ foremanBasename: loadConfig().expo.basename });
 }
 function pathsReport(agentId, cfg) {
   const info = repoInfo();
@@ -34059,7 +34094,7 @@ function cmdDigest(argv) {
 }
 function cmdPaths() {
   const cfg = loadConfig();
-  const agentId = resolveAgentId({ foremanBasename: cfg.foreman.basename });
+  const agentId = resolveAgentId({ foremanBasename: cfg.expo.basename });
   out2(JSON.stringify(pathsReport(agentId, cfg), null, 2));
 }
 async function main2() {
