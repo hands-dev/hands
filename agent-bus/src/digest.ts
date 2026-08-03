@@ -42,11 +42,11 @@ function oneLine(text: unknown): string {
   return points.length <= RESULT_MAX ? flat : `${points.slice(0, RESULT_MAX - 1).join("")}…`;
 }
 
-/** foreman first, then worker-N ascending, then anything else, unattributed last. */
+/** expo first, then station-N ascending, then anything else, unattributed last (legacy ids rank equally). */
 function agentRank(agent: string): [number, number, string] {
-  if (agent === "foreman") return [0, 0, agent];
-  const worker = agent.match(/^worker-(\d+)$/);
-  if (worker) return [1, Number.parseInt(worker[1]!, 10), agent];
+  if (agent === "expo" || agent === "foreman") return [0, 0, agent];
+  const station = agent.match(/^(?:station|worker)-(\d+)$/);
+  if (station) return [1, Number.parseInt(station[1]!, 10), agent];
   if (agent === "unattributed") return [3, 0, agent];
   return [2, 0, agent];
 }
@@ -79,6 +79,8 @@ function describe(event: JournalEvent): string | null {
       return `- ${t} todo #${d.id} added: ${oneLine(d.title)}`;
     case "todo.update":
       return `- ${t} todo #${d.id} → ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
+    case "focus.set":
+      return `- ${t} focus → ${oneLine(d.focus) || "(cleared)"}`;
     case "priorities.set": {
       const items = Array.isArray(d.items) ? (d.items as unknown[]) : [];
       const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" · ");
@@ -105,6 +107,17 @@ export function renderDigest(
   opts: { project: string; handle: string; date: string },
 ): DayDigest {
   const day = events.filter((e) => dayOf(e.ts) === opts.date);
+  // Each agent's focus label as of the END of this date, derived from events
+  // only (determinism): the last focus.set at or before the date wins.
+  const focusAsOf = new Map<string, string>();
+  for (const e of events) {
+    if (e.type !== "focus.set" || dayOf(e.ts) > opts.date) continue;
+    const station = String(e.data.station ?? "");
+    const focus = e.data.focus;
+    if (!station) continue;
+    if (typeof focus === "string" && focus.trim()) focusAsOf.set(station, focus.trim());
+    else focusAsOf.delete(station);
+  }
   const byAgent = new Map<string, JournalEvent[]>();
   const notes: JournalEvent[] = [];
   let messages = 0;
@@ -122,9 +135,11 @@ export function renderDigest(
       continue;
     }
     if (event.type === "cursor") continue; // bookkeeping — not digest-worthy
-    const bucket = byAgent.get(agent);
+    // a focus change belongs to the station it describes, not who set it
+    const owner = event.type === "focus.set" ? String(event.data.station ?? agent) : agent;
+    const bucket = byAgent.get(owner);
     if (bucket) bucket.push(event);
-    else byAgent.set(agent, [event]);
+    else byAgent.set(owner, [event]);
   }
 
   const lines: string[] = [STAMP, `# ${opts.date} · ${opts.handle} · ${opts.project}`, ""];
@@ -143,7 +158,8 @@ export function renderDigest(
       .filter((line): line is string => line !== null);
     const sent = messagesByAgent.get(agent) ?? 0;
     if (items.length === 0 && sent === 0) continue;
-    lines.push(`## ${agent}`);
+    const label = focusAsOf.get(agent);
+    lines.push(label ? `## ${agent} · ${label}` : `## ${agent}`);
     lines.push(...items);
     if (sent > 0) lines.push(`- messages sent: ${sent}`);
     lines.push("");

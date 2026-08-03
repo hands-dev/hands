@@ -20,7 +20,7 @@ export function computeStateHash(store: Store, now: number = Date.now()): string
       : activeAge !== null && activeAge <= IDLE_THRESHOLD_MS
         ? "active"
         : "idle";
-    return `${p.id}|${state}|${p.branch ?? ""}`;
+    return `${p.id}|${state}|${p.branch ?? ""}|${p.focus ?? ""}`;
   });
   const tasks = store
     .listTasks({ active: true })
@@ -203,7 +203,7 @@ export function buildBoard(
 function peerLabel(p: Peer, now: number): string {
   const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
   const where = p.branch ?? "?";
-  const who = p.id;
+  const who = p.focus ? `${p.id}·${p.focus}` : p.id;
   if (!p.online) return `${who}·offline`;
   if (activeAge > IDLE_THRESHOLD_MS) return `${who}·idle ${fmtAge(activeAge)}·${where}`;
   return `${who}·${where}`;

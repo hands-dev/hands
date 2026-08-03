@@ -66,6 +66,22 @@ describe("renderDigest", () => {
     expect(a.body).not.toContain("cursor");
   });
 
+  it("renders focus labels in section headers, derived from focus.set events", () => {
+    const withFocus = [
+      ev("focus.set", { station: "worker-2", focus: "developer API", at: 0 }, 5, "foreman"),
+      ...SAMPLE,
+    ];
+    const d = renderDigest(withFocus, { project: "p", handle: "h", date: DAY });
+    expect(d.body).toContain("## worker-2 · developer API");
+    expect(d.body).toContain("focus → developer API");
+    // a NEXT-day render still shows the label (last set ≤ that day)
+    const later = renderDigest(
+      [...withFocus, ev("task.create", { id: 9, title: "t", at: 0 }, 24 * 60 + 10, "worker-2")],
+      { project: "p", handle: "h", date: "2026-08-04" },
+    );
+    expect(later.body).toContain("## worker-2 · developer API");
+  });
+
   it("filters strictly by UTC day", () => {
     const other = renderDigest(SAMPLE, { project: "p", handle: "h", date: "2026-08-04" });
     expect(other.body).toContain("_no activity_");
