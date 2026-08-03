@@ -2,7 +2,7 @@
 /**
  * agent-bus CLI — provisioning + setup. The user thinks in workers:
  *
- *   agent-bus init                one-time setup for this machine + repo
+ *   agent-bus init                per-repo config scaffold + old-install cleanup/migration
  *   agent-bus worker add [-n N]   spin up N workers (worktree hidden inside)
  *   agent-bus worker ls           list this repo's workers
  *   agent-bus worker rm <id>      retire a worker (idempotent; --force discards)
@@ -11,8 +11,8 @@
  *   agent-bus sync                push pending journal appends now
  *   agent-bus paths               where this cwd resolves (debug)
  *
- * The MCP server itself stays `server.js` (registered by `init`); this bin is
- * the human/foreman-facing lifecycle tool.
+ * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
+ * the human/foreman-facing lifecycle tool (on the Bash PATH via plugin/bin).
  */
 import { loadConfig } from "./config.js";
 import { resolveAgentId } from "./identity.js";
@@ -184,7 +184,7 @@ async function main(): Promise<void> {
       default: {
         out("agent-bus — foreman/worker fleet for Claude Code");
         out("");
-        out("  agent-bus init                one-time setup (build, register MCP, hooks, skills, config)");
+        out("  agent-bus init                scaffold agent-bus.config.json + clean up pre-plugin installs");
         out("  agent-bus worker add [-n N]   spin up N workers");
         out("  agent-bus worker ls           list this repo's workers");
         out("  agent-bus worker rm <id>      retire a worker (--force discards uncommitted work)");

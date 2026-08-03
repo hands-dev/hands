@@ -1,96 +1,71 @@
-# BOOTSTRAP — restore the foreman/worker setup on a new machine
+# BOOTSTRAP — restore the fleet on a new machine
 
-**Runbook for Claude Code to execute** on a fresh Mac. Steps 1–5 are automatable; **Step 0 (auth)
-must be done by the human** — no repo can carry credentials. Work top to bottom; verify each step
-before the next.
+**Runbook for Claude Code to execute** on a fresh machine. Step 0 (auth) must be done by the
+human; the rest is automatable. The durable journal makes this short: coordination state
+(tasks, questions, todos, priorities, history) restores from the journal repo — sessions are
+disposable by design.
 
-Placeholders (fill for your setup — the old machine's values are in the examples):
+Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.git`);
+`<REPO_DIR>` = its main checkout path.
 
-- `<REPO_SSH>` — the project repo you're orchestrating (e.g. `git@github.com:theandcompany/ampersand.git`)
-- `<REPO_DIR>` — where its main checkout lives (e.g. `~/Development/ampersand`)
-- `<PRINCIPAL>` — the human the foreman reports to (e.g. `Michael`)
+## Step 0 — HUMAN (auth)
 
-## Step 0 — HUMAN must do first (auth; cannot be automated)
+- `gh auth login` (access to the project repo AND the journal repo). Verify: `gh auth status`.
+- `claude` signed in.
+- Node ≥ 22.5 on PATH: `node --version`.
+- Any project-specific cloud auth.
 
-These establish identity the repo can't hold. Ask the principal to run each and confirm:
+## Step 1 — Install the plugin
 
-- `gh auth login` — GitHub, with access to the project repo. Verify: `gh auth status`.
-- `claude` is signed in (the CLI you're running in). Verify: it's running.
-- Any cloud auth the project's actual work needs (e.g. `gcloud auth login`).
-- Node ≥ 22.5 present: `node --version` (`brew install node`).
-
-## Step 1 — Clone the repos
-
-```bash
-git clone <this agent-bus-workflow repo>          # the mechanism
-git clone <REPO_SSH> <REPO_DIR>                   # the project to orchestrate
-bash resume-clean-sheet.sh                        # optional: restore in-flight branches (edit its vars first)
+```
+/plugin marketplace add and-michael/agent-bus-workflow
+/plugin install agent-bus@agent-bus-workflow
 ```
 
-## Step 2 — One-command install
+## Step 2 — Clone the project + configure
 
 ```bash
-cd agent-bus-workflow/agent-bus && npm install && npm run build
+git clone <REPO_SSH> <REPO_DIR>
 cd <REPO_DIR>
-node path/to/agent-bus-workflow/agent-bus/dist/cli.js init --principal "<PRINCIPAL>"
+agent-bus init           # scaffold config (or restore your committed agent-bus.config.json)
 ```
 
-`init` registers the MCP server (user scope, `~/.claude.json`), merges the two hooks into
-`~/.claude/settings.json` (`Stop → publish`, `UserPromptSubmit → board`), scaffolds
-`agent-bus.config.json` in the repo root, and renders + installs the `/foreman` + `/worker` skills.
-Verify: `claude mcp list` shows `agent-bus`, and `node …/dist/server.js paths` (from `<REPO_DIR>`)
-prints `agentId: "foreman"` with a per-repo coordination dir.
+If `agent-bus.config.json` is committed in the project repo, init leaves it alone — the journal
+url + handle come back with the clone.
 
-Also install the optional extras from this repo:
+## Step 3 — Restore coordination state from the journal
 
 ```bash
-mkdir -p ~/.claude/hooks
-cp claude-config/hooks/memory-autocommit.py ~/.claude/hooks/       # memory auto-commit (PostToolUse)
-cp claude-config/statusline-command.sh ~/.claude/ && chmod +x ~/.claude/statusline-command.sh
+cd <REPO_DIR>
+agent-bus restore        # pulls the journal repo, replays your handle's events
+agent-bus paths          # verify: agentId "foreman", journalSync healthy
 ```
 
-(`claude-config/settings.reference.json` shows where those wire into `~/.claude/settings.json` —
-merge the `PostToolUse` + `statusLine` keys and carry over `theme`/`model`/`effortLevel` to taste.
-Fix the `ABS_PATH…` placeholders it uses.)
+## Step 4 — Restore project memory (optional, if this repo carries a snapshot)
 
-## Step 3 — Restore the memory store (the foreman's context)
-
-Project memory is keyed to the repo's main-checkout path:
+Claude Code project memory is keyed to the main-checkout path:
 
 ```bash
 MEM=~/.claude/projects/$(echo "<REPO_DIR abs path>" | tr '/.' '--')/memory
-mkdir -p "$MEM"
-cp memory/*.md "$MEM/"        # if this repo carries a memory snapshot
+mkdir -p "$MEM" && cp memory/*.md "$MEM/"
 ```
 
-(The bus derives the same path automatically — `memoryDir` in `agent-bus/src/memory.ts` — so memory
-journaling works as soon as the files are in place. MEMORY.md is the index read each session.)
+## Step 5 — Run
 
-## Step 4 — Seed priorities (optional)
+- Main checkout: `/agent-bus:foreman` (or `/loop /agent-bus:foreman`).
+- Workers: `agent-bus worker add -n <N>` — no `git worktree` commands, ever.
+- Dashboard: `agent-bus serve` → http://localhost:4319
 
-```bash
-cp coordination/priorities.example.md "$(cd <REPO_DIR> && node …/dist/server.js paths | jq -r .coordinationDir)/priorities.md"
-```
+## Step 6 — Re-auth other MCP servers (human, as needed)
 
-## Step 5 — Run it
-
-- Main checkout pane: `/foreman` (or `/loop /foreman`).
-- Workers: `node …/agent-bus/dist/cli.js worker add -n <N>` — sessions launch via the configured
-  launcher (or paste the printed commands). No `git worktree` commands needed, ever.
-- Dashboard: `node …/agent-bus/dist/server.js serve` → http://localhost:4319
-- Confirm the bus: the board status line appears on your next prompt, and `agent_bus_peers` lists
-  the foreman + workers.
-
-## Step 6 — Re-auth the OTHER MCP servers (human, as needed)
-
-The foreman/workers may also use project-specific MCP servers (Linear, Sentry, etc. — not in this
-repo). Add with `claude mcp add …` and complete each OAuth prompt. agent-bus is the only one
-REQUIRED for the foreman/worker loop itself.
+Project-specific MCP servers (Linear, Sentry, …) re-add with `claude mcp add …` + OAuth. The
+agent-bus plugin is the only piece the fleet itself needs.
 
 ---
 
-### What could NOT be carried (do fresh)
+### What does NOT carry over
 
-- **All auth** (gh, claude, cloud, every OAuth MCP) — Steps 0 + 6.
-- **Live runtime message data** (`agent-bus.db`, `*.notify`) — regenerated on first run, per repo.
-- **The worker sessions** — recreated by `agent-bus worker add`.
+- Auth (Step 0/6).
+- Live worker sessions — recreate with `agent-bus worker add`.
+- Claude session context — by design; the journal restores *state*, the foreman rehydrates from
+  board + tasks + priorities on its first pass.

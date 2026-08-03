@@ -64,14 +64,15 @@ agent's entire context. The bus minimizes and meters wakes:
 ## CLI
 
 ```bash
-node dist/cli.js init                # one-command setup (MCP registration, hooks, config, skills)
-node dist/cli.js worker add -n 3     # provision + launch 3 workers
-node dist/cli.js worker ls           # list this repo's workers
-node dist/cli.js worker rm worker-3  # retire one (--force discards uncommitted work)
-node dist/cli.js scale 5             # reconcile the pool to exactly 5
-node dist/cli.js restore             # rebuild local bus state from the remote journal
-node dist/cli.js sync                # push pending journal appends now (normally automatic)
-node dist/cli.js paths               # where does this cwd resolve? (debug)
+agent-bus init                # per-repo config scaffold + pre-plugin install cleanup
+agent-bus worker add -n 3     # provision + launch 3 workers
+agent-bus worker ls           # list this repo's workers
+agent-bus worker rm worker-3  # retire one (--force discards uncommitted work)
+agent-bus scale 5             # reconcile the pool to exactly 5
+agent-bus restore             # rebuild local bus state from the remote journal
+agent-bus sync [--adopt]      # push journal appends now; --adopt initializes a non-empty repo
+agent-bus serve               # live dashboard → http://localhost:4319
+agent-bus paths               # where does this cwd resolve? (debug)
 ```
 
 Workers are hosted in hidden git worktrees under `~/.agent-bus/worktrees/<slug>/worker-<n>` on
@@ -117,7 +118,7 @@ log it can always be rebuilt from.
 
 ## Passive standup (hooks)
 
-Two global hooks in `~/.claude/settings.json` (installed by `init`) call the CLI mode:
+Two hooks shipped by the plugin (`plugin/hooks/hooks.json`) call the CLI mode:
 
 - **`Stop` → `… publish`** (async, every turn end): derives status from the git branch, heartbeats
   presence, and auto-journals **new commits** and **memory-store writes**.
@@ -127,7 +128,7 @@ Two global hooks in `~/.claude/settings.json` (installed by `init`) call the CLI
 ## Dashboard
 
 ```bash
-node dist/server.js serve   # → http://127.0.0.1:4319 (AGENT_BUS_PORT overrides)
+agent-bus serve   # → http://127.0.0.1:4319 (AGENT_BUS_PORT overrides)
 ```
 
 Read-only, localhost-only, does not register as an agent. Panels: overall utilization vs the ranked
@@ -136,15 +137,14 @@ effectiveness (hindsight-graded recommendations), "needs you" escalations, colli
 
 ## Foreman & workers
 
-- Main checkout: `/loop /foreman` — triages escalated questions against the priorities
+- Main checkout: `/loop /agent-bus:foreman` — triages escalated questions against the priorities
   (auto-resolving only the reversible/on-priority/scoped/confident slice), delegates all real work,
   reviews returned tasks, gates review/merge depth, maintains the principal's to-do list, and
   re-checks team utilization every ~15 min (skipped when `stateHash` is unchanged).
-- Worker panes: `/loop /worker` — event-driven via a persistent Monitor tailing the worker's
+- Worker panes: `/loop /agent-bus:worker` — event-driven via a persistent Monitor tailing the worker's
   `.notify` file; drains the inbox, does reversible in-workspace work, escalates decisions, yields.
 
-Both behaviors live in the rendered skills (`~/.claude/skills/{foreman,worker}/SKILL.md`, installed
-from the `skills/` templates by `init`).
+Both behaviors ship as plugin skills (`plugin/skills/{foreman,worker}/SKILL.md`).
 
 ## Choosing an execution pattern
 
