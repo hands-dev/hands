@@ -13,7 +13,9 @@ import type { Store } from "./store.js";
  * The local SQLite DB stays the fast working copy; the remote repo is the
  * durable, append-only event log it can always be rebuilt from. Every
  * state-changing action appends one NDJSON line under this fleet's handle
- * (`log/<handle>/<yyyy-mm-dd>.ndjson`) in a local clone; pushes ride the
+ * (`log/<handle>/<yyyy-mm-dd>.<writer>.ndjson`; writer = sanitized hostname,
+ * so two machines on one handle never contend on a file) in a local clone;
+ * pushes ride the
  * Stop-hook publish cadence (debounced, best-effort, offline-tolerant).
  * Restore = pull + replay (`agent-bus restore`).
  *
@@ -27,6 +29,17 @@ import type { Store } from "./store.js";
  */
 
 export const JOURNAL_VERSION = 1;
+
+/**
+ * Journal-REPO layout version, recorded in the `agent-bus.json` marker at the
+ * repo root. The marker is the shape contract: it identifies a repo as an
+ * agent-bus journal (guarding against a typo'd remote.url pointing at some
+ * real repo), and gates replay when the layout is newer than this build. The
+ * tool owns exactly two root paths — `agent-bus.json` and `log/` — and never
+ * stages anything else, so the repo may freely hold other content.
+ */
+export const JOURNAL_LAYOUT = 1;
+export const MARKER_FILE = "agent-bus.json";
 
 export interface JournalEvent {
   v: number;
@@ -61,8 +74,21 @@ export interface RemoteJournal {
   dir: string;
   handle: string;
   url: string;
+  /** per-machine log-file suffix (sanitized hostname unless overridden) */
+  writerId: string;
   /** append one event to today's log file (best-effort, synchronous) */
   append: (type: string, data: Record<string, unknown>) => void;
+}
+
+/** Sanitized per-machine writer id — keeps same-handle clones on separate files. */
+export function defaultWriterId(): string {
+  try {
+    const host = os.hostname().split(".")[0] ?? "";
+    const clean = host.toLowerCase().replace(/[^a-z0-9-]/g, "");
+    return clean || "writer";
+  } catch {
+    return "writer";
+  }
 }
 
 export function resolveHandle(config: AgentBusConfig): string {
@@ -121,18 +147,130 @@ export function syncPull(dir: string): boolean {
 }
 
 export interface SyncResult {
-  status: "pushed" | "clean" | "debounced" | "error";
+  status: "pushed" | "clean" | "debounced" | "invalid" | "error";
   detail?: string;
+}
+
+interface Validation {
+  ok: boolean;
+  /** marker was just written (empty/legacy repo bootstrapped, or --adopt) */
+  bootstrapped?: boolean;
+  /** repo has foreign content and no marker — needs an explicit adopt */
+  needsAdopt?: boolean;
+  reason?: string;
+}
+
+function readMarker(dir: string): { journal: number } | null | "malformed" {
+  const file = path.join(dir, MARKER_FILE);
+  let raw: string;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { journal?: unknown };
+    return typeof parsed?.journal === "number" ? { journal: parsed.journal } : "malformed";
+  } catch {
+    return "malformed";
+  }
+}
+
+/**
+ * Enforce the journal-repo shape contract.
+ *
+ * write mode (sync path): marker present → layout-version gate. Marker absent →
+ * bootstrap it when the repo is empty (or holds only `log/` — a phase-1
+ * journal), REFUSE when the repo has other content unless `adopt` — the guard
+ * against a typo'd remote.url quietly committing logs into some real repo.
+ *
+ * read mode (restore path): only the version gate — reading never mutates or
+ * refuses; a foreign repo simply yields no events.
+ */
+export function validateJournal(
+  dir: string,
+  opts?: { write?: boolean; adopt?: boolean },
+): Validation {
+  const marker = readMarker(dir);
+  if (marker === "malformed") {
+    return { ok: false, reason: `${MARKER_FILE} is malformed — fix or delete it in the journal repo` };
+  }
+  if (marker) {
+    if (marker.journal > JOURNAL_LAYOUT) {
+      return {
+        ok: false,
+        reason: `journal layout v${marker.journal} was written by a newer agent-bus — update the plugin`,
+      };
+    }
+    return { ok: true };
+  }
+  if (!opts?.write) return { ok: true }; // read mode: nothing to gate
+  let entries: string[] = [];
+  try {
+    entries = fs.readdirSync(dir).filter((e) => e !== ".git");
+  } catch {
+    return { ok: false, reason: `journal dir unreadable: ${dir}` };
+  }
+  const foreign = entries.filter((e) => e !== "log");
+  if (foreign.length > 0 && !opts.adopt) {
+    return {
+      ok: false,
+      needsAdopt: true,
+      reason:
+        "the configured remote.url is not an agent-bus journal (no agent-bus.json) and is not empty. " +
+        "If this repo is really where the journal should live, run `agent-bus sync --adopt` once to " +
+        "initialize the journal structure alongside the existing content.",
+    };
+  }
+  fs.writeFileSync(path.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}\n`);
+  return { ok: true, bootstrapped: true };
+}
+
+/** Marker/status live under .git/ so they never dirty the journal work tree. */
+function debounceMarkerPath(dir: string): string {
+  return path.join(dir, ".git", "agent-bus-last-push");
+}
+
+function syncStatusPath(dir: string): string {
+  return path.join(dir, ".git", "agent-bus-sync-status");
+}
+
+export interface SyncStatus extends SyncResult {
+  at: number;
+}
+
+function writeSyncStatus(dir: string, result: SyncResult, now: number): void {
+  try {
+    fs.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}\n`);
+  } catch {
+    // observability only
+  }
+}
+
+/** Last syncPush outcome (push/auth failures are otherwise invisible to the hook path). */
+export function readSyncStatus(dir: string): SyncStatus | null {
+  try {
+    return JSON.parse(fs.readFileSync(syncStatusPath(dir), "utf8")) as SyncStatus;
+  } catch {
+    return null;
+  }
 }
 
 /**
  * Commit + push any journal appends. Debounced via a marker file so the
  * per-turn Stop hook costs nothing most turns. All failures are soft — the
- * commits stay local and the next sync catches up.
+ * commits stay local and the next sync catches up. Order matters: local
+ * appends are committed FIRST (rebase refuses a dirty tracked tree), then we
+ * pull, then validate the merged shape — so nothing is ever pushed to a repo
+ * that fails the contract (stray local commits in our private clone are
+ * harmless).
  */
-export function syncPush(dir: string, opts?: { force?: boolean; now?: number }): SyncResult {
+export function syncPush(
+  dir: string,
+  opts?: { force?: boolean; now?: number; adopt?: boolean },
+): SyncResult {
   const now = opts?.now ?? Date.now();
-  const marker = path.join(dir, ".last-push");
+  const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
     try {
       if (now - fs.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
@@ -140,26 +278,40 @@ export function syncPush(dir: string, opts?: { force?: boolean; now?: number }):
       // no marker yet — proceed
     }
   }
+  const finish = (result: SyncResult): SyncResult => {
+    writeSyncStatus(dir, result, now);
+    return result;
+  };
   try {
-    git(dir, ["add", "-A", "log"]);
-    const dirty = git(dir, ["status", "--porcelain"]) !== "";
+    // stage only the paths the tool owns — and only ones that exist (a bare
+    // `git add log` before the first append is a pathspec fatal)
+    const own = ["log", MARKER_FILE].filter((p) => fs.existsSync(path.join(dir, p)));
+    if (own.length > 0) git(dir, ["add", "-A", "--", ...own]);
+    let dirty = git(dir, ["status", "--porcelain", "--", "log", MARKER_FILE]) !== "";
     if (dirty) {
       git(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
+    }
+    if (!syncPull(dir)) return finish({ status: "error", detail: "pull failed (offline?)" });
+    const validation = validateJournal(dir, { write: true, adopt: opts?.adopt });
+    if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
+    if (validation.bootstrapped) {
+      git(dir, ["add", "--", MARKER_FILE]);
+      git(dir, ["commit", "-q", "-m", "journal: initialize agent-bus structure"]);
+      dirty = true;
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
     if (!dirty && ahead === "0") {
       fs.writeFileSync(marker, "");
-      return { status: "clean" };
+      return finish({ status: "clean" });
     }
-    if (!syncPull(dir)) return { status: "error", detail: "pull failed (offline?)" };
     git(dir, ["push", "-q", "-u", "origin", "main"]);
     fs.writeFileSync(marker, "");
-    return { status: "pushed" };
+    return finish({ status: "pushed" });
   } catch (err) {
-    return {
+    return finish({
       status: "error",
       detail: err instanceof Error ? err.message.split("\n")[0] : String(err),
-    };
+    });
   }
 }
 
@@ -171,6 +323,8 @@ export function openJournal(options?: {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
   config?: AgentBusConfig;
+  /** override the per-machine file suffix (tests simulate two machines) */
+  writerId?: string;
 }): RemoteJournal | null {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
@@ -180,19 +334,23 @@ export function openJournal(options?: {
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url); // best-effort — appends work even if git wiring failed
   const handle = resolveHandle(config);
+  const writerId = options?.writerId ?? defaultWriterId();
   const logDir = path.join(dir, "log", handle);
   return {
     dir,
     handle,
     url,
+    writerId,
     append(type, data) {
       try {
         fs.mkdirSync(logDir, { recursive: true });
         const day = new Date().toISOString().slice(0, 10);
         const event: JournalEvent = { v: JOURNAL_VERSION, ts: Date.now(), type, data };
-        fs.appendFileSync(path.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}\n`, {
-          mode: 0o600,
-        });
+        fs.appendFileSync(
+          path.join(logDir, `${day}.${writerId}.ndjson`),
+          `${JSON.stringify(event)}\n`,
+          { mode: 0o600 },
+        );
       } catch {
         // best-effort — never fail the bus action being journaled
       }
@@ -200,7 +358,12 @@ export function openJournal(options?: {
   };
 }
 
-/** Read one handle's events in append order (files sort by date name). */
+/**
+ * Read one handle's events in causal order. Files sort by date name; with
+ * per-writer suffixes a handle may span several files per day, so events are
+ * re-sorted by `ts` (stable — same-ts events keep their file order), which
+ * keeps update-after-insert correct across a machine move.
+ */
 export function readEvents(dir: string, handle: string): JournalEvent[] {
   const logDir = path.join(dir, "log", handle);
   let files: string[] = [];
@@ -227,7 +390,7 @@ export function readEvents(dir: string, handle: string): JournalEvent[] {
       }
     }
   }
-  return events;
+  return events.sort((a, b) => a.ts - b.ts);
 }
 
 export interface ReplayResult {
