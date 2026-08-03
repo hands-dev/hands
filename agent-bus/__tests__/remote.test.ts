@@ -7,11 +7,14 @@ import { readPriorities } from "../src/priorities.js";
 import {
   ensureRepo,
   type JournalEvent,
+  MARKER_FILE,
   openJournal,
   readEvents,
+  readSyncStatus,
   replayInto,
   syncPull,
   syncPush,
+  validateJournal,
 } from "../src/remote.js";
 import { Store } from "../src/store.js";
 import { DEFAULT_CONFIG } from "../src/config.js";
@@ -27,14 +30,30 @@ afterEach(() => {
 });
 
 /** A journal wired straight to this test's sandbox (no config file needed). */
-function journalAt(handle: string, url: string) {
+function journalAt(handle: string, url: string, opts?: { home?: string; writerId?: string }) {
   const j = openJournal({
-    env: { AGENT_BUS_HOME: path.join(root, "unused-coord") },
+    env: { AGENT_BUS_HOME: path.join(root, opts?.home ?? "unused-coord") },
     cwd: root,
     config: { ...DEFAULT_CONFIG, remote: { url, handle } },
+    writerId: opts?.writerId,
   });
   if (!j) throw new Error("journal did not open");
   return j;
+}
+
+/** Seed a bare remote with a file on main (simulates a repo that is NOT a journal). */
+function seedRemote(remote: string, name: string, body: string): void {
+  const work = fs.mkdtempSync(path.join(root, "seed-"));
+  execFileSync("git", ["clone", "-q", remote, work], { stdio: "ignore" });
+  execFileSync("git", ["-C", work, "checkout", "-q", "-B", "main"], { stdio: "ignore" });
+  fs.writeFileSync(path.join(work, name), body);
+  execFileSync("git", ["-C", work, "add", "-A"], { stdio: "ignore" });
+  execFileSync(
+    "git",
+    ["-C", work, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "seed"],
+    { stdio: "ignore" },
+  );
+  execFileSync("git", ["-C", work, "push", "-q", "origin", "main"], { stdio: "ignore" });
 }
 
 function bareRemote(name: string): string {
@@ -194,5 +213,103 @@ describe("git sync + machine-move restore", () => {
     expect(syncPull(j1.dir)).toBe(true);
     expect(readEvents(j1.dir, "michael")).toHaveLength(1);
     expect(readEvents(j1.dir, "casey")).toHaveLength(1);
+  });
+});
+
+describe("journal repo shape contract", () => {
+  it("bootstraps the marker into an empty repo on first sync (even before any append)", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    // no appends yet — must not pathspec-error, must initialize the structure
+    expect(syncPush(j.dir, { force: true }).status).toBe("pushed");
+    const check = path.join(root, "check");
+    execFileSync("git", ["clone", "-q", remote, check], { stdio: "ignore" });
+    expect(JSON.parse(fs.readFileSync(path.join(check, MARKER_FILE), "utf8"))).toEqual({ journal: 1 });
+  });
+
+  it("refuses a non-journal repo with content until --adopt, then preserves that content", () => {
+    const remote = bareRemote("origin.git");
+    seedRemote(remote, "README.md", "someone's actual repo\n");
+    const j = journalAt("michael", remote);
+    j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
+    const shaBefore = execFileSync("git", ["ls-remote", remote, "main"], { encoding: "utf8" });
+    const refused = syncPush(j.dir, { force: true });
+    expect(refused.status).toBe("invalid");
+    expect(refused.detail).toContain("agent-bus sync --adopt");
+    // nothing was pushed — the remote's main is untouched
+    expect(execFileSync("git", ["ls-remote", remote, "main"], { encoding: "utf8" })).toBe(shaBefore);
+
+    const adopted = syncPush(j.dir, { force: true, adopt: true });
+    expect(adopted.status).toBe("pushed");
+    const check = path.join(root, "check");
+    execFileSync("git", ["clone", "-q", remote, check], { stdio: "ignore" });
+    expect(fs.readFileSync(path.join(check, "README.md"), "utf8")).toContain("actual repo");
+    expect(fs.existsSync(path.join(check, MARKER_FILE))).toBe(true);
+  });
+
+  it("fails loudly on a journal written by a newer layout", () => {
+    const remote = bareRemote("origin.git");
+    seedRemote(remote, MARKER_FILE, '{"journal": 99}\n');
+    const j = journalAt("michael", remote);
+    j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
+    const res = syncPush(j.dir, { force: true });
+    expect(res.status).toBe("invalid");
+    expect(res.detail).toContain("newer agent-bus");
+    // read path gates too
+    expect(validateJournal(j.dir).ok).toBe(false);
+  });
+
+  it("returns clean (not error) when a forced sync has nothing new", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
+    expect(syncPush(j.dir, { force: true }).status).toBe("pushed");
+    expect(syncPush(j.dir, { force: true }).status).toBe("clean");
+  });
+
+  it("records sync health readable via readSyncStatus", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    expect(syncPush(j.dir, { force: true }).status).toBe("pushed");
+    expect(readSyncStatus(j.dir)?.status).toBe("pushed");
+    // now break the remote and confirm the failure is visible
+    fs.rmSync(remote, { recursive: true, force: true });
+    j.append("message", { id: 2, from: "a", to: "b", body: "y", at: 2 });
+    expect(syncPush(j.dir, { force: true }).status).toBe("error");
+    expect(readSyncStatus(j.dir)?.status).toBe("error");
+  });
+});
+
+describe("same-handle multi-writer", () => {
+  it("two machines on one handle append to distinct files and merge cleanly", () => {
+    const remote = bareRemote("origin.git");
+    const a = journalAt("michael", remote, { home: "homeA", writerId: "macbook" });
+    a.append("task.create", { id: 1, by: "foreman", title: "t", state: "assigned", at: 1000 });
+    expect(syncPush(a.dir, { force: true }).status).toBe("pushed");
+
+    const b = journalAt("michael", remote, { home: "homeB", writerId: "studio" });
+    expect(syncPull(b.dir)).toBe(true);
+    b.append("task.update", { id: 1, state: "returned", result: "done", at: 2000 });
+    expect(syncPush(b.dir, { force: true }).status).toBe("pushed");
+
+    // machine A keeps writing the same day — no shared file, no rebase conflict
+    a.append("message", { id: 1, from: "x", to: "y", body: "z", at: 3000 });
+    expect(syncPush(a.dir, { force: true }).status).toBe("pushed");
+    expect(syncPull(a.dir)).toBe(true);
+
+    const events = readEvents(a.dir, "michael");
+    expect(events.map((e) => e.type)).toEqual(["task.create", "task.update", "message"]); // ts order
+  });
+
+  it("survives both sides initializing independently (unrelated root commits)", () => {
+    const remote = bareRemote("origin.git");
+    const a = journalAt("michael", remote, { home: "homeA", writerId: "macbook" });
+    const b = journalAt("michael", remote, { home: "homeB", writerId: "studio" });
+    a.append("message", { id: 1, from: "x", to: "y", body: "from a", at: 1 });
+    b.append("message", { id: 2, from: "x", to: "y", body: "from b", at: 2 });
+    expect(syncPush(a.dir, { force: true }).status).toBe("pushed");
+    expect(syncPush(b.dir, { force: true }).status).toBe("pushed"); // rebases unrelated history
+    expect(syncPull(a.dir)).toBe(true);
+    expect(readEvents(a.dir, "michael")).toHaveLength(2);
   });
 });

@@ -29,10 +29,12 @@ import {
   ensureRepo,
   journalDir,
   readEvents,
+  readSyncStatus,
   replayInto,
   resolveHandle,
   syncPull,
   syncPush,
+  validateJournal,
 } from "./remote.js";
 import { Store } from "./store.js";
 
@@ -121,6 +123,8 @@ function requireRemote(): { dir: string; handle: string } {
 function cmdRestore(): void {
   const { dir, handle } = requireRemote();
   if (!syncPull(dir)) fail("could not pull the journal remote (offline? empty repo is fine, a failed fetch is not)");
+  const shape = validateJournal(dir); // read mode: layout-version gate only
+  if (!shape.ok) fail(shape.reason ?? "journal repo failed validation");
   const events = readEvents(dir, handle);
   if (events.length === 0) {
     out(`no events for handle "${handle}" in the journal — nothing to restore`);
@@ -136,17 +140,20 @@ function cmdRestore(): void {
   }
 }
 
-/** Push any pending journal appends now (no debounce) — mostly for testing/cutover. */
-function cmdSync(): void {
+/** Push any pending journal appends now (no debounce) — also the `--adopt` entry point. */
+function cmdSync(argv: string[]): void {
   const { dir, handle } = requireRemote();
-  const res = syncPush(dir, { force: true });
+  const res = syncPush(dir, { force: true, adopt: flag(argv, "--adopt") });
   if (res.status === "error") fail(`sync failed: ${res.detail}`);
+  if (res.status === "invalid") fail(res.detail ?? "journal repo failed validation");
   out(`✔ journal ${res.status} (handle "${handle}")`);
 }
 
 function cmdPaths(): void {
+  const cfg = loadConfig();
   const info = repoInfo();
-  const agentId = resolveAgentId({ foremanBasename: loadConfig().foreman.basename });
+  const agentId = resolveAgentId({ foremanBasename: cfg.foreman.basename });
+  const journal = cfg.remote.url?.trim() ? readSyncStatus(journalDir()) : null;
   out(
     JSON.stringify(
       {
@@ -158,6 +165,11 @@ function cmdPaths(): void {
         coordinationDir: coordinationDir(),
         db: dbPath(),
         notify: notifyPath(agentId),
+        journalSync: journal
+          ? { ...journal, at: new Date(journal.at).toISOString() }
+          : cfg.remote.url
+            ? "never-synced"
+            : "disabled",
       },
       null,
       2,
@@ -181,7 +193,7 @@ async function main(): Promise<void> {
       case "restore":
         return cmdRestore();
       case "sync":
-        return cmdSync();
+        return cmdSync(rest);
       case "paths":
         return cmdPaths();
       default: {
@@ -193,7 +205,8 @@ async function main(): Promise<void> {
         out("  agent-bus worker rm <id>      retire a worker (--force discards uncommitted work)");
         out("  agent-bus scale <N>           reconcile the pool to exactly N workers");
         out("  agent-bus restore             rebuild local bus state from the remote journal (remote.url)");
-        out("  agent-bus sync                push pending journal appends now (normally automatic)");
+        out("  agent-bus sync [--adopt]      push pending journal appends now (--adopt initializes a");
+        out("                                non-empty repo as a journal — explicit by design)");
         out("  agent-bus paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
       }
