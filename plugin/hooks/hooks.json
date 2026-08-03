@@ -1,0 +1,30 @@
+{
+  "description": "agent-bus passive standup: turn-end status publish + per-prompt board delta.",
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/dist/server.mjs\" publish",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/dist/server.mjs\" board",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

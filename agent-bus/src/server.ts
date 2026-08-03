@@ -992,7 +992,10 @@ async function main(): Promise<void> {
 // Only run when executed directly (not when imported by tests). Compare as
 // URLs with realpath'd sides — a raw string compare breaks on spaces
 // (percent-encoding) and symlinks, both possible in plugin install paths.
+// The plugin bundle runs behind a version-gate wrapper (argv[1] = wrapper,
+// not this module), which signals through AGENT_BUS_FORCE_MAIN instead.
 const invokedDirectly = (() => {
+  if (process.env.AGENT_BUS_FORCE_MAIN === "1") return true;
   const argv1 = process.argv[1];
   if (argv1 === undefined) return false;
   try {

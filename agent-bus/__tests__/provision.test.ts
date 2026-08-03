@@ -64,7 +64,7 @@ describe("worker provisioning (manual launcher)", () => {
     }
     // the paste command carries identity + loop
     expect(plans[0]!.command).toContain("AGENT_BUS_ID=worker-1");
-    expect(plans[0]!.command).toContain("claude --model sonnet '/loop /worker'");
+    expect(plans[0]!.command).toContain("claude --model sonnet '/loop /agent-bus:worker'");
   });
 
   it("ls reflects the pool; add fills the lowest free index", () => {
