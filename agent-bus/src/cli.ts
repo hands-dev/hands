@@ -2,14 +2,14 @@
 /**
  * agent-bus CLI — provisioning + setup. The user thinks in workers:
  *
- *   agent-bus init                per-repo config scaffold + old-install cleanup/migration
- *   agent-bus worker add [-n N]   spin up N workers (worktree hidden inside)
- *   agent-bus worker ls           list this repo's workers
- *   agent-bus worker rm <id>      retire a worker (idempotent; --force discards)
- *   agent-bus scale <N>           reconcile the pool to exactly N workers
- *   agent-bus restore             rebuild local bus state from the remote journal
- *   agent-bus sync                push pending journal appends now
- *   agent-bus paths               where this cwd resolves (debug)
+ *   roundhouse init                per-repo config scaffold + old-install cleanup/migration
+ *   roundhouse worker add [-n N]   spin up N workers (worktree hidden inside)
+ *   roundhouse worker ls           list this repo's workers
+ *   roundhouse worker rm <id>      retire a worker (idempotent; --force discards)
+ *   roundhouse scale <N>           reconcile the pool to exactly N workers
+ *   roundhouse restore             rebuild local bus state from the remote journal
+ *   roundhouse sync                push pending journal appends now
+ *   roundhouse paths               where this cwd resolves (debug)
  *
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
  * the human/foreman-facing lifecycle tool (on the Bash PATH via plugin/bin).
@@ -43,7 +43,7 @@ function out(line: string): void {
 }
 
 function fail(message: string): never {
-  process.stderr.write(`agent-bus: ${message}\n`);
+  process.stderr.write(`roundhouse: ${message}\n`);
   process.exit(1);
 }
 
@@ -83,7 +83,7 @@ function cmdWorker(argv: string[]): void {
   if (sub === "ls") {
     const workers = listWorkers();
     if (workers.length === 0) {
-      out("no workers — add some: agent-bus worker add -n 2");
+      out("no workers — add some: roundhouse worker add -n 2");
       return;
     }
     for (const w of workers) out(`${w.id}\t${w.branch}\t${w.dir}`);
@@ -91,17 +91,17 @@ function cmdWorker(argv: string[]): void {
   }
   if (sub === "rm") {
     const id = argv[1];
-    if (!id || id.startsWith("-")) fail("usage: agent-bus worker rm worker-<n> [--force]");
+    if (!id || id.startsWith("-")) fail("usage: roundhouse worker rm worker-<n> [--force]");
     const res = removeWorker(id, { force: flag(argv, "--force") });
     out(res.removed ? `✔ ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }
-  fail("usage: agent-bus worker <add|ls|rm>");
+  fail("usage: roundhouse worker <add|ls|rm>");
 }
 
 function cmdScale(argv: string[]): void {
   const target = Number.parseInt(argv[0] ?? "", 10);
-  if (!Number.isInteger(target) || target < 0) fail("usage: agent-bus scale <N>");
+  if (!Number.isInteger(target) || target < 0) fail("usage: roundhouse scale <N>");
   const { added, removed } = scaleWorkers(target, { force: flag(argv, "--force") });
   reportPlans(added);
   for (const id of removed) out(`✔ ${id} retired`);
@@ -176,24 +176,24 @@ async function main(): Promise<void> {
       case "dashboard": {
         const { serve } = await import("./serve.js");
         const handle = await serve();
-        out(`agent-bus dashboard → ${handle.url}\n(Ctrl-C to stop)`);
+        out(`roundhouse dashboard → ${handle.url}\n(Ctrl-C to stop)`);
         return; // the http server keeps the process alive
       }
       case "paths":
         return cmdPaths();
       default: {
-        out("agent-bus — foreman/worker fleet for Claude Code");
+        out("roundhouse — foreman/worker fleet for Claude Code");
         out("");
-        out("  agent-bus init                scaffold agent-bus.config.json + clean up pre-plugin installs");
-        out("  agent-bus worker add [-n N]   spin up N workers");
-        out("  agent-bus worker ls           list this repo's workers");
-        out("  agent-bus worker rm <id>      retire a worker (--force discards uncommitted work)");
-        out("  agent-bus scale <N>           reconcile the pool to exactly N workers");
-        out("  agent-bus restore             rebuild local bus state from the remote journal (remote.url)");
-        out("  agent-bus sync [--adopt]      push pending journal appends now (--adopt initializes a");
+        out("  roundhouse init                scaffold agent-bus.config.json + clean up pre-plugin installs");
+        out("  roundhouse worker add [-n N]   spin up N workers");
+        out("  roundhouse worker ls           list this repo's workers");
+        out("  roundhouse worker rm <id>      retire a worker (--force discards uncommitted work)");
+        out("  roundhouse scale <N>           reconcile the pool to exactly N workers");
+        out("  roundhouse restore             rebuild local bus state from the remote journal (remote.url)");
+        out("  roundhouse sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out("                                non-empty repo as a journal — explicit by design)");
-        out("  agent-bus serve               live dashboard → http://localhost:4319");
-        out("  agent-bus paths               show where this directory resolves (debug)");
+        out("  roundhouse serve               live dashboard → http://localhost:4319");
+        out("  roundhouse paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
       }
     }

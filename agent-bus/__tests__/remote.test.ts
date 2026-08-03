@@ -235,7 +235,7 @@ describe("journal repo shape contract", () => {
     const shaBefore = execFileSync("git", ["ls-remote", remote, "main"], { encoding: "utf8" });
     const refused = syncPush(j.dir, { force: true });
     expect(refused.status).toBe("invalid");
-    expect(refused.detail).toContain("agent-bus sync --adopt");
+    expect(refused.detail).toContain("roundhouse sync --adopt");
     // nothing was pushed — the remote's main is untouched
     expect(execFileSync("git", ["ls-remote", remote, "main"], { encoding: "utf8" })).toBe(shaBefore);
 
@@ -254,7 +254,7 @@ describe("journal repo shape contract", () => {
     j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
     const res = syncPush(j.dir, { force: true });
     expect(res.status).toBe("invalid");
-    expect(res.detail).toContain("newer agent-bus");
+    expect(res.detail).toContain("newer roundhouse");
     // read path gates too
     expect(validateJournal(j.dir).ok).toBe(false);
   });

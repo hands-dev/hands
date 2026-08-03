@@ -64,15 +64,15 @@ agent's entire context. The bus minimizes and meters wakes:
 ## CLI
 
 ```bash
-agent-bus init                # per-repo config scaffold + pre-plugin install cleanup
-agent-bus worker add -n 3     # provision + launch 3 workers
-agent-bus worker ls           # list this repo's workers
-agent-bus worker rm worker-3  # retire one (--force discards uncommitted work)
-agent-bus scale 5             # reconcile the pool to exactly 5
-agent-bus restore             # rebuild local bus state from the remote journal
-agent-bus sync [--adopt]      # push journal appends now; --adopt initializes a non-empty repo
-agent-bus serve               # live dashboard → http://localhost:4319
-agent-bus paths               # where does this cwd resolve? (debug)
+roundhouse init                # per-repo config scaffold + pre-plugin install cleanup
+roundhouse worker add -n 3     # provision + launch 3 workers
+roundhouse worker ls           # list this repo's workers
+roundhouse worker rm worker-3  # retire one (--force discards uncommitted work)
+roundhouse scale 5             # reconcile the pool to exactly 5
+roundhouse restore             # rebuild local bus state from the remote journal
+roundhouse sync [--adopt]      # push journal appends now; --adopt initializes a non-empty repo
+roundhouse serve               # live dashboard → http://localhost:4319
+roundhouse paths               # where does this cwd resolve? (debug)
 ```
 
 Workers are hosted in hidden git worktrees under `~/.agent-bus/worktrees/<slug>/worker-<n>` on
@@ -102,8 +102,8 @@ log it can always be rebuilt from.
 
 - **Sync is automatic and cheap:** pushes ride the `Stop` → `publish` hook, debounced to ~1/min,
   offline-tolerant (commits queue locally), best-effort by contract — a git hiccup never fails the
-  bus action it mirrors. `agent-bus sync` forces a push now.
-- **Restart / machine move:** `agent-bus restore` pulls the journal and replays your handle's
+  bus action it mirrors. `roundhouse sync` forces a push now.
+- **Restart / machine move:** `roundhouse restore` pulls the journal and replays your handle's
   events into the local bus — idempotent (by-id inserts, re-applied updates), so it's safe over an
   existing DB. This restores *coordination* state (tasks, priorities, questions, history), not
   Claude session context — sessions are disposable by design; state is durable.
@@ -128,7 +128,7 @@ Two hooks shipped by the plugin (`plugin/hooks/hooks.json`) call the CLI mode:
 ## Dashboard
 
 ```bash
-agent-bus serve   # → http://127.0.0.1:4319 (AGENT_BUS_PORT overrides)
+roundhouse serve   # → http://127.0.0.1:4319 (AGENT_BUS_PORT overrides)
 ```
 
 Read-only, localhost-only, does not register as an agent. Panels: overall utilization vs the ranked
@@ -137,11 +137,11 @@ effectiveness (hindsight-graded recommendations), "needs you" escalations, colli
 
 ## Foreman & workers
 
-- Main checkout: `/loop /agent-bus:foreman` — triages escalated questions against the priorities
+- Main checkout: `/loop /roundhouse:foreman` — triages escalated questions against the priorities
   (auto-resolving only the reversible/on-priority/scoped/confident slice), delegates all real work,
   reviews returned tasks, gates review/merge depth, maintains the principal's to-do list, and
   re-checks team utilization every ~15 min (skipped when `stateHash` is unchanged).
-- Worker panes: `/loop /agent-bus:worker` — event-driven via a persistent Monitor tailing the worker's
+- Worker panes: `/loop /roundhouse:worker` — event-driven via a persistent Monitor tailing the worker's
   `.notify` file; drains the inbox, does reversible in-workspace work, escalates decisions, yields.
 
 Both behaviors ship as plugin skills (`plugin/skills/{foreman,worker}/SKILL.md`).
@@ -156,7 +156,7 @@ standardize on either:
    context intact: `SendMessage` by name or `agentId` continues a completed sub-agent from its
    transcript; a fresh spawn starts clean.
 2. **Worker workspaces on this bus** — persistent, physically-isolated full Claude instances
-   (`agent-bus worker add`) coordinating over the per-repo bus.
+   (`roundhouse worker add`) coordinating over the per-repo bus.
 
 **A common misconception:** cheap-model tiering is *not* a workspace-only advantage. Sub-agents take
 a **per-spawn `model` override** (workflow `agent()` calls add per-call `effort` too), and a resumed
@@ -166,7 +166,7 @@ convergence** (sub-agents).
 
 | | Durable sub-agents | Worker workspaces (this bus) |
 |---|---|---|
-| **Setup cost** | ~zero — one tool call | one `agent-bus worker add`, but each worker is a full instance: hidden worktree + branch, its own session, N× context bootstrap (rules/memory/repo) |
+| **Setup cost** | ~zero — one tool call | one `roundhouse worker add`, but each worker is a full instance: hidden worktree + branch, its own session, N× context bootstrap (rules/memory/repo) |
 | **Token economics** | lean for fan-out returning compact summaries — but the hub accrues every return, and the hub is usually the expensive model; many small round-trips through it add up | no hub bloat — each worker holds its own slice; pays the N× bootstrap, and every wake re-runs that worker's whole context (see wake accounting) |
 | **File-write isolation** | share the parent checkout unless spawned with `isolation:"worktree"` (~200–500ms setup + disk each) | true isolation, always — own worktree, own branch |
 | **Durability** | die with the session (resumable within it) | persist across sessions; independently-owned, evolving context |

@@ -1,14 +1,14 @@
 {
-  "name": "agent-bus-workflow",
+  "name": "roundhouse",
   "owner": {
     "name": "Michael Phillips"
   },
   "metadata": {
-    "description": "Foreman/worker multi-agent orchestration for Claude Code over a per-repo message bus."
+    "description": "Roundhouse \u2014 foreman/worker multi-agent orchestration for Claude Code over a per-repo message bus."
   },
   "plugins": [
     {
-      "name": "agent-bus",
+      "name": "roundhouse",
       "source": "./plugin",
       "description": "Foreman/worker fleet on a per-repo coordination bus: strict hub-and-spoke topology, wake-cost accounting, worker provisioning, and an opt-in durable journal for restarts, machine moves, and multiplayer."
     }

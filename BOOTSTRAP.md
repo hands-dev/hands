@@ -19,7 +19,7 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 
 ```
 /plugin marketplace add and-michael/agent-bus-workflow
-/plugin install agent-bus@agent-bus-workflow
+/plugin install roundhouse@roundhouse
 ```
 
 ## Step 2 — Clone the project + configure
@@ -27,7 +27,7 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ```bash
 git clone <REPO_SSH> <REPO_DIR>
 cd <REPO_DIR>
-agent-bus init           # scaffold config (or restore your committed agent-bus.config.json)
+roundhouse init           # scaffold config (or restore your committed agent-bus.config.json)
 ```
 
 If `agent-bus.config.json` is committed in the project repo, init leaves it alone — the journal
@@ -37,8 +37,8 @@ url + handle come back with the clone.
 
 ```bash
 cd <REPO_DIR>
-agent-bus restore        # pulls the journal repo, replays your handle's events
-agent-bus paths          # verify: agentId "foreman", journalSync healthy
+roundhouse restore        # pulls the journal repo, replays your handle's events
+roundhouse paths          # verify: agentId "foreman", journalSync healthy
 ```
 
 ## Step 4 — Restore project memory (optional, if this repo carries a snapshot)
@@ -52,20 +52,20 @@ mkdir -p "$MEM" && cp memory/*.md "$MEM/"
 
 ## Step 5 — Run
 
-- Main checkout: `/agent-bus:foreman` (or `/loop /agent-bus:foreman`).
-- Workers: `agent-bus worker add -n <N>` — no `git worktree` commands, ever.
-- Dashboard: `agent-bus serve` → http://localhost:4319
+- Main checkout: `/roundhouse:foreman` (or `/loop /roundhouse:foreman`).
+- Workers: `roundhouse worker add -n <N>` — no `git worktree` commands, ever.
+- Dashboard: `roundhouse serve` → http://localhost:4319
 
 ## Step 6 — Re-auth other MCP servers (human, as needed)
 
 Project-specific MCP servers (Linear, Sentry, …) re-add with `claude mcp add …` + OAuth. The
-agent-bus plugin is the only piece the fleet itself needs.
+roundhouse plugin is the only piece the fleet itself needs.
 
 ---
 
 ### What does NOT carry over
 
 - Auth (Step 0/6).
-- Live worker sessions — recreate with `agent-bus worker add`.
+- Live worker sessions — recreate with `roundhouse worker add`.
 - Claude session context — by design; the journal restores *state*, the foreman rehydrates from
   board + tasks + priorities on its first pass.

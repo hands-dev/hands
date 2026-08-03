@@ -1,4 +1,4 @@
-# agent-bus — a foreman/worker fleet for Claude Code
+# roundhouse — a foreman/worker fleet for Claude Code
 
 Turn independently-launched Claude Code instances on one machine into a coordinated fleet: the
 repo's main checkout is the **foreman** (command center), and N autonomous **workers** do the
@@ -11,29 +11,29 @@ Distributed as a **Claude Code plugin** (this repo is its own marketplace).
 
 ```
 /plugin marketplace add and-michael/agent-bus-workflow
-/plugin install agent-bus@agent-bus-workflow
+/plugin install roundhouse@roundhouse
 ```
 
 That registers everything: the MCP server (`agent_bus_*` tools), the two passive-standup hooks
-(`Stop → publish`, `UserPromptSubmit → board`), the `/agent-bus:foreman` + `/agent-bus:worker`
-skills, and the `agent-bus` CLI on your Bash PATH. Requires Node ≥ 22.5 on PATH (`node:sqlite`).
+(`Stop → publish`, `UserPromptSubmit → board`), the `/roundhouse:foreman` + `/roundhouse:worker`
+skills, and the `roundhouse` CLI on your Bash PATH. Requires Node ≥ 22.5 on PATH (`node:sqlite`).
 
 Then, per repo (from its main checkout):
 
 ```bash
-agent-bus init        # scaffolds agent-bus.config.json; cleans up any pre-plugin install
+roundhouse init        # scaffolds agent-bus.config.json; cleans up any pre-plugin install
 ```
 
 ## Run it
 
 ```bash
-/agent-bus:foreman            # main checkout — or /loop /agent-bus:foreman for always-on
-agent-bus worker add -n 3     # provision + launch 3 workers (tmux/iTerm/paste-command)
-agent-bus serve               # live dashboard → http://localhost:4319
+/roundhouse:foreman            # main checkout — or /loop /roundhouse:foreman for always-on
+roundhouse worker add -n 3     # provision + launch 3 workers (tmux/iTerm/paste-command)
+roundhouse serve               # live dashboard → http://localhost:4319
 ```
 
 Workers register on the foreman's board as `worker-<n>`. Manage the pool with
-`agent-bus worker ls`, `agent-bus scale <N>`, `agent-bus worker rm worker-<n>` — or let the
+`roundhouse worker ls`, `roundhouse scale <N>`, `roundhouse worker rm worker-<n>` — or let the
 foreman scale it itself (`workers.allowForemanScaling`).
 
 ## How it stays cheap (wakes are the cost)
@@ -58,14 +58,14 @@ Point the bus at a **separate, private** git repo and every state-changing actio
 tasks, questions, todos, priorities, cursors) mirrors to an NDJSON event log there:
 
 ```jsonc
-"remote": { "url": "git@github.com:you/agent-bus-state.git", "handle": "michael" }
+"remote": { "url": "git@github.com:you/roundhouse-state.git", "handle": "michael" }
 ```
 
 - Pushes ride the turn-end hook (debounced ~1/min, offline-tolerant, never fails a bus action).
-- `agent-bus restore` rebuilds the whole coordination state on a restart or a new machine.
+- `roundhouse restore` rebuilds the whole coordination state on a restart or a new machine.
 - **The repo's shape is validated, not assumed:** an empty repo initializes itself
   (`agent-bus.json` layout marker) on first sync; a repo with other content is refused until an
-  explicit `agent-bus sync --adopt`; a journal written by a newer agent-bus fails loudly. The tool
+  explicit `roundhouse sync --adopt`; a journal written by a newer roundhouse fails loudly. The tool
   only ever touches `agent-bus.json` + `log/` — anything else in the repo is left alone.
 - **Multiplayer:** two fleets pointed at one shared journal repo each write only under their own
   `handle`, so writers never conflict. (Peer visibility on the board/dashboard builds on this log —
@@ -100,7 +100,7 @@ that belongs next to the coordination data, not in your project's git log.
 
 Each git repo gets its own isolated bus automatically (state under
 `~/.claude/coordination/<repo>-<hash>/`); two projects never cross-talk. `agent_bus_paths` (or
-`agent-bus paths`) shows where any directory resolves, including journal sync health.
+`roundhouse paths`) shows where any directory resolves, including journal sync health.
 
 ## Choosing an execution pattern
 
@@ -120,7 +120,7 @@ isolated parallel writes or cross-session persistence. (Long form: `agent-bus/RE
 ## Upgrading from a pre-plugin install
 
 If you previously ran the old `init` (user-scope MCP registration + hand-merged hooks + copied
-skills): install the plugin, then **immediately** run `agent-bus init` — it removes the old
+skills): install the plugin, then **immediately** run `roundhouse init` — it removes the old
 registrations so you don't get duplicate board injections and two MCP servers. Note the fully-
 qualified MCP tool prefix changes to `mcp__plugin_…` — update any `permissions.allow` rules.
 
