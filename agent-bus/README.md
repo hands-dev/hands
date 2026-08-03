@@ -1,173 +1,186 @@
 # agent-bus
 
-A local **stdio MCP coordination server** that lets multiple independently-launched Claude Code CLI
-instances — different Warp panes / git worktrees on the same machine — send structured messages to each
-other, discover peers, and read history. Claude Code has no built-in cross-instance messaging (the
-agent-teams / SendMessage tools only coordinate agents spawned _within_ one orchestrating session), so
-before this the only cross-worktree channels were shared files, Linear comments, or manual paste.
+A local **stdio MCP coordination server** + **provisioning CLI** that turns independently-launched
+Claude Code CLI instances on one machine into a **foreman/worker fleet**: the repo's main checkout is
+the command center (`foreman`), and N autonomous workers (`worker-1`…`worker-N`) do the delegated
+work. Claude Code has no built-in cross-instance messaging (agent-teams / SendMessage only coordinate
+agents spawned *within* one session), so this bus is the channel.
 
-Personal, machine-local tool — **not part of any repo**. Lives at `~/.claude/tools/agent-bus/` and is
-registered as a **user-scoped** MCP server, so it's available in every project/worktree without touching
-any repo's files. Originally scoped as [INN-239](https://linear.app/and-com/issue/INN-239); built as a
-personal tool instead of a monorepo package.
+Registered once, **user-scoped** — available in every project without touching any repo's files.
 
 ## How it works
 
-- **One process per Claude Code instance, no daemon.** Every instance runs its own stdio server; they all
-  read/write a **shared SQLite DB** at `~/.claude/coordination/agent-bus.db` (WAL mode). The DB file is the
-  single source of truth.
-- **Identity is derived at runtime from the cwd.** A user-scoped server is launched from whatever worktree
-  Claude Code started in, so the server derives its own id from that cwd rather than from static config.
-  Precedence: `AGENT_BUS_ID` env → `--agent-id <name>` → `wt<n>` from the worktree dir basename
-  (`…worktree-3` → `wt3`, matching the ampersand repo's worktree naming) → the cwd basename (main checkout).
-- **Near-real-time receive via long-poll.** `agent_bus_receive` blocks up to `wait_seconds`, polling the DB
-  and returning the moment a message lands.
+- **One process per Claude Code instance, no daemon.** Every instance runs its own stdio server; they
+  all read/write a **shared SQLite DB** (WAL mode). The DB file is the single source of truth.
+- **The bus is scoped per git repo.** State lives under `~/.claude/coordination/<basename>-<hash>/`,
+  where the slug derives from the repo's git *common dir* — shared by all worktrees of a repo, unique
+  per repo. Two projects on one machine get two fully separate buses (DB, notify files, priorities).
+  `AGENT_BUS_HOME` overrides the auto-scoping; a non-git cwd falls back to `…/coordination/_global`.
+  Debug with `node dist/server.js paths` — it prints the resolved dir/db/id for the cwd.
+- **Identity is derived at runtime.** Precedence: `AGENT_BUS_ID` env (what the provisioner sets) →
+  `--agent-id` → foreman-basename override (`AGENT_BUS_FOREMAN_BASENAME` / config
+  `foreman.basename`) → **main-worktree autodetect** (any repo's main checkout is `foreman`) →
+  `worker-<n>` from a managed worker dir name → the cwd basename. There are exactly two roles — no
+  display names, no personas; agents are addressed by canonical id everywhere.
+- **Strict hub-and-spoke, server-enforced** (config `topology: "strict-hub"`, the default): workers
+  can only message the foreman and the principal. Worker↔worker sends, worker broadcasts, and worker
+  task-delegation are **rejected before any DB write or notify** — a blocked send never wakes anyone.
+  `topology: "open"` disables the restriction.
+- **Near-real-time receive via long-poll.** `agent_bus_receive` blocks up to `wait_seconds`,
+  returning the moment a message lands.
+
+## Token control (wakes are the cost)
+
+A **wake** — a `.notify` line firing a recipient's Monitor — costs one full model turn over that
+agent's entire context. The bus minimizes and meters wakes:
+
+- **`wake:false` sends** insert the message but skip the notify: FYIs/status cost zero wakes and are
+  read on the recipient's next natural drain.
+- **Redundant-wake suppression:** an undrained recipient (wake already outstanding) is not re-woken;
+  one drain returns the whole burst. The suppression flag is set only by a real notify and cleared at
+  drain start, so a silent FYI can never mask a real wake.
+- **`stateHash` + bundled board:** `agent_bus_board` always returns a cheap fingerprint of team state
+  (skip re-scans when unchanged), and `board({full:true})` bundles peers + active tasks + open
+  questions + priorities into one read.
+- **Wake accounting:** every real notify is logged (`wake_log`, pruned at 24h) and surfaced as
+  `wakesLastHour` / `wakes24h` per agent on the board and dashboard. Observability only — no caps.
 
 ## Tools
 
 | Tool | Purpose |
 |---|---|
-| `agent_bus_send({ to, body, subject?, thread? })` | Enqueue a message. `to` = a peer agent id, or `"*"` to broadcast. |
-| `agent_bus_receive({ wait_seconds=25, mark_read=true })` | Return messages addressed to you (directed + broadcast) since your cursor; long-polls; advances the cursor. |
-| `agent_bus_peers()` | List registered agents and whether each is online (heartbeat within 60s). |
-| `agent_bus_history({ peer?, thread?, limit=50 })` | Read past messages (audit). |
-| `agent_bus_board()` | Standup snapshot: who's active (branch + age), recent learnings (commits + memory), collisions. |
+| `agent_bus_send({ to, body, subject?, thread?, wake? })` | Enqueue a message. `wake:false` = non-waking FYI. |
+| `agent_bus_receive({ wait_seconds=25, mark_read=true })` | Messages addressed to you since your cursor; long-polls. |
+| `agent_bus_peers()` | Registered agents + online state. |
+| `agent_bus_history({ peer?, thread?, limit=50 })` | Past messages (audit). |
+| `agent_bus_board({ full? })` | Standup snapshot + `stateHash` + per-peer wake counts; `full:true` bundles tasks/questions/priorities. |
+| `agent_bus_ask` / `agent_bus_questions` / `agent_bus_answer` / `agent_bus_escalate` | Worker→foreman escalation lifecycle. |
+| `agent_bus_priorities({ set?, confirm? })` | Read/set the ranked daily priorities. |
+| `agent_bus_delegate` / `agent_bus_tasks` / `agent_bus_task_update` | Tracked task delegation lifecycle (foreman → worker). |
+| `agent_bus_todos` / `agent_bus_todo_add` / `agent_bus_todo_update` | The principal's foreman-managed to-do list. |
+| `agent_bus_rec_outcome({ id, outcome, note? })` | Foreman hindsight self-audit (effectiveness score). |
+| `agent_bus_worker_add` / `agent_bus_worker_remove` / `agent_bus_scale` | Foreman-directed pool scaling (only when `workers.allowForemanScaling`). |
 
-## Passive standup (Phase 1)
+## CLI
 
-Ambient cross-worktree awareness with **zero human or model effort**, driven by two global hooks in
-`~/.claude/settings.json` that call the tool's CLI mode (`node dist/server.js …`):
+```bash
+node dist/cli.js init                # one-command setup (MCP registration, hooks, config, skills)
+node dist/cli.js worker add -n 3     # provision + launch 3 workers
+node dist/cli.js worker ls           # list this repo's workers
+node dist/cli.js worker rm worker-3  # retire one (--force discards uncommitted work)
+node dist/cli.js scale 5             # reconcile the pool to exactly 5
+node dist/cli.js paths               # where does this cwd resolve? (debug)
+```
+
+Workers are hosted in hidden git worktrees under `~/.agent-bus/worktrees/<slug>/worker-<n>` on
+ephemeral `agent-bus/worker-<n>` branches — the user thinks in workers, never worktrees. The
+launcher is pluggable (`workers.launcher`): `tmux`, `iterm`, `manual` (prints the paste command), or
+`auto`.
+
+## Configuration
+
+`agent-bus.config.json` at the repo root (user fallback `~/.claude/agent-bus.config.json`); see
+`src/config.ts` for the full shape. Key fields: `principal.name`, `topology`
+(`strict-hub`/`open`), `workers.model` + `workers.overrides` (model tiers), `workers.launcher`,
+`workers.allowForemanScaling`, `merge.adminMergeLowRisk`, `gh.poll`.
+
+## Passive standup (hooks)
+
+Two global hooks in `~/.claude/settings.json` (installed by `init`) call the CLI mode:
 
 - **`Stop` → `… publish`** (async, every turn end): derives status from the git branch, heartbeats
-  presence, and auto-journals **new commits** and **memory-store writes**. Nothing to invoke.
-- **`UserPromptSubmit` → `… board`** (every prompt): injects a compact *delta* of what changed on the bus
-  since you last looked — peer activity, learnings, and **collision warnings** (another worktree touching
-  your files / on your ticket). Quiet by design: emits nothing unless there's a real delta, so
-  injecting-every-prompt stays cheap.
-
-The board is **delta-based**: the first read per pane baselines silently; subsequent reads show only what's
-new. See `DESIGN.md` for the full plan (Phase 2 = delegation/workers).
-
-> Activation is live: Claude Code picks up new `~/.claude/settings.json` hooks in **already-running**
-> sessions — no restart needed (observed 2026-07-30).
+  presence, and auto-journals **new commits** and **memory-store writes**.
+- **`UserPromptSubmit` → `… board`** (every prompt): injects a compact *delta* of what changed on the
+  bus since you last looked. Quiet by design — emits nothing unless there's a real delta.
 
 ## Dashboard
 
-A live, Warp-style grid view of the orchestration — one terminal-pane tile per worktree, each with a
-status dot (active / idle / offline), its recent commits + learnings + messages, and a status bar
-(path · ⎇ branch · files · age). Collisions are flagged in a strip up top and on the involved panes.
-
 ```bash
-cd ~/.claude/tools/agent-bus && npm run dashboard   # → http://127.0.0.1:4319 (opens your browser)
+node dist/server.js serve   # → http://127.0.0.1:4319 (AGENT_BUS_PORT overrides)
 ```
 
-Read-only `node:http` server bound to localhost; it does **not** register as an agent. Port overridable
-via `AGENT_BUS_PORT`. The page polls `/api/state` every 2s. Leave it running in a spare pane/tab. The top
-**conductor lane** shows the foreman's priorities, the "needs you" queue, in-flight questions, and recent
-decisions.
+Read-only, localhost-only, does not register as an agent. Panels: overall utilization vs the ranked
+priorities, the workers grid (current task, priority badge, **wakes/h · /24h** cost dial), foreman
+effectiveness (hindsight-graded recommendations), "needs you" escalations, collision warnings.
 
-## Foreman (command center)
+## Foreman & workers
 
-The **main checkout** (`/Development/ampersand`) registers as agent **`foreman`** and is the interactive
-command center. Worktrees escalate open decisions with `agent_bus_ask`; the foreman triages them against
-Michael's ranked daily priorities — **auto-resolving only a small safe slice** (reversible · on-priority ·
-scoped to the asker · high-confidence) and **bubbling everything else up to Michael** with a recommendation.
+- Main checkout: `/loop /foreman` — triages escalated questions against the priorities
+  (auto-resolving only the reversible/on-priority/scoped/confident slice), delegates all real work,
+  reviews returned tasks, gates review/merge depth, maintains the principal's to-do list, and
+  re-checks team utilization every ~15 min (skipped when `stateHash` is unchanged).
+- Worker panes: `/loop /worker` — event-driven via a persistent Monitor tailing the worker's
+  `.notify` file; drains the inbox, does reversible in-workspace work, escalates decisions, yields.
 
-Run it in the main pane, ideally on a cadence so it's always-on:
+Both behaviors live in the rendered skills (`~/.claude/skills/{foreman,worker}/SKILL.md`, installed
+from the `skills/` templates by `init`).
 
-```
-/loop /foreman
-```
+## Choosing an execution pattern
 
-- **Priorities** live in `~/.claude/coordination/priorities.md` (edit directly any time). If unset, the
-  foreman asks you; it re-confirms when stale (~a day).
-- Tools: `agent_bus_ask` (worktree → foreman), `agent_bus_questions` (inbox), `agent_bus_answer`,
-  `agent_bus_escalate`, `agent_bus_priorities`.
-- **Delegation (tracked):** the foreman **delegates all real work** and never plans/codes itself.
-  `agent_bus_delegate({ to, title, body, priority })` creates a tracked task; the worktree advances it with
-  `agent_bus_task_update` (`in_progress` → `returned` with `result`); the foreman reviews returned tasks and
-  closes them (`done`) or re-delegates the next step. `agent_bus_tasks` lists them. The dashboard's
-  **delegations** lane shows the whole `assigned → in_progress → returned → done` lifecycle live.
-- **Team awareness:** `agent-bus gh-poll` (via `gh`) records what *other* engineers are shipping — open +
-  recently-merged PRs, excluding yours — into the dashboard **team · github** lane. PRs touching a
-  worktree's file or ticket get flagged (`↔ wtN`) and propagated to that worktree.
-- **Review / merge gatekeeper:** on a "PR ready" escalation the foreman picks the `/code-review` depth
-  itself (low / default / high by complexity — reversible), and for **admin-merge/bypass** it recommends
-  but **always escalates** (high blast radius); it never force-merges on its own.
-- Escalations fire a **macOS notification** and appear in the dashboard "needs you" lane; you answer by just
-  talking to the foreman in the main pane. The behavior is encoded in the `/foreman` skill
-  (`~/.claude/skills/foreman/SKILL.md`).
-- Can't push into an idle main pane (MCP wake-limit), so the `/loop` self-wake is what keeps it live;
-  questions queue durably if it's down.
+There are two ways to run durable multi-agent work, and the right one varies **per task** — don't
+standardize on either:
 
-## Workers (autonomous responders)
+1. **Durable sub-agents** — session-scoped helpers spawned by one instance (the Agent tool, or
+   workflow `agent()` calls), all reporting back through that hub. Resumable mid-session with
+   context intact: `SendMessage` by name or `agentId` continues a completed sub-agent from its
+   transcript; a fresh spawn starts clean.
+2. **Worker workspaces on this bus** — persistent, physically-isolated full Claude instances
+   (`agent-bus worker add`) coordinating over the per-repo bus.
 
-Make any pane respond to cross-worktree messages without you touching it:
+**A common misconception:** cheap-model tiering is *not* a workspace-only advantage. Sub-agents take
+a **per-spawn `model` override** (workflow `agent()` calls add per-call `effort` too), and a resumed
+sub-agent keeps its spawn-time model — so downgrading mechanical fan-out to a cheap tier works in
+**both** patterns. The real axis is **isolation + durability** (workspaces) vs **simplicity +
+convergence** (sub-agents).
 
-```
-/loop /worker
-```
+| | Durable sub-agents | Worker workspaces (this bus) |
+|---|---|---|
+| **Setup cost** | ~zero — one tool call | one `agent-bus worker add`, but each worker is a full instance: hidden worktree + branch, its own session, N× context bootstrap (rules/memory/repo) |
+| **Token economics** | lean for fan-out returning compact summaries — but the hub accrues every return, and the hub is usually the expensive model; many small round-trips through it add up | no hub bloat — each worker holds its own slice; pays the N× bootstrap, and every wake re-runs that worker's whole context (see wake accounting) |
+| **File-write isolation** | share the parent checkout unless spawned with `isolation:"worktree"` (~200–500ms setup + disk each) | true isolation, always — own worktree, own branch |
+| **Durability** | die with the session (resumable within it) | persist across sessions; independently-owned, evolving context |
+| **Comms** | hub-and-spoke — the parent relays everything | shared bus: strict hub-and-spoke by default (server-enforced; `topology:"open"` for direct worker↔worker); delivery is poll-based (`agent_bus_receive` long-poll — no unprompted wake), with the `.notify` Monitor as the near-instant wake channel |
+| **Concurrency** | workflow runs cap at ~min(16, cores−2) live, 1000 per run | a handful — each is a heavy process, plus its dev stack |
 
-Each pass **long-polls** the inbox (`agent_bus_receive({ wait_seconds: 15 })`) — the model parks cheaply and
-returns **the instant** a message lands (measured ~150ms turnaround), with 15s as the idle re-arm ceiling.
-It replies to what it can, escalates decisions to the foreman via `agent_bus_ask`, does only
-safe/reversible in-worktree work, and yields. Behavior is in the `/worker` skill
-(`~/.claude/skills/worker/SKILL.md`).
+Three questions decide it:
 
-**Awareness vs handling** are decoupled: the `UserPromptSubmit` board *shows* you incoming messages (by
-time window, never consuming them), while a worker *handles* them via the `receive` cursor. So a message
-you glance at isn't marked done, and a worker draining its inbox doesn't steal it from your view — dedicate
-a pane to `/loop /worker`, keep working in the others.
+1. **Do workers mutate files in parallel?** Yes → workspaces (or worktree-isolated sub-agents).
+2. **Must the work survive across sessions / be independently owned?** Yes → workspaces.
+3. **One task decomposed and converging, or N ongoing independent streams?** Converging →
+   sub-agents; independent → workspaces.
 
-## Setup
+**Default to durable sub-agents** — downgrade mechanical ones per-spawn to a cheap model, keep hard
+verify/judge steps on the strong tier — and **escalate to a workspace** only when a worker needs
+isolated parallel file-writes or cross-session persistence. Do not hard-code one pattern.
 
-Registered once, user-scoped, so every worktree gets it:
+### The foreman decides the pattern
 
-```bash
-claude mcp add agent-bus -s user -- \
-  ~/.claude/tools/agent-bus/node_modules/.bin/tsx \
-  ~/.claude/tools/agent-bus/src/server.ts
-```
-
-(Use absolute paths — a user-scoped server is launched from the current worktree's cwd, which is exactly
-what the `wt<n>` id derivation wants; the command/script paths must resolve regardless of cwd.) To force an
-explicit id for a pane, append `--agent-id myname` or set `AGENT_BUS_ID`.
-
-Verify: `claude mcp get agent-bus` → `Status: ✔ Connected`. Then, in two worktrees, `agent_bus_peers` shows
-both; `agent_bus_send({to:"wt<other>", body:"…"})` in one is picked up by `agent_bus_receive` in the other.
-
-Remove with `claude mcp remove agent-bus -s user`.
+Pattern selection is a routing call, made **per task** by the coordinator with whole-board context —
+the ranked priorities, live wake cost (`wakesLastHour`), and the model-tier budget
+(`workers.model` / `workers.overrides`) — not by each worker for itself. Read/synthesis fan-out that
+converges on one answer → sub-agents (run under the foreman, or under the assigned worker to keep
+the hub lean); isolated builds and standing streams → delegate on the bus. The decision hooks into
+the foreman's delegation step: spawn sub-agents, or `agent_bus_delegate` to a worker — resizing the
+pool first via `agent_bus_scale` / `agent_bus_worker_add` when scaling is enabled
+(`workers.allowForemanScaling`). There is no separate routing API; the delegation step *is* the
+dispatch point.
 
 ## Known limitations (by design, not bugs)
 
-- **MCP cannot wake an idle interactive Claude Code.** The model must _choose_ to call
-  `agent_bus_receive` — there is no unprompted push into an idle session. Delivery is therefore: call
-  `agent_bus_receive` at natural checkpoints, or park a long-poll `receive`. As a companion nudge, every
-  `send` also appends a line to each recipient's `~/.claude/coordination/<agent>.notify` file — tail it in
-  the target pane (e.g. via a `Monitor` running `tail -f`) so a new line prompts that instance to check its
-  inbox.
-- **No secrets in message bodies.** Messages are stored **plaintext** in the local SQLite DB. The DB and
-  `.notify` files are created `0600` and the dir `0700` (local, same-user only), but do not put tokens,
-  keys, or credentials in a message.
+- **MCP cannot wake an idle interactive Claude Code.** The model must *choose* to call
+  `agent_bus_receive`. The `.notify` files + Monitor tails are the wake channel; delivery correctness
+  lives entirely in the DB.
+- **No secrets in message bodies.** Messages are stored **plaintext** in the local SQLite DB. The DB
+  and `.notify` files are created `0600` and the dir `0700`, but do not put tokens/keys/credentials
+  in a message.
 
 ## Development
 
 ```bash
-cd ~/.claude/tools/agent-bus
 npm run check-types
-npm run test:run    # incl. concurrency + Phase-1 (publish/board/journal/collision) tests
-npm run build       # emit dist/ — REQUIRED after editing src, since the hooks run node dist/server.js
-npm start           # run the server standalone (stdio)
+npm run test:run    # unit + MCP-level (topology, wake levers, provisioning) tests
+npm run build       # emit dist/ — REQUIRED after editing src (hooks + MCP run dist/)
 ```
 
-The MCP server runs from `src/` via `tsx` (registered in `~/.claude.json`); the **hooks** run the compiled
-`dist/` under plain `node` for speed (~110ms vs ~270ms). So after changing `src/`, run `npm run build` or
-the hooks keep running stale code.
-
-Backed by Node's built-in `node:sqlite` (`DatabaseSync`) — synchronous, no native install (no
-`better-sqlite3` binary to compile). Requires Node ≥ 22.5.
-
-### Out of scope (follow-ups)
-
-`ack` + per-recipient delivery tracking, thread/history search, TTL cleanup of old messages + stale agents,
-and an optional `--http-daemon` (streamable-HTTP + SSE) mode for true multi-client push.
+Backed by Node's built-in `node:sqlite` (`DatabaseSync`) — synchronous, no native install. Requires
+Node ≥ 22.5.

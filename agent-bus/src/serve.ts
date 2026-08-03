@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
-import { DASHBOARD_HTML } from "./dashboard.js";
+import { loadConfig } from "./config.js";
+import { dashboardHtml } from "./dashboard.js";
 import { dbPath } from "./paths.js";
 import { buildSnapshot } from "./snapshot.js";
 import { Store } from "./store.js";
@@ -25,12 +26,13 @@ export function serve(opts?: {
   const port = opts?.port ?? Number(env.AGENT_BUS_PORT ?? 4319);
   const store = new Store({ env });
   const db = dbPath(env);
+  const html = dashboardHtml(loadConfig({ env }).principal.name);
 
   const server = createServer((req, res) => {
     const url = req.url ?? "/";
     if (url === "/" || url.startsWith("/index")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      res.end(DASHBOARD_HTML);
+      res.end(html);
       return;
     }
     if (url.startsWith("/api/state")) {

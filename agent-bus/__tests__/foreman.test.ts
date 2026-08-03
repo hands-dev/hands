@@ -78,7 +78,7 @@ describe("board routing", () => {
     const store = new Store({ env });
     store.askQuestion({ asker: "wt5", question: "bump the cache TTL?", now: 3000 });
     const res = buildBoard(store, { agentId: "foreman", since: 2500, advance: false, now: 3500 });
-    expect(res.text).toContain("Donna (wt5) asks");
+    expect(res.text).toContain("wt5 asks");
     expect(res.text).toContain("bump the cache TTL?");
     store.close();
   });
@@ -90,7 +90,7 @@ describe("passive message awareness (backgrounded by default)", () => {
     store.insertMessage({ from: "wt2", to: "wt3", body: "rebase before you push", now: 5500 });
 
     const first = buildBoard(store, { agentId: "wt3", since: 5000, advance: true, now: 6000 });
-    expect(first.text).toContain("✉ Toby (wt2) → you: rebase before you push");
+    expect(first.text).toContain("✉ wt2 → you: rebase before you push");
     // board_since advanced to 6000 → next board (uses the watermark) is quiet
     const second = buildBoard(store, { agentId: "wt3", advance: true, now: 7000 });
     expect(second.text).toBe("");
@@ -104,7 +104,7 @@ describe("passive message awareness (backgrounded by default)", () => {
     const store = new Store({ env });
     store.insertMessage({ from: "wt2", to: null, body: "all hands", now: 1000 });
     expect(buildBoard(store, { agentId: "wt4", since: 500, advance: false, now: 5000 }).text).toContain(
-      "✉ Toby (wt2) → all: all hands",
+      "✉ wt2 → all: all hands",
     );
     expect(buildBoard(store, { agentId: "wt2", since: 500, advance: false, now: 5000 }).text).toBe("");
     store.close();

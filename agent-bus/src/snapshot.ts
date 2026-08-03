@@ -16,6 +16,9 @@ export interface SnapshotAgent {
   files: string[];
   lastActive: number | null;
   lastSeen: number;
+  /** real .notify wakes delivered to this agent in the trailing hour / 24h */
+  wakesLastHour: number;
+  wakes24h: number;
 }
 
 export interface SnapshotMessage {
@@ -52,7 +55,7 @@ export interface SnapshotQuestion {
   resolvedBy: string | null;
   recommendation: string | null;
   priority: string | null;
-  /** Leo's hindsight self-audit: "validated" | "contradicted" | null (unassessed) */
+  /** foreman hindsight self-audit: "validated" | "contradicted" | null (unassessed) */
   outcome: string | null;
   outcomeNote: string | null;
   outcomeAt: number | null;
@@ -138,6 +141,7 @@ export function buildSnapshot(
   env: NodeJS.ProcessEnv = process.env,
 ): Snapshot {
   const peers = store.listPeers(now);
+  const wakes = store.wakeCounts(now);
   const agents: SnapshotAgent[] = peers.map((p) => {
     const { files, ticket } = activity(p.activity);
     const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
@@ -153,6 +157,8 @@ export function buildSnapshot(
       files,
       lastActive: p.last_active,
       lastSeen: p.last_seen_at,
+      wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
+      wakes24h: wakes.get(p.id)?.last24h ?? 0,
     };
   });
 

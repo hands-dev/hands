@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { repoInfo } from "./paths.js";
 
 export interface MemoryEntry {
   /** filename without extension */
@@ -13,20 +14,20 @@ export interface MemoryEntry {
 }
 
 /**
- * Directory holding the ampersand memory store. Overridable via
- * `AGENT_BUS_MEMORY_DIR`. All ampersand worktrees share one memory dir, so
- * memory journaling is deduped globally (watermark agent '*').
+ * Directory holding this repo's Claude Code memory store. Overridable via
+ * `AGENT_BUS_MEMORY_DIR`; otherwise derived from the repo's MAIN checkout path
+ * (Claude Code keys project memory as `~/.claude/projects/<path with / → ->`),
+ * so every worktree of a repo shares one memory dir and memory journaling is
+ * deduped globally (watermark agent '*').
  */
-export function memoryDir(env: NodeJS.ProcessEnv = process.env): string {
+export function memoryDir(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
   const override = env.AGENT_BUS_MEMORY_DIR?.trim();
   if (override) return override;
-  return path.join(
-    os.homedir(),
-    ".claude",
-    "projects",
-    "-Users-michaelphillips-Development-ampersand",
-    "memory",
-  );
+  const root = repoInfo(cwd)?.repoRoot ?? cwd;
+  return path.join(os.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
 }
 
 function descriptionOf(body: string): string {

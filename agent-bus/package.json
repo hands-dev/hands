@@ -3,7 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Local stdio MCP server for cross-worktree Claude Code messaging (personal tool).",
+  "description": "Per-repo foreman/worker coordination bus for Claude Code (stdio MCP server + provisioning CLI).",
+  "bin": {
+    "agent-bus": "dist/cli.js"
+  },
   "scripts": {
     "start": "tsx src/server.ts",
     "dashboard": "node dist/server.js serve",

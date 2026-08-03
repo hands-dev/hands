@@ -1,102 +1,46 @@
 import * as path from "node:path";
+import { repoInfo } from "./paths.js";
 
 /**
- * Human display names for the worktree agents — a PURE PRESENTATION layer.
+ * Agent identity — two canonical roles, no persona layer:
+ *   `foreman`      the repo's main checkout (command center)
+ *   `worker-<n>`   a provisioned worker (hosted in a managed worktree — a
+ *                  hidden isolation detail, never surfaced in addressing)
  *
- * The cast is The West Wing senior staff: the foreman (main checkout / command
- * center) is Leo McGarry, the Chief of Staff who runs the staff for the
- * President (Michael) — the same relationship the foreman has to Michael. The
- * numbered worktrees are the senior staff who report through Leo.
- *
- * The canonical agent id (`wt<n>`, `foreman`) remains the routing key
- * everywhere: DB `from_id`/`to_id`, read cursors, notify targets, and git
- * branches (`wt3/home`) are all keyed on it and MUST NOT change. These names
- * exist only so the human-facing output reads as real people. Ids without a
- * mapping (mobile, api, ampersand, ad-hoc) render as themselves.
+ * The canonical id is the routing key everywhere: DB `from_id`/`to_id`, read
+ * cursors, notify targets. Anything else (the principal's name, a stray dir
+ * basename) passes through as-is.
  */
-export const AGENT_DISPLAY_NAMES: Record<string, string> = {
-  foreman: "Leo",
-  wt1: "Josh",
-  wt2: "Toby",
-  wt3: "Sam",
-  wt4: "C.J.",
-  wt5: "Donna",
-  wt6: "Charlie",
-};
 
-/**
- * Pronouns per agent, so the staff reference each other correctly ("C.J. posted
- * her findings", "ask Toby for his diff"). Follows the West Wing cast. Presented
- * everywhere the roster is shown (peers, board, dashboard, server instructions).
- * An unmapped id has no stated pronouns — callers fall back to they/them.
- */
-export const AGENT_PRONOUNS: Record<string, string> = {
-  foreman: "he/him", // Leo
-  wt1: "he/him", // Josh
-  wt2: "he/him", // Toby
-  wt3: "he/him", // Sam
-  wt4: "she/her", // C.J.
-  wt5: "she/her", // Donna
-  wt6: "he/him", // Charlie
-};
+const WORKER_ID = /^worker-(\d+)$/;
 
-/** Stated pronouns for an agent id, or `they/them` when none is on file. */
-export function pronounsFor(id: string): string {
-  return AGENT_PRONOUNS[id] ?? "they/them";
+/** True for a canonical worker id (`worker-1`, `worker-12`, …). */
+export function isWorker(id: string): boolean {
+  return WORKER_ID.test(id);
 }
 
-/** `"C.J. (wt4, she/her)"` — the full roster label used where agents meet each other. */
-export function displayNameWithPronouns(id: string): string {
-  const name = AGENT_DISPLAY_NAMES[id];
-  return name ? `${name} (${id}, ${pronounsFor(id)})` : id;
-}
-
-/** Lowercased human name → canonical id, derived once from the forward map. */
-const NAME_TO_ID: Map<string, string> = new Map(
-  Object.entries(AGENT_DISPLAY_NAMES).map(([id, name]) => [name.toLowerCase(), id]),
-);
-
-/**
- * Human label for an agent id: `"Riley (wt4)"` when the id is mapped, otherwise
- * the id unchanged (`"foreman"`, `"api"`, …). Keeps the `wt<n>` visible so the
- * routing key is never hidden from a human reading the board.
- */
-export function displayName(id: string): string {
-  const name = AGENT_DISPLAY_NAMES[id];
-  return name ? `${name} (${id})` : id;
+export function isForeman(id: string): boolean {
+  return id === "foreman";
 }
 
 /**
- * Resolve a human ref back to the canonical agent id for routing. Accepts the
- * bare name (`"Riley"`, case-insensitive), the decorated label (`"Riley (wt4)"`),
- * or the id itself (`"wt4"`). `"*"` (broadcast) and any unmapped ref pass through
- * unchanged, so `foreman`/`api`/etc. still address correctly.
+ * Resolve a recipient ref to the canonical routing id. Pure passthrough now
+ * that there is no name→id roster: trims, and preserves `"*"` (broadcast).
  */
 export function resolveAgentRef(nameOrId: string): string {
-  const raw = nameOrId.trim();
-  if (raw === "*" || raw === "") return raw;
-  // Decorated label "Riley (wt4)" → take the parenthesised id.
-  const decorated = raw.match(/\(([^)]+)\)\s*$/);
-  if (decorated) return decorated[1]!.trim();
-  // Bare human name (case-insensitive) → its id.
-  const byName = NAME_TO_ID.get(raw.toLowerCase());
-  if (byName) return byName;
-  // Already an id (mapped or not) → unchanged.
-  return raw;
+  return nameOrId.trim();
 }
 
 /**
- * Parse a trailing worktree index from a directory basename.
- *
- * Mirrors `indexFromDirName` in `scripts/lib/worktree-ports.ts` (the source of
- * truth for worktree naming). Matches only the `…worktree-2` / `…-wt2`
- * conventions — NOT a bare trailing number — so a branch-named worktree like
- * `fix-eng-642` does not resolve to a bogus index. Returns null for the main
- * checkout (no recognized index).
+ * Parse a worker index from a directory basename. Matches the managed
+ * `worker-<n>` dirs the provisioner creates, plus the legacy `…worktree-<n>` /
+ * `…-wt<n>` conventions — NOT a bare trailing number, so a branch-named
+ * worktree like `fix-eng-642` never resolves to a bogus index. Returns null
+ * for anything else (e.g. a main checkout).
  */
 export function indexFromDirName(dir: string): number | null {
   const base = path.basename(dir);
-  const match = base.match(/(?:worktree-|-wt)(\d+)$/i);
+  const match = base.match(/(?:^worker-|worktree-|-wt)(\d+)$/i);
   if (!match) return null;
   const n = Number.parseInt(match[1]!, 10);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -122,19 +66,25 @@ export function agentIdFromArgv(argv: readonly string[] = process.argv): string 
 
 /**
  * Resolve this instance's agent id. Precedence:
- *   1. `AGENT_BUS_ID` env var
+ *   1. `AGENT_BUS_ID` env var — what the provisioner sets on managed workers
  *   2. `--agent-id <name>` launch arg
- *   3. `wt<n>` derived from the cwd basename (`…worktree-n` / `…-wtn`)
- *   4. the cwd basename itself (covers the main checkout, e.g. `main`/`ampersand`)
+ *   3. foreman-basename override — `AGENT_BUS_FOREMAN_BASENAME` env, or the
+ *      `foreman.basename` config passed by the caller
+ *   4. main-worktree autodetect: cwd inside a repo's MAIN worktree → `foreman`
+ *      (this is what gives every repo its own foreman, regardless of name)
+ *   5. `worker-<n>` derived from the cwd basename (managed worker dirs and the
+ *      legacy `…worktree-n` / `…-wtn` conventions)
+ *   6. the cwd basename itself (stray dirs)
  *
- * The `.mcp.json` entry is committed and shared across every worktree, so the id
- * must be derived at runtime from the cwd — never a static launch arg baked into
- * shared config.
+ * The MCP registration is shared machine-wide, so the id must be derived at
+ * runtime from env + cwd — never a static launch arg baked into shared config.
  */
 export function resolveAgentId(options?: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   argv?: readonly string[];
+  /** config `foreman.basename` (env AGENT_BUS_FOREMAN_BASENAME still wins) */
+  foremanBasename?: string | null;
 }): string {
   const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? process.env;
@@ -146,13 +96,14 @@ export function resolveAgentId(options?: {
   const fromArg = agentIdFromArgv(argv)?.trim();
   if (fromArg) return fromArg;
 
-  const index = indexFromDirName(cwd);
-  if (index !== null) return `wt${index}`;
-
-  // The main checkout (no worktree suffix) is the foreman / command center.
-  const foremanBasename = env.AGENT_BUS_FOREMAN_BASENAME?.trim() || "ampersand";
   const base = path.basename(cwd);
-  if (base === foremanBasename) return "foreman";
+  const foremanBasename = env.AGENT_BUS_FOREMAN_BASENAME?.trim() || options?.foremanBasename;
+  if (foremanBasename && base === foremanBasename) return "foreman";
+
+  if (repoInfo(cwd)?.isMainWorktree) return "foreman";
+
+  const index = indexFromDirName(cwd);
+  if (index !== null) return `worker-${index}`;
 
   return base;
 }
