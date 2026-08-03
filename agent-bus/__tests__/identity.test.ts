@@ -6,8 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   agentIdFromArgv,
   indexFromDirName,
-  isForeman,
-  isWorker,
+  isExpo,
+  isStation,
   resolveAgentId,
   resolveAgentRef,
 } from "../src/identity.js";
@@ -44,15 +44,16 @@ describe("agentIdFromArgv", () => {
   });
 });
 
-describe("isWorker / isForeman", () => {
-  it("classifies canonical ids", () => {
-    expect(isWorker("worker-1")).toBe(true);
-    expect(isWorker("worker-12")).toBe(true);
-    expect(isWorker("foreman")).toBe(false);
-    expect(isWorker("wt4")).toBe(false);
-    expect(isWorker("Michael")).toBe(false);
-    expect(isForeman("foreman")).toBe(true);
-    expect(isForeman("worker-1")).toBe(false);
+describe("isStation / isExpo (legacy ids accepted)", () => {
+  it("classifies canonical and legacy ids", () => {
+    expect(isStation("station-1")).toBe(true);
+    expect(isStation("worker-12")).toBe(true); // legacy alias
+    expect(isStation("expo")).toBe(false);
+    expect(isStation("wt4")).toBe(false);
+    expect(isStation("Michael")).toBe(false);
+    expect(isExpo("expo")).toBe(true);
+    expect(isExpo("foreman")).toBe(true); // legacy alias
+    expect(isExpo("station-1")).toBe(false);
   });
 });
 
@@ -69,18 +70,18 @@ describe("resolveAgentId precedence (non-git cwds)", () => {
     );
   });
 
-  it("derives worker-<n> from the cwd basename", () => {
-    expect(resolveAgentId({ ...base, env: {} })).toBe("worker-4");
+  it("derives station-<n> from the cwd basename (legacy worktree naming)", () => {
+    expect(resolveAgentId({ ...base, env: {} })).toBe("station-4");
   });
 
-  it("honours the foreman-basename override (env and option)", () => {
+  it("honours the expo-basename override (env and option)", () => {
     expect(
       resolveAgentId({
         cwd: "/Users/x/Development/ampersand",
         env: { AGENT_BUS_FOREMAN_BASENAME: "ampersand" },
         argv: ["node", "s"],
       }),
-    ).toBe("foreman");
+    ).toBe("expo");
     expect(
       resolveAgentId({
         cwd: "/Users/x/Development/ampersand",
@@ -88,7 +89,7 @@ describe("resolveAgentId precedence (non-git cwds)", () => {
         argv: ["node", "s"],
         foremanBasename: "ampersand",
       }),
-    ).toBe("foreman");
+    ).toBe("expo");
   });
 
   it("uses the basename for any other non-worker dir", () => {
@@ -121,11 +122,11 @@ describe("resolveAgentId in a real repo (main-worktree autodetect)", () => {
     resetRepoInfoCache();
   });
 
-  it("resolves any repo's MAIN worktree to foreman, regardless of its name", () => {
-    expect(resolveAgentId({ cwd: main, env: {}, argv: ["node", "s"] })).toBe("foreman");
+  it("resolves any repo's MAIN worktree to expo, regardless of its name", () => {
+    expect(resolveAgentId({ cwd: main, env: {}, argv: ["node", "s"] })).toBe("expo");
   });
 
-  it("does NOT make a linked worktree the foreman (basename fallback)", () => {
+  it("does NOT make a linked worktree the expo (basename fallback)", () => {
     expect(resolveAgentId({ cwd: linked, env: {}, argv: ["node", "s"] })).toBe("myproj-feature");
   });
 
@@ -139,12 +140,14 @@ describe("resolveAgentId in a real repo (main-worktree autodetect)", () => {
   });
 });
 
-describe("resolveAgentRef (passthrough — no roster)", () => {
-  it("passes ids, principal names, and broadcast through unchanged", () => {
-    expect(resolveAgentRef("worker-4")).toBe("worker-4");
-    expect(resolveAgentRef("foreman")).toBe("foreman");
+describe("resolveAgentRef (canonicalizes legacy, passes everything else)", () => {
+  it("aliases legacy role ids and passes the rest unchanged", () => {
+    expect(resolveAgentRef("station-4")).toBe("station-4");
+    expect(resolveAgentRef("worker-4")).toBe("station-4"); // legacy alias
+    expect(resolveAgentRef("foreman")).toBe("expo"); // legacy alias
+    expect(resolveAgentRef("expo")).toBe("expo");
     expect(resolveAgentRef("Michael")).toBe("Michael");
     expect(resolveAgentRef("*")).toBe("*");
-    expect(resolveAgentRef("  worker-2  ")).toBe("worker-2");
+    expect(resolveAgentRef("  worker-2  ")).toBe("station-2");
   });
 });

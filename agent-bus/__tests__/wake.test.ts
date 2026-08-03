@@ -63,17 +63,17 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 
 describe("wake:false (non-waking FYI)", () => {
   it("stores the message and delivers on drain, but never touches .notify", async () => {
-    const w1 = await connect("worker-1");
+    const w1 = await connect("station-1");
     const res = await call(w1, "agent_bus_send", {
-      to: "foreman",
+      to: "expo",
       body: "parked X, moving on",
       wake: false,
     });
     expect(res.isError).toBe(false);
     expect(res.body.woken).toEqual([]);
-    expect(notifyLines("foreman")).toHaveLength(0);
+    expect(notifyLines("expo")).toHaveLength(0);
 
-    const foreman = await connect("foreman");
+    const foreman = await connect("expo");
     const drained = await call(foreman, "agent_bus_receive", { wait_seconds: 0 });
     expect(drained.body.count).toBe(1);
     expect((drained.body.messages as Array<{ body: string }>)[0]!.body).toBe("parked X, moving on");
@@ -82,67 +82,67 @@ describe("wake:false (non-waking FYI)", () => {
 
 describe("redundant-wake suppression", () => {
   it("a burst to an undrained recipient appends exactly ONE notify line; one drain returns all", async () => {
-    const foreman = await connect("foreman");
-    stores[0]!.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "first" });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "second" });
-    const third = await call(foreman, "agent_bus_send", { to: "worker-1", body: "third" });
+    const foreman = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "first" });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "second" });
+    const third = await call(foreman, "agent_bus_send", { to: "station-1", body: "third" });
     expect(third.body.woken).toEqual([]); // suppressed — wake already pending
-    expect(notifyLines("worker-1")).toHaveLength(1);
+    expect(notifyLines("station-1")).toHaveLength(1);
 
-    const w1 = await connect("worker-1");
+    const w1 = await connect("station-1");
     const drained = await call(w1, "agent_bus_receive", { wait_seconds: 0 });
     expect(drained.body.count).toBe(3);
   });
 
   it("wakes again after the recipient drains", async () => {
-    const foreman = await connect("foreman");
-    stores[0]!.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "first" });
-    const w1 = await connect("worker-1");
+    const foreman = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "first" });
+    const w1 = await connect("station-1");
     await call(w1, "agent_bus_receive", { wait_seconds: 0 }); // drains + advances cursor
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "second" });
-    expect(notifyLines("worker-1")).toHaveLength(2);
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "second" });
+    expect(notifyLines("station-1")).toHaveLength(2);
   });
 
   it("a broadcast only wakes peers who are fully drained", async () => {
-    const foreman = await connect("foreman");
+    const foreman = await connect("expo");
     const store = stores[0]!;
-    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
-    store.registerAgent({ id: "worker-2", cwd: "/", pid: 3 });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "just for you" });
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    store.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "just for you" });
     const bc = await call(foreman, "agent_bus_send", { to: "*", body: "all hands" });
     // worker-1 is behind (undrained DM) → suppressed; worker-2 gets the wake
-    expect(bc.body.woken).toEqual(["worker-2"]);
-    expect(notifyLines("worker-1")).toHaveLength(1);
-    expect(notifyLines("worker-2")).toHaveLength(1);
+    expect(bc.body.woken).toEqual(["station-2"]);
+    expect(notifyLines("station-1")).toHaveLength(1);
+    expect(notifyLines("station-2")).toHaveLength(1);
   });
 });
 
 describe("board stateHash + full bundle", () => {
   it("is stable when nothing changes and moves when assignments change", async () => {
-    const foreman = await connect("foreman");
+    const foreman = await connect("expo");
     const store = stores[0]!;
-    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
     const a = await call(foreman, "agent_bus_board", {});
     const b = await call(foreman, "agent_bus_board", {});
     expect(a.body.stateHash).toBeTruthy();
     expect(a.body.stateHash).toBe(b.body.stateHash);
-    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "worker-1" });
+    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "station-1" });
     const c = await call(foreman, "agent_bus_board", {});
     expect(c.body.stateHash).not.toBe(a.body.stateHash);
   });
 
   it("full:true bundles tasks + questions + priorities into one read", async () => {
-    const foreman = await connect("foreman");
+    const foreman = await connect("expo");
     const store = stores[0]!;
-    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
-    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "worker-1" });
-    store.askQuestion({ asker: "worker-1", question: "ship it?" });
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "station-1" });
+    store.askQuestion({ asker: "station-1", question: "ship it?" });
     const res = await call(foreman, "agent_bus_board", { full: true });
     const tasks = res.body.activeTasks as Array<{ title: string; assignee: string }>;
     expect(tasks).toHaveLength(1);
-    expect(tasks[0]!.assignee).toBe("worker-1");
+    expect(tasks[0]!.assignee).toBe("station-1");
     const questions = res.body.openQuestions as Array<{ question: string }>;
     expect(questions.map((q) => q.question)).toContain("ship it?");
     expect(res.body.priorities).toMatchObject({ set: false });
@@ -153,7 +153,7 @@ describe("board stateHash + full bundle", () => {
   it("computeStateHash is directly stable for a fixed now", () => {
     const store = new Store({ env });
     stores.push(store);
-    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2, now: 1000 });
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2, now: 1000 });
     const now = 5000;
     expect(computeStateHash(store, now)).toBe(computeStateHash(store, now));
   });
@@ -161,36 +161,36 @@ describe("board stateHash + full bundle", () => {
 
 describe("wake accounting (wake_log)", () => {
   it("counts real wakes only — not wake:false, not suppressed bursts", async () => {
-    const foreman = await connect("foreman");
+    const foreman = await connect("expo");
     const store = stores[0]!;
-    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
 
     // 2 FYIs → zero wakes recorded
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "fyi 1", wake: false });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "fyi 2", wake: false });
-    expect(store.wakeCounts().get("worker-1")).toBeUndefined();
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "fyi 1", wake: false });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "fyi 2", wake: false });
+    expect(store.wakeCounts().get("station-1")).toBeUndefined();
 
     // a 3-message burst → exactly 1 wake (suppression collapses the rest)
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "real 1" });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "real 2" });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "real 3" });
-    expect(store.wakeCounts().get("worker-1")).toMatchObject({ lastHour: 1, last24h: 1 });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "real 1" });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "real 2" });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "real 3" });
+    expect(store.wakeCounts().get("station-1")).toMatchObject({ lastHour: 1, last24h: 1 });
 
     // drain, then another waking send → 2 total
-    const w1 = await connect("worker-1");
+    const w1 = await connect("station-1");
     await call(w1, "agent_bus_receive", { wait_seconds: 0 });
-    await call(foreman, "agent_bus_send", { to: "worker-1", body: "again" });
-    expect(store.wakeCounts().get("worker-1")).toMatchObject({ lastHour: 2, last24h: 2 });
+    await call(foreman, "agent_bus_send", { to: "station-1", body: "again" });
+    expect(store.wakeCounts().get("station-1")).toMatchObject({ lastHour: 2, last24h: 2 });
   });
 
   it("surfaces wakesLastHour on the board and counts delegation wakes", async () => {
-    const foreman = await connect("foreman");
+    const foreman = await connect("expo");
     const store = stores[0]!;
-    store.registerAgent({ id: "worker-1", cwd: "/", pid: 2 });
-    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "worker-1" });
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(foreman, "agent_bus_delegate", { title: "plan X", to: "station-1" });
     const board = await call(foreman, "agent_bus_board", {});
     const w1 = (board.body.peers as Array<{ id: string; wakesLastHour: number }>).find(
-      (p) => p.id === "worker-1",
+      (p) => p.id === "station-1",
     );
     expect(w1?.wakesLastHour).toBe(1);
   });
@@ -199,8 +199,8 @@ describe("wake accounting (wake_log)", () => {
     const store = new Store({ env });
     stores.push(store);
     const now = Date.now();
-    store.recordWakes(["worker-1"], now - 25 * 60 * 60_000);
-    store.recordWakes(["worker-1"], now); // triggers the opportunistic prune
-    expect(store.wakeCounts(now).get("worker-1")).toMatchObject({ lastHour: 1, last24h: 1 });
+    store.recordWakes(["station-1"], now - 25 * 60 * 60_000);
+    store.recordWakes(["station-1"], now); // triggers the opportunistic prune
+    expect(store.wakeCounts(now).get("station-1")).toMatchObject({ lastHour: 1, last24h: 1 });
   });
 });
