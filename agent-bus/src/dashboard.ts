@@ -161,15 +161,15 @@ export function dashboardHtml(principal: string): string {
 <main>
   <div id="needs"></div>
   <div class="card"><div class="card-header"><span class="card-title">Overall utilization</span><span id="util-badge"></span></div><div class="card-content" id="util-body"></div></div>
-  <div class="card"><div class="card-header"><span class="card-title">Workers</span><span id="workers-badge"></span></div><div class="card-content" id="workers-body"></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Stations</span><span id="workers-badge"></span></div><div class="card-content" id="workers-body"></div></div>
   <div id="collstrip"></div>
-  <div class="card"><div class="card-header"><span class="card-title">Foreman effectiveness</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Expo effectiveness</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
   <div id="others"></div>
 </main>
 <script>
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function age(now,t){ if(t==null) return '—'; var ms=now-t; if(ms<60000) return 'now'; var m=Math.floor(ms/60000); if(m<60) return m+'m'; var h=Math.floor(m/60); return h<24? h+'h':Math.floor(h/24)+'d'; }
-  function wtNum(id){ var m=/^worker-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
+  function wtNum(id){ var m=/^(?:station|worker)-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
   var PRINCIPAL=${JSON.stringify(principal)};
   function nmeOnly(id){ return id; }
   function dotColor(s){ return s==='active'?'hsl(var(--success))':s==='idle'?'hsl(var(--warning))':'hsl(var(--muted-foreground))'; }
@@ -243,7 +243,7 @@ export function dashboardHtml(principal: string): string {
           '<div class="stat idle"><div class="n">'+idle+'</div><div class="l">Idle</div></div>'+
           '<div class="stat offline"><div class="n">'+off+'</div><div class="l">Offline</div></div>'+
         '</div>'+
-        '<div>'+(rows||'<div class="empty">no priorities set — ask the foreman</div>')+'</div>'+
+        '<div>'+(rows||'<div class="empty">no specials set — ask the expo</div>')+'</div>'+
       '</div>';
   }
 
@@ -262,7 +262,7 @@ export function dashboardHtml(principal: string): string {
     var cls='wcard'+(w.state==='offline'?' offline':'')+(collide[w.id]?' collide':'');
     var wp=workerPriority(s,w); var t=wp.task;
     var taskHtml = t
-      ? '<div class="wtask"><span class="ar">▸</span><span class="tt">'+esc(t.title)+'</span></div>'
+      ? '<div class="wtask"><span class="ar">▸</span><span class="tt">'+esc(t.title)+(t.dish?' <span class="wt mono">('+esc(t.dish)+')</span>':'')+'</span></div>'
       : '<div class="wtask none"><span class="ar">▸</span><span class="tt">'+(w.state==='offline'?'offline':(w.branch?'self-directed':'no task'))+'</span></div>';
     var ptag;
     if(wp.i>=0 && wp.src==='branch'){
@@ -319,7 +319,7 @@ export function dashboardHtml(principal: string): string {
     }).join('');
     var table = recs.length
       ? '<table class="tbl"><thead><tr><th>outcome</th><th>from</th><th>recommendation</th><th>priority</th><th class="right">age</th></tr></thead><tbody>'+rows+'</tbody></table>'
-      : '<div class="empty">no foreman recommendations yet</div>';
+      : '<div class="empty">no expo recommendations yet</div>';
     document.getElementById('fore-body').innerHTML =
       '<div class="fore-top">'+
         '<span class="score'+(assessed?' has':'')+'">'+score+'</span>'+
@@ -329,9 +329,9 @@ export function dashboardHtml(principal: string): string {
           badge('badge-secondary','<b>'+pend+'</b>&nbsp;not yet judged')+
         '</div>'+
       '</div>'+
-      '<p class="card-desc" style="padding:0 0 12px">The foreman grades its own calls in hindsight — did each recommendation hold up, or did a later finding overturn it? '+
+      '<p class="card-desc" style="padding:0 0 12px">The expo grades its own calls in hindsight — did each recommendation hold up, or did a later finding overturn it? '+
         'Score = held up ÷ (held up + overturned), recency-weighted. It measures the foreman\\'s judgment, not whether '+esc(PRINCIPAL)+' accepted its advice.'+
-        (assessed?'':' Nothing judged yet — the score appears once the foreman starts introspecting on how its recommendations played out.')+'</p>'+
+        (assessed?'':' Nothing judged yet — the score appears once the expo starts introspecting on how its recommendations played out.')+'</p>'+
       table;
   }
 

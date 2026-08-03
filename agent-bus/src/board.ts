@@ -174,7 +174,7 @@ export function buildBoard(
     lines.push(`  ? ${q.asker} asks: "${q.question}" — adjudicate or escalate`);
   }
   for (const t of assignedToMe) {
-    lines.push(`  📋 ${t.created_by} delegated: "${t.title}" — start with agent_bus_task_update`);
+    lines.push(`  📋 ${t.created_by} fired: "${t.title}" — start with agent_bus_task_update`);
   }
   for (const t of returnedToMe) {
     lines.push(`  📋 ${t.assignee ?? ""} returned: "${t.title}" — review it`);

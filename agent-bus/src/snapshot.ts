@@ -85,6 +85,7 @@ export interface SnapshotTask {
   assignee: string;
   state: string;
   priority: string | null;
+  dish: string | null;
   result: string | null;
   at: number;
 }
@@ -250,6 +251,7 @@ export function buildSnapshot(
     assignee: t.assignee ?? "queue",
     state: t.state,
     priority: t.priority_ref,
+    dish: t.dish,
     result: t.result,
     at: t.updated_at,
   }));

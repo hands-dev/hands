@@ -59,7 +59,7 @@ describe("renderDigest", () => {
     expect(a.body).not.toContain("secret body");
     expect(a.body).toContain("messages sent: 1");
     // truncation is code-point safe and bounded
-    const resultLine = a.body.split("\n").find((l) => l.includes("task #1 → returned"))!;
+    const resultLine = a.body.split("\n").find((l) => l.includes("ticket #1 returned"))!;
     expect(resultLine).toContain("…");
     expect(Array.from(resultLine).length).toBeLessThan(200);
     // cursor bookkeeping is not itemized
@@ -159,7 +159,7 @@ describe("regenerateDigests", () => {
     const fileB = fs.readFileSync(path.join(b.dir, "journal", "proj", "michael", `${DAY}.md`), "utf8");
     expect(fileA).toBe(fileB);
     // the converged digest reflects BOTH machines' events
-    expect(fileA).toContain("task #1 created");
+    expect(fileA).toContain("ticket #1"); // fired line
     expect(fileA).toContain("Good day: plan landed");
   });
 

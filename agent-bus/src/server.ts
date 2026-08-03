@@ -345,6 +345,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         assignee: t.assignee ?? "queue",
         state: t.state,
         priority: t.priority_ref ?? undefined,
+        dish: t.dish ?? undefined,
         updatedAt: new Date(t.updated_at).toISOString(),
       }));
       const openQuestions = store.listQuestions({ state: "open" }).map((q) => ({
@@ -584,6 +585,10 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         body: z.string().optional(),
         to: z.string().optional(),
         priority: z.string().optional(),
+        dish: z
+          .string()
+          .optional()
+          .describe('the DISH this ticket helps assemble — external ref ("ENG-1476", "PR #2455")'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -615,6 +620,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         title: input.title,
         body: input.body ?? null,
         priority: input.priority ?? null,
+        dish: input.dish ?? null,
       });
       if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
       return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue" });
@@ -655,6 +661,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
           state: t.state,
           result: t.result ?? undefined,
           priority: t.priority_ref ?? undefined,
+          dish: t.dish ?? undefined,
           updatedAt: new Date(t.updated_at).toISOString(),
         })),
       });

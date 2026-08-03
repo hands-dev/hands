@@ -79,13 +79,13 @@ function cmdWorker(argv: string[]): void {
     const plans = addWorkers(n);
     if (plans.length === 0) out("nothing to add");
     reportPlans(plans);
-    out(`\nWorkers register on the foreman's board on their first turn (agent_bus_peers to check).`);
+    out(`\nStations register with the expo on their first turn (agent_bus_peers to check).`);
     return;
   }
   if (sub === "ls") {
     const workers = listWorkers();
     if (workers.length === 0) {
-      out("no workers — add some: roundhouse worker add -n 2");
+      out("no stations — open some: yes-chef station add -n 2");
       return;
     }
     for (const w of workers) out(`${w.id}\t${w.branch}\t${w.dir}`);
@@ -93,17 +93,17 @@ function cmdWorker(argv: string[]): void {
   }
   if (sub === "rm") {
     const id = argv[1];
-    if (!id || id.startsWith("-")) fail("usage: roundhouse worker rm worker-<n> [--force]");
+    if (!id || id.startsWith("-")) fail("usage: yes-chef station rm station-<n> [--force]");
     const res = removeWorker(id, { force: flag(argv, "--force") });
     out(res.removed ? `✔ ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }
-  fail("usage: roundhouse worker <add|ls|rm>");
+  fail("usage: yes-chef station <add|ls|rm>");
 }
 
 function cmdScale(argv: string[]): void {
   const target = Number.parseInt(argv[0] ?? "", 10);
-  if (!Number.isInteger(target) || target < 0) fail("usage: roundhouse scale <N>");
+  if (!Number.isInteger(target) || target < 0) fail("usage: yes-chef scale <N>");
   const { added, removed } = scaleWorkers(target, { force: flag(argv, "--force") });
   reportPlans(added);
   for (const id of removed) out(`✔ ${id} retired`);
@@ -187,7 +187,8 @@ async function main(): Promise<void> {
         await runInit(rest);
         return;
       }
-      case "worker":
+      case "station":
+      case "worker": // legacy alias
         return cmdWorker(rest);
       case "scale":
         return cmdScale(rest);
