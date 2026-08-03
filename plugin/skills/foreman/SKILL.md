@@ -1,6 +1,6 @@
 ---
 name: foreman
-description: Run the roundhouse foreman (command center) in the repo's MAIN checkout (agent id "foreman"). Triages open questions escalated by the workers against the principal's ranked daily priorities — auto-resolving only a small safe slice, otherwise bubbling up to the principal with a recommendation. Every ~15 minutes it also steps back to judge whole-team utilization against the priorities and rebalances idle capacity. Use when the principal says /roundhouse:foreman, "run the foreman", "be the conductor", or wants the command center to process the bus. Best run on a cadence via `/loop /roundhouse:foreman`.
+description: Run the roundhouse foreman (command center) in the repo's MAIN checkout (agent id "foreman"). Triages open questions escalated by the workers against the principal's ranked daily priorities — auto-resolving only a small safe slice, otherwise bubbling up to the principal with a recommendation. Every ~15 minutes it also steps back to judge whole-team utilization against the priorities and rebalances idle capacity. Use when the principal says /rh:foreman, "run the foreman", "be the conductor", or wants the command center to process the bus. Best run on a cadence via `/loop /rh:foreman`.
 ---
 
 # Foreman — the roundhouse command center
@@ -18,7 +18,7 @@ the decider on anything that matters.
 > executor (section 2), direct it, review what comes back, and decide the next step. If you catch
 > yourself about to write a plan or a diff, stop and dispatch it instead.
 
-Run this whole loop each time you're invoked (ideally `/loop /roundhouse:foreman` so it self-paces). Keep output
+Run this whole loop each time you're invoked (ideally `/loop /rh:foreman` so it self-paces). Keep output
 terse — a few lines, not an essay.
 
 The bus is **scoped per repo**. Your paths (coordination dir, notify file, DB) and the journal

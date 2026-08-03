@@ -8191,7 +8191,7 @@ function branchExists(cwd, branch) {
   }
 }
 function launchCommand(worker) {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /roundhouse:worker")}`;
+  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /rh:worker")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;

@@ -225,7 +225,7 @@ export async function runInit(argv: string[]): Promise<void> {
     // 4. next steps
     out("");
     out("Done. Next steps:");
-    out("  1. main checkout: /roundhouse:foreman   (or /loop /roundhouse:foreman)");
+    out("  1. main checkout: /rh:foreman   (or /loop /rh:foreman)");
     out("  2. add workers:   roundhouse worker add -n 2");
     out("  3. dashboard:     roundhouse serve   → http://localhost:4319");
     out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");

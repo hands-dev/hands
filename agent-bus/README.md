@@ -137,11 +137,11 @@ effectiveness (hindsight-graded recommendations), "needs you" escalations, colli
 
 ## Foreman & workers
 
-- Main checkout: `/loop /roundhouse:foreman` — triages escalated questions against the priorities
+- Main checkout: `/loop /rh:foreman` — triages escalated questions against the priorities
   (auto-resolving only the reversible/on-priority/scoped/confident slice), delegates all real work,
   reviews returned tasks, gates review/merge depth, maintains the principal's to-do list, and
   re-checks team utilization every ~15 min (skipped when `stateHash` is unchanged).
-- Worker panes: `/loop /roundhouse:worker` — event-driven via a persistent Monitor tailing the worker's
+- Worker panes: `/loop /rh:worker` — event-driven via a persistent Monitor tailing the worker's
   `.notify` file; drains the inbox, does reversible in-workspace work, escalates decisions, yields.
 
 Both behaviors ship as plugin skills (`plugin/skills/{foreman,worker}/SKILL.md`).

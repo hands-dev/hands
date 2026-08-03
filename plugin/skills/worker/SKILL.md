@@ -1,6 +1,6 @@
 ---
 name: worker
-description: Make THIS pane an autonomous, event-driven roundhouse worker. Arms a persistent Monitor on this worker's `.notify` file so it wakes the instant a message or delegated task lands — no timer polling. On each wake it drains the inbox, responds or does safe reversible work, then yields. Run via `/loop /roundhouse:worker`; the Monitor is the wake signal and a long heartbeat is only a fallback. Use when the principal says /roundhouse:worker, "make this pane a worker", "auto-respond to the bus", or runs /loop /roundhouse:worker.
+description: Make THIS pane an autonomous, event-driven roundhouse worker. Arms a persistent Monitor on this worker's `.notify` file so it wakes the instant a message or delegated task lands — no timer polling. On each wake it drains the inbox, responds or does safe reversible work, then yields. Run via `/loop /rh:worker`; the Monitor is the wake signal and a long heartbeat is only a fallback. Use when the principal says /rh:worker, "make this pane a worker", "auto-respond to the bus", or runs /loop /rh:worker.
 ---
 
 # Worker — event-driven responder on the roundhouse bus
@@ -90,7 +90,7 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
 
 - The **Monitor is the primary wake signal** — sub-second from an inbound message/task to your drain
   pass.
-- Keep only a **long fallback heartbeat** (~20–30 min `ScheduleWakeup`, prompt `/loop /roundhouse:worker`) so the
+- Keep only a **long fallback heartbeat** (~20–30 min `ScheduleWakeup`, prompt `/loop /rh:worker`) so the
   loop survives a missed beat or a file rotation. Do **not** set a short cadence — idle ticks are pure
   overhead now that the Monitor does the waking.
 - **Compaction cadence.** A long-lived worker accretes context; compact it proactively during idle
@@ -106,21 +106,21 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
   ```
 
   If it prints **DUE**, reset the clock and end the turn by scheduling the next wakeup with prompt
-  **`/compact`** instead of `/loop /roundhouse:worker`:
+  **`/compact`** instead of `/loop /rh:worker`:
 
   ```
   touch <coordinationDir>/<id>.last-compact    # reset the clock BEFORE the compact fires
   ScheduleWakeup({ delaySeconds: <normal heartbeat>, prompt: "/compact", reason: "worker context compaction cadence" })
   ```
 
-  Otherwise re-arm the normal `/loop /roundhouse:worker` heartbeat as usual. (A plain not-due check never touches
+  Otherwise re-arm the normal `/loop /rh:worker` heartbeat as usual. (A plain not-due check never touches
   the marker, so the clock ages correctly.)
 
   Why this shape: the wakeup-prompt channel is the **only** way the loop can trigger a built-in slash
   command — the assistant can't self-invoke `/compact` from inside a turn; this is the identical
-  channel that re-enters `/loop /roundhouse:worker` every heartbeat. When it fires, `/compact` summarizes the
+  channel that re-enters `/loop /rh:worker` every heartbeat. When it fires, `/compact` summarizes the
   session and the turn ends. The **persistent Monitor stays armed across the compaction**, so the next
-  inbound message wakes the worker normally and re-arms the standard `/loop /roundhouse:worker` heartbeat. The
+  inbound message wakes the worker normally and re-arms the standard `/loop /rh:worker` heartbeat. The
   skill instructions survive in the post-compaction summary, so the loop continues seamlessly. Tune
   the 60-min interval to taste; this composes with (does not replace) Claude Code's automatic
   threshold compaction.
@@ -144,5 +144,5 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
 Sub-second: the Monitor turns a new `.notify` line straight into a wake and drain. Fully idle
 otherwise — no polling, no timer ticks, no per-tick cost.
 
-Start it with **`/loop /roundhouse:worker`** in any worker pane. The repo's main checkout runs `/loop /roundhouse:foreman`
+Start it with **`/loop /rh:worker`** in any worker pane. The repo's main checkout runs `/loop /rh:foreman`
 instead (it's the conductor, not a worker).
