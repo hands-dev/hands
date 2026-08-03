@@ -78,6 +78,10 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
      back via the task lifecycle (step 3). Planning and investigation are always safe. For building,
      stay **reversible**: commit to your own branch, never merge/push-to-shared/deploy/mutate shared
      data. If the task is ambiguous or bigger than one worker, `agent_bus_ask` rather than guessing.
+     If the task decomposes into parallel read/synthesis slices, **fan out sub-agents** (Agent tool)
+     inside your session — cheap per-spawn `model` overrides for mechanical slices, converge the
+     summaries yourself — instead of serializing it; this is exactly why the foreman parked the
+     fan-out with you rather than bloating its own context.
 3. **Check for delegated tasks:** `agent_bus_tasks({ assignee: "<your id>", state: "assigned" })`. For
    each one: `agent_bus_task_update({ id, state: "in_progress" })`, do it **fully in your workspace**,
    then `agent_bus_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
