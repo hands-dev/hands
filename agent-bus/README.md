@@ -115,6 +115,56 @@ effectiveness (hindsight-graded recommendations), "needs you" escalations, colli
 Both behaviors live in the rendered skills (`~/.claude/skills/{foreman,worker}/SKILL.md`, installed
 from the `skills/` templates by `init`).
 
+## Choosing an execution pattern
+
+There are two ways to run durable multi-agent work, and the right one varies **per task** — don't
+standardize on either:
+
+1. **Durable sub-agents** — session-scoped helpers spawned by one instance (the Agent tool, or
+   workflow `agent()` calls), all reporting back through that hub. Resumable mid-session with
+   context intact: `SendMessage` by name or `agentId` continues a completed sub-agent from its
+   transcript; a fresh spawn starts clean.
+2. **Worker workspaces on this bus** — persistent, physically-isolated full Claude instances
+   (`agent-bus worker add`) coordinating over the per-repo bus.
+
+**A common misconception:** cheap-model tiering is *not* a workspace-only advantage. Sub-agents take
+a **per-spawn `model` override** (workflow `agent()` calls add per-call `effort` too), and a resumed
+sub-agent keeps its spawn-time model — so downgrading mechanical fan-out to a cheap tier works in
+**both** patterns. The real axis is **isolation + durability** (workspaces) vs **simplicity +
+convergence** (sub-agents).
+
+| | Durable sub-agents | Worker workspaces (this bus) |
+|---|---|---|
+| **Setup cost** | ~zero — one tool call | one `agent-bus worker add`, but each worker is a full instance: hidden worktree + branch, its own session, N× context bootstrap (rules/memory/repo) |
+| **Token economics** | lean for fan-out returning compact summaries — but the hub accrues every return, and the hub is usually the expensive model; many small round-trips through it add up | no hub bloat — each worker holds its own slice; pays the N× bootstrap, and every wake re-runs that worker's whole context (see wake accounting) |
+| **File-write isolation** | share the parent checkout unless spawned with `isolation:"worktree"` (~200–500ms setup + disk each) | true isolation, always — own worktree, own branch |
+| **Durability** | die with the session (resumable within it) | persist across sessions; independently-owned, evolving context |
+| **Comms** | hub-and-spoke — the parent relays everything | shared bus: strict hub-and-spoke by default (server-enforced; `topology:"open"` for direct worker↔worker); delivery is poll-based (`agent_bus_receive` long-poll — no unprompted wake), with the `.notify` Monitor as the near-instant wake channel |
+| **Concurrency** | workflow runs cap at ~min(16, cores−2) live, 1000 per run | a handful — each is a heavy process, plus its dev stack |
+
+Three questions decide it:
+
+1. **Do workers mutate files in parallel?** Yes → workspaces (or worktree-isolated sub-agents).
+2. **Must the work survive across sessions / be independently owned?** Yes → workspaces.
+3. **One task decomposed and converging, or N ongoing independent streams?** Converging →
+   sub-agents; independent → workspaces.
+
+**Default to durable sub-agents** — downgrade mechanical ones per-spawn to a cheap model, keep hard
+verify/judge steps on the strong tier — and **escalate to a workspace** only when a worker needs
+isolated parallel file-writes or cross-session persistence. Do not hard-code one pattern.
+
+### The foreman decides the pattern
+
+Pattern selection is a routing call, made **per task** by the coordinator with whole-board context —
+the ranked priorities, live wake cost (`wakesLastHour`), and the model-tier budget
+(`workers.model` / `workers.overrides`) — not by each worker for itself. Read/synthesis fan-out that
+converges on one answer → sub-agents (run under the foreman, or under the assigned worker to keep
+the hub lean); isolated builds and standing streams → delegate on the bus. The decision hooks into
+the foreman's delegation step: spawn sub-agents, or `agent_bus_delegate` to a worker — resizing the
+pool first via `agent_bus_scale` / `agent_bus_worker_add` when scaling is enabled
+(`workers.allowForemanScaling`). There is no separate routing API; the delegation step *is* the
+dispatch point.
+
 ## Known limitations (by design, not bugs)
 
 - **MCP cannot wake an idle interactive Claude Code.** The model must *choose* to call
