@@ -69,6 +69,8 @@ node dist/cli.js worker add -n 3     # provision + launch 3 workers
 node dist/cli.js worker ls           # list this repo's workers
 node dist/cli.js worker rm worker-3  # retire one (--force discards uncommitted work)
 node dist/cli.js scale 5             # reconcile the pool to exactly 5
+node dist/cli.js restore             # rebuild local bus state from the remote journal
+node dist/cli.js sync                # push pending journal appends now (normally automatic)
 node dist/cli.js paths               # where does this cwd resolve? (debug)
 ```
 
@@ -82,7 +84,36 @@ launcher is pluggable (`workers.launcher`): `tmux`, `iterm`, `manual` (prints th
 `agent-bus.config.json` at the repo root (user fallback `~/.claude/agent-bus.config.json`); see
 `src/config.ts` for the full shape. Key fields: `principal.name`, `topology`
 (`strict-hub`/`open`), `workers.model` + `workers.overrides` (model tiers), `workers.launcher`,
-`workers.allowForemanScaling`, `merge.adminMergeLowRisk`, `gh.poll`.
+`workers.allowForemanScaling`, `merge.adminMergeLowRisk`, `remote.url` + `remote.handle` (durable
+journal — see below), `gh.poll`.
+
+## Durable remote journal (opt-in)
+
+The bus can get a **git remote**: set `remote.url` (plus an optional `remote.handle`, default = OS
+username) and every state-changing action — messages, tasks, questions, todos, priorities, journal
+entries, read cursors — is mirrored as one NDJSON event under `log/<handle>/<date>.ndjson` in a
+local clone of that repo. The SQLite DB stays the fast working copy; the remote is the append-only
+log it can always be rebuilt from.
+
+```jsonc
+"remote": { "url": "git@github.com:you/agent-bus-state.git", "handle": "michael" }
+```
+
+- **Sync is automatic and cheap:** pushes ride the `Stop` → `publish` hook, debounced to ~1/min,
+  offline-tolerant (commits queue locally), best-effort by contract — a git hiccup never fails the
+  bus action it mirrors. `agent-bus sync` forces a push now.
+- **Restart / machine move:** `agent-bus restore` pulls the journal and replays your handle's
+  events into the local bus — idempotent (by-id inserts, re-applied updates), so it's safe over an
+  existing DB. This restores *coordination* state (tasks, priorities, questions, history), not
+  Claude session context — sessions are disposable by design; state is durable.
+- **Multiplayer is the same mechanism:** point two fleets at one shared repo. Each writes only
+  under its own handle, so writers never conflict — sync is pull-rebase-push with no merge logic.
+  Peer *visibility* (their boards in your dashboard) and cross-foreman messaging build on this log
+  in a later phase.
+- **Secrets:** the remote holds message bodies in **plaintext**. Use a private repo; the local
+  no-secrets rule is a hard requirement once a remote is configured.
+- Not journaled (deliberately): presence heartbeats, `wake_log`, board watermarks, the GitHub PR
+  cache — all ephemeral or re-derivable.
 
 ## Passive standup (hooks)
 
