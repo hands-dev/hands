@@ -3150,7 +3150,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve3.call(this, root, ref);
+      let _sch = resolve2.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a2 = root.localRefs) === null || _a2 === void 0 ? void 0 : _a2[ref];
         const { schemaId } = this.opts;
@@ -3177,7 +3177,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve3(root, ref) {
+    function resolve2(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3808,7 +3808,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve3(baseURI, relativeURI, options) {
+    function resolve2(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse3(baseURI, schemelessOptions), parse3(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -4072,7 +4072,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve3,
+      resolve: resolve2,
       resolveComponent,
       equal,
       serialize,
@@ -8907,10 +8907,10 @@ function serve(opts) {
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
-  return new Promise((resolve3, reject) => {
+  return new Promise((resolve2, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
-      resolve3({
+      resolve2({
         port,
         host,
         url: `http://${host}:${port}/`,
@@ -8938,22 +8938,21 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import { spawnSync } from "node:child_process";
 import * as fs10 from "node:fs";
 import * as os6 from "node:os";
 import * as path10 from "node:path";
 import * as readline from "node:readline/promises";
-import { fileURLToPath as fileURLToPath2 } from "node:url";
 function parseFlags(argv) {
-  const flags = { yes: false, skipBuild: false, migrate: null, principal: null };
+  const flags = { yes: false, migrate: null, principal: null, journalUrl: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--yes" || a === "-y") flags.yes = true;
-    else if (a === "--skip-build") flags.skipBuild = true;
     else if (a === "--migrate") flags.migrate = true;
     else if (a === "--no-migrate") flags.migrate = false;
     else if (a === "--principal") flags.principal = argv[++i] ?? null;
     else if (a.startsWith("--principal=")) flags.principal = a.slice("--principal=".length);
+    else if (a === "--journal") flags.journalUrl = argv[++i] ?? null;
+    else if (a.startsWith("--journal=")) flags.journalUrl = a.slice("--journal=".length);
   }
   return flags;
 }
@@ -8974,43 +8973,22 @@ function writeJsonWithBackup(file2, value) {
   fs10.writeFileSync(file2, `${JSON.stringify(value, null, 2)}
 `);
 }
-function packageDir() {
-  return path10.resolve(path10.dirname(fileURLToPath2(import.meta.url)), "..");
-}
-function mergeHook(settings, spec) {
-  const hooks = settings.hooks ??= {};
-  const entries = hooks[spec.event] ??= [];
-  for (const entry of entries) {
-    for (const h of entry.hooks ?? []) {
-      if (h.command && spec.signature.test(h.command)) {
-        h.command = spec.command;
-        h.timeout = spec.timeout;
-        if (spec.async !== void 0) h.async = spec.async;
-        return "updated";
-      }
+function removeHooks(settings, signature) {
+  const hooks = settings.hooks;
+  if (!hooks) return 0;
+  let removed = 0;
+  for (const event of Object.keys(hooks)) {
+    const entries = hooks[event];
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const before = entry.hooks?.length ?? 0;
+      entry.hooks = entry.hooks?.filter((h) => !(h.command && signature.test(h.command)));
+      removed += before - (entry.hooks?.length ?? 0);
     }
+    hooks[event] = entries.filter((e) => (e.hooks?.length ?? 0) > 0);
+    if (hooks[event].length === 0) delete hooks[event];
   }
-  entries.push({
-    matcher: "",
-    hooks: [
-      {
-        type: "command",
-        command: spec.command,
-        timeout: spec.timeout,
-        ...spec.async !== void 0 ? { async: spec.async } : {}
-      }
-    ]
-  });
-  return "added";
-}
-function renderSkill(templateFile, vars) {
-  let body = fs10.readFileSync(templateFile, "utf8");
-  for (const [key, value] of Object.entries(vars)) {
-    body = body.replaceAll(`{{${key}}}`, value);
-  }
-  const leftover = body.match(/\{\{[A-Z_]+\}\}/);
-  if (leftover) throw new Error(`unrendered template var ${leftover[0]} in ${templateFile}`);
-  return body;
+  return removed;
 }
 function legacyCoordinationFiles(dir) {
   let names = [];
@@ -9025,8 +9003,6 @@ function legacyCoordinationFiles(dir) {
 }
 async function runInit(argv) {
   const flags = parseFlags(argv);
-  const pkgDir = packageDir();
-  const workflowRoot = path10.resolve(pkgDir, "..");
   const home = os6.homedir();
   const interactive = process.stdin.isTTY === true && !flags.yes;
   const rl = interactive ? readline.createInterface({ input: process.stdin, output: process.stdout }) : null;
@@ -9042,41 +9018,6 @@ async function runInit(argv) {
     return answer.startsWith("y");
   };
   try {
-    if (!flags.skipBuild) {
-      out("\u25B8 building agent-bus (src \u2192 dist)\u2026");
-      const res = spawnSync("npm", ["run", "build"], { cwd: pkgDir, stdio: "inherit" });
-      if (res.status !== 0) throw new Error("npm run build failed");
-    }
-    const nodeBin = process.execPath;
-    const serverJs = path10.join(pkgDir, "dist", "server.js");
-    const claudeJsonPath = path10.join(home, ".claude.json");
-    const claudeJson = readJsonFile(claudeJsonPath);
-    const mcpServers = claudeJson.mcpServers ??= {};
-    mcpServers["agent-bus"] = {
-      type: "stdio",
-      command: nodeBin,
-      args: ["--no-warnings", serverJs],
-      env: {}
-    };
-    writeJsonWithBackup(claudeJsonPath, claudeJson);
-    out(`\u2714 MCP server registered in ${claudeJsonPath} (user scope)`);
-    const settingsPath = path10.join(home, ".claude", "settings.json");
-    const settings = readJsonFile(settingsPath);
-    const publish = mergeHook(settings, {
-      event: "Stop",
-      command: `${nodeBin} --no-warnings ${serverJs} publish`,
-      timeout: 30,
-      async: true,
-      signature: /server\.js publish/
-    });
-    mergeHook(settings, {
-      event: "UserPromptSubmit",
-      command: `${nodeBin} --no-warnings ${serverJs} board`,
-      timeout: 10,
-      signature: /server\.js board/
-    });
-    writeJsonWithBackup(settingsPath, settings);
-    out(`\u2714 hooks ${publish === "added" ? "added" : "re-pointed"} in ${settingsPath} (Stop \u2192 publish, UserPromptSubmit \u2192 board)`);
     const info = repoInfo(process.cwd());
     if (!info) {
       out("\u26A0 not inside a git repo \u2014 skipped agent-bus.config.json (run init from your repo's main checkout)");
@@ -9086,6 +9027,10 @@ async function runInit(argv) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
       } else {
         const principal = flags.principal ?? await ask("Who is the principal (the human the foreman reports to)?", "Michael");
+        const journalUrl = flags.journalUrl ?? await ask(
+          "Durable journal repo (a separate PRIVATE git repo; empty = journaling off)?",
+          ""
+        );
         const scaffold = {
           principal: { name: principal },
           topology: "strict-hub",
@@ -9098,19 +9043,51 @@ async function runInit(argv) {
           merge: { adminMergeLowRisk: false },
           gh: { poll: true }
         };
+        if (journalUrl.trim()) {
+          const handle = await ask("Journal handle (your fleet's namespace)?", os6.userInfo().username);
+          scaffold.remote = { url: journalUrl.trim(), handle };
+        }
         fs10.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
     }
-    const principalName = flags.principal ?? loadConfig({ cwd: process.cwd() }).principal.name;
-    const vars = { PRINCIPAL: principalName, SERVER_JS: serverJs, NODE: nodeBin };
-    for (const skill of ["foreman", "worker"]) {
-      const src = path10.join(workflowRoot, "skills", skill, "SKILL.md");
-      const destDir = path10.join(home, ".claude", "skills", skill);
-      fs10.mkdirSync(destDir, { recursive: true });
-      fs10.writeFileSync(path10.join(destDir, "SKILL.md"), renderSkill(src, vars));
-      out(`\u2714 installed ~/.claude/skills/${skill}/SKILL.md (principal: ${principalName})`);
+    const claudeJsonPath = path10.join(home, ".claude.json");
+    const claudeJson = readJsonFile(claudeJsonPath);
+    const mcpServers = claudeJson.mcpServers;
+    const oldMcp = mcpServers?.["agent-bus"] !== void 0;
+    const settingsPath = path10.join(home, ".claude", "settings.json");
+    const settings = readJsonFile(settingsPath);
+    const settingsRaw = JSON.stringify(settings);
+    const oldHooks = /server\.js (publish|board)/.test(settingsRaw);
+    const oldSkills = ["foreman", "worker"].filter(
+      (s) => fs10.existsSync(path10.join(home, ".claude", "skills", s, "SKILL.md"))
+    );
+    if (oldMcp || oldHooks || oldSkills.length > 0) {
+      const doClean = await confirm(
+        "Found a pre-plugin agent-bus install (user-scope MCP/hooks/skills). Remove it so the plugin's registrations don't double-fire?",
+        true
+      );
+      if (doClean) {
+        if (oldMcp && mcpServers) {
+          delete mcpServers["agent-bus"];
+          writeJsonWithBackup(claudeJsonPath, claudeJson);
+          out(`\u2714 removed user-scope mcpServers["agent-bus"] from ${claudeJsonPath}`);
+        }
+        if (oldHooks) {
+          const removed = removeHooks(settings, /server\.js (publish|board)/);
+          if (removed > 0) {
+            writeJsonWithBackup(settingsPath, settings);
+            out(`\u2714 removed ${removed} old agent-bus hook(s) from ${settingsPath}`);
+          }
+        }
+        for (const s of oldSkills) {
+          fs10.rmSync(path10.join(home, ".claude", "skills", s), { recursive: true, force: true });
+          out(`\u2714 removed old ~/.claude/skills/${s} (the plugin ships /agent-bus:${s})`);
+        }
+      } else {
+        out("\u25CF left the old install in place \u2014 expect duplicate board injections and two MCP servers");
+      }
     }
     const legacyDir = path10.join(home, ".claude", "coordination");
     const legacy = legacyCoordinationFiles(legacyDir);
@@ -9126,16 +9103,16 @@ async function runInit(argv) {
         out(`\u2714 migrated ${legacy.length} file(s) \u2192 ${target}`);
       } else {
         out(
-          `\u25CF left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; to migrate later, re-run: agent-bus init --skip-build --migrate`
+          `\u25CF left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; to migrate later, re-run: agent-bus init --migrate`
         );
       }
     }
     out("");
     out("Done. Next steps:");
-    out("  1. in this repo's main checkout, start the command center:   /foreman   (or /loop /foreman)");
-    out(`  2. add workers:   node ${path10.join(pkgDir, "dist", "cli.js")} worker add -n 2`);
-    out(`  3. optional live dashboard:   ${nodeBin} ${serverJs} serve   \u2192 http://localhost:4319`);
-    out("  (restart running Claude Code sessions to pick up the MCP registration)");
+    out("  1. main checkout: /agent-bus:foreman   (or /loop /agent-bus:foreman)");
+    out("  2. add workers:   agent-bus worker add -n 2");
+    out("  3. dashboard:     agent-bus serve   \u2192 http://localhost:4319");
+    out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");
   } finally {
     rl?.close();
   }
@@ -9143,7 +9120,6 @@ async function runInit(argv) {
 var init_init = __esm({
   "src/init.ts"() {
     "use strict";
-    init_config();
     init_paths();
   }
 });
@@ -30368,7 +30344,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error48) {
@@ -30385,7 +30361,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve2, reject) => {
       const earlyReject = (error48) => {
         reject(error48);
       };
@@ -30463,7 +30439,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve3(parseResult.data);
+            resolve2(parseResult.data);
           }
         } catch (error48) {
           reject(error48);
@@ -30724,12 +30700,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve3, reject) => {
+    return new Promise((resolve2, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve3, interval);
+      const timeoutId = setTimeout(resolve2, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -31688,7 +31664,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
+      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -32331,12 +32307,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve3) => {
+    return new Promise((resolve2) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve3();
+        resolve2();
       } else {
-        this._stdout.once("drain", resolve3);
+        this._stdout.once("drain", resolve2);
       }
     });
   }
@@ -32866,7 +32842,7 @@ var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;
 var MAX_WAIT_SECONDS = 120;
 function sleep(ms) {
-  return new Promise((resolve3) => setTimeout(resolve3, ms));
+  return new Promise((resolve2) => setTimeout(resolve2, ms));
 }
 function asToolResult(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
@@ -33802,7 +33778,7 @@ async function main2() {
       default: {
         out2("agent-bus \u2014 foreman/worker fleet for Claude Code");
         out2("");
-        out2("  agent-bus init                one-time setup (build, register MCP, hooks, skills, config)");
+        out2("  agent-bus init                scaffold agent-bus.config.json + clean up pre-plugin installs");
         out2("  agent-bus worker add [-n N]   spin up N workers");
         out2("  agent-bus worker ls           list this repo's workers");
         out2("  agent-bus worker rm <id>      retire a worker (--force discards uncommitted work)");

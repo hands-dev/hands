@@ -1,43 +1,43 @@
-import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import * as readline from "node:readline/promises";
-import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.js";
 import { coordinationDir, repoInfo } from "./paths.js";
 
 /**
- * `agent-bus init` — one-command setup, run from inside the target repo:
- *   1. build the package (src/ → dist/)
- *   2. register the MCP server user-scope in ~/.claude.json (absolute paths)
- *   3. merge the two bus hooks into ~/.claude/settings.json
- *      (Stop → publish, UserPromptSubmit → board — the proven live pairing)
- *   4. scaffold <repo>/agent-bus.config.json (asks for the principal's name)
- *   5. render skills/{foreman,worker} templates → ~/.claude/skills/
- *   6. offer to migrate a legacy un-scoped ~/.claude/coordination dir
+ * `agent-bus init` — per-repo setup, run from inside the target repo. The
+ * PLUGIN now owns what the old installer hand-wired (MCP registration, hooks,
+ * skills); this command handles what must stay per-repo/per-user:
+ *
+ *   1. scaffold <repo>/agent-bus.config.json (principal + optional journal)
+ *   2. clean up an old-style (pre-plugin) install — user-scope MCP entry,
+ *      settings.json hooks, copied ~/.claude/skills — so the plugin's
+ *      registrations don't double-fire (two board hooks fight over the board
+ *      cursor; two MCP servers register under different tool prefixes)
+ *   3. offer to migrate a legacy un-scoped ~/.claude/coordination dir
  *
  * Everything is merge-not-overwrite, with a .agent-bus.bak backup next to any
- * file we modify. Safe to re-run — it re-points paths and re-syncs skills.
+ * file we modify. Safe to re-run.
  */
 
 interface InitFlags {
   yes: boolean;
-  skipBuild: boolean;
   migrate: boolean | null; // null = ask
   principal: string | null;
+  journalUrl: string | null;
 }
 
 function parseFlags(argv: string[]): InitFlags {
-  const flags: InitFlags = { yes: false, skipBuild: false, migrate: null, principal: null };
+  const flags: InitFlags = { yes: false, migrate: null, principal: null, journalUrl: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--yes" || a === "-y") flags.yes = true;
-    else if (a === "--skip-build") flags.skipBuild = true;
     else if (a === "--migrate") flags.migrate = true;
     else if (a === "--no-migrate") flags.migrate = false;
     else if (a === "--principal") flags.principal = argv[++i] ?? null;
     else if (a.startsWith("--principal=")) flags.principal = a.slice("--principal=".length);
+    else if (a === "--journal") flags.journalUrl = argv[++i] ?? null;
+    else if (a.startsWith("--journal=")) flags.journalUrl = a.slice("--journal=".length);
   }
   return flags;
 }
@@ -60,63 +60,25 @@ function writeJsonWithBackup(file: string, value: unknown): void {
   fs.writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-/** The package dir (…/agent-bus), resolved from the compiled dist/ location. */
-function packageDir(): string {
-  return path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-}
-
-interface HookSpec {
-  event: "Stop" | "UserPromptSubmit";
-  command: string;
-  timeout: number;
-  async?: boolean;
-  /** replaces any existing hook whose command matches this */
-  signature: RegExp;
-}
-
-/**
- * Merge a hook into settings.json's hooks.<event>. If an entry already runs
- * this subcommand (any path — e.g. an old checkout), its command is re-pointed
- * instead of appending a duplicate.
- */
-function mergeHook(settings: Record<string, unknown>, spec: HookSpec): "added" | "updated" {
-  const hooks = (settings.hooks ??= {}) as Record<string, unknown>;
-  const entries = (hooks[spec.event] ??= []) as Array<{
-    matcher?: string;
-    hooks?: Array<{ type?: string; command?: string; timeout?: number; async?: boolean }>;
-  }>;
-  for (const entry of entries) {
-    for (const h of entry.hooks ?? []) {
-      if (h.command && spec.signature.test(h.command)) {
-        h.command = spec.command;
-        h.timeout = spec.timeout;
-        if (spec.async !== undefined) h.async = spec.async;
-        return "updated";
-      }
+/** Strip hook entries whose command matches `signature`; prune empty shells. */
+function removeHooks(settings: Record<string, unknown>, signature: RegExp): number {
+  const hooks = settings.hooks as
+    | Record<string, Array<{ hooks?: Array<{ command?: string }> }>>
+    | undefined;
+  if (!hooks) return 0;
+  let removed = 0;
+  for (const event of Object.keys(hooks)) {
+    const entries = hooks[event];
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      const before = entry.hooks?.length ?? 0;
+      entry.hooks = entry.hooks?.filter((h) => !(h.command && signature.test(h.command)));
+      removed += before - (entry.hooks?.length ?? 0);
     }
+    hooks[event] = entries.filter((e) => (e.hooks?.length ?? 0) > 0);
+    if (hooks[event].length === 0) delete hooks[event];
   }
-  entries.push({
-    matcher: "",
-    hooks: [
-      {
-        type: "command",
-        command: spec.command,
-        timeout: spec.timeout,
-        ...(spec.async !== undefined ? { async: spec.async } : {}),
-      },
-    ],
-  });
-  return "added";
-}
-
-function renderSkill(templateFile: string, vars: Record<string, string>): string {
-  let body = fs.readFileSync(templateFile, "utf8");
-  for (const [key, value] of Object.entries(vars)) {
-    body = body.replaceAll(`{{${key}}}`, value);
-  }
-  const leftover = body.match(/\{\{[A-Z_]+\}\}/);
-  if (leftover) throw new Error(`unrendered template var ${leftover[0]} in ${templateFile}`);
-  return body;
+  return removed;
 }
 
 /** Legacy pre-slug files sitting directly in ~/.claude/coordination. */
@@ -140,8 +102,6 @@ function legacyCoordinationFiles(dir: string): string[] {
 
 export async function runInit(argv: string[]): Promise<void> {
   const flags = parseFlags(argv);
-  const pkgDir = packageDir();
-  const workflowRoot = path.resolve(pkgDir, "..");
   const home = os.homedir();
   const interactive = process.stdin.isTTY === true && !flags.yes;
   const rl = interactive
@@ -160,48 +120,7 @@ export async function runInit(argv: string[]): Promise<void> {
   };
 
   try {
-    // 1. build
-    if (!flags.skipBuild) {
-      out("▸ building agent-bus (src → dist)…");
-      const res = spawnSync("npm", ["run", "build"], { cwd: pkgDir, stdio: "inherit" });
-      if (res.status !== 0) throw new Error("npm run build failed");
-    }
-    const nodeBin = process.execPath;
-    const serverJs = path.join(pkgDir, "dist", "server.js");
-
-    // 2. MCP registration (user scope, absolute paths — identity derives from cwd)
-    const claudeJsonPath = path.join(home, ".claude.json");
-    const claudeJson = readJsonFile(claudeJsonPath);
-    const mcpServers = (claudeJson.mcpServers ??= {}) as Record<string, unknown>;
-    mcpServers["agent-bus"] = {
-      type: "stdio",
-      command: nodeBin,
-      args: ["--no-warnings", serverJs],
-      env: {},
-    };
-    writeJsonWithBackup(claudeJsonPath, claudeJson);
-    out(`✔ MCP server registered in ${claudeJsonPath} (user scope)`);
-
-    // 3. hooks
-    const settingsPath = path.join(home, ".claude", "settings.json");
-    const settings = readJsonFile(settingsPath);
-    const publish = mergeHook(settings, {
-      event: "Stop",
-      command: `${nodeBin} --no-warnings ${serverJs} publish`,
-      timeout: 30,
-      async: true,
-      signature: /server\.js publish/,
-    });
-    mergeHook(settings, {
-      event: "UserPromptSubmit",
-      command: `${nodeBin} --no-warnings ${serverJs} board`,
-      timeout: 10,
-      signature: /server\.js board/,
-    });
-    writeJsonWithBackup(settingsPath, settings);
-    out(`✔ hooks ${publish === "added" ? "added" : "re-pointed"} in ${settingsPath} (Stop → publish, UserPromptSubmit → board)`);
-
-    // 4. repo config scaffold
+    // 1. repo config scaffold
     const info = repoInfo(process.cwd());
     if (!info) {
       out("⚠ not inside a git repo — skipped agent-bus.config.json (run init from your repo's main checkout)");
@@ -212,7 +131,13 @@ export async function runInit(argv: string[]): Promise<void> {
       } else {
         const principal =
           flags.principal ?? (await ask("Who is the principal (the human the foreman reports to)?", "Michael"));
-        const scaffold = {
+        const journalUrl =
+          flags.journalUrl ??
+          (await ask(
+            "Durable journal repo (a separate PRIVATE git repo; empty = journaling off)?",
+            "",
+          ));
+        const scaffold: Record<string, unknown> = {
           principal: { name: principal },
           topology: "strict-hub",
           workers: {
@@ -224,23 +149,57 @@ export async function runInit(argv: string[]): Promise<void> {
           merge: { adminMergeLowRisk: false },
           gh: { poll: true },
         };
+        if (journalUrl.trim()) {
+          const handle = await ask("Journal handle (your fleet's namespace)?", os.userInfo().username);
+          scaffold.remote = { url: journalUrl.trim(), handle };
+        }
         fs.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}\n`);
         out(`✔ scaffolded ${configPath}`);
       }
     }
 
-    // 5. skills (rendered templates)
-    const principalName = flags.principal ?? loadConfig({ cwd: process.cwd() }).principal.name;
-    const vars = { PRINCIPAL: principalName, SERVER_JS: serverJs, NODE: nodeBin };
-    for (const skill of ["foreman", "worker"]) {
-      const src = path.join(workflowRoot, "skills", skill, "SKILL.md");
-      const destDir = path.join(home, ".claude", "skills", skill);
-      fs.mkdirSync(destDir, { recursive: true });
-      fs.writeFileSync(path.join(destDir, "SKILL.md"), renderSkill(src, vars));
-      out(`✔ installed ~/.claude/skills/${skill}/SKILL.md (principal: ${principalName})`);
+    // 2. old-style (pre-plugin) install cleanup — default YES: leftovers
+    // double-fire against the plugin's own registrations
+    const claudeJsonPath = path.join(home, ".claude.json");
+    const claudeJson = readJsonFile(claudeJsonPath);
+    const mcpServers = claudeJson.mcpServers as Record<string, unknown> | undefined;
+    const oldMcp = mcpServers?.["agent-bus"] !== undefined;
+    const settingsPath = path.join(home, ".claude", "settings.json");
+    const settings = readJsonFile(settingsPath);
+    const settingsRaw = JSON.stringify(settings);
+    const oldHooks = /server\.js (publish|board)/.test(settingsRaw);
+    const oldSkills = ["foreman", "worker"].filter((s) =>
+      fs.existsSync(path.join(home, ".claude", "skills", s, "SKILL.md")),
+    );
+    if (oldMcp || oldHooks || oldSkills.length > 0) {
+      const doClean = await confirm(
+        "Found a pre-plugin agent-bus install (user-scope MCP/hooks/skills). Remove it so the " +
+          "plugin's registrations don't double-fire?",
+        true,
+      );
+      if (doClean) {
+        if (oldMcp && mcpServers) {
+          delete mcpServers["agent-bus"];
+          writeJsonWithBackup(claudeJsonPath, claudeJson);
+          out(`✔ removed user-scope mcpServers["agent-bus"] from ${claudeJsonPath}`);
+        }
+        if (oldHooks) {
+          const removed = removeHooks(settings, /server\.js (publish|board)/);
+          if (removed > 0) {
+            writeJsonWithBackup(settingsPath, settings);
+            out(`✔ removed ${removed} old agent-bus hook(s) from ${settingsPath}`);
+          }
+        }
+        for (const s of oldSkills) {
+          fs.rmSync(path.join(home, ".claude", "skills", s), { recursive: true, force: true });
+          out(`✔ removed old ~/.claude/skills/${s} (the plugin ships /agent-bus:${s})`);
+        }
+      } else {
+        out("● left the old install in place — expect duplicate board injections and two MCP servers");
+      }
     }
 
-    // 6. legacy migration (pre-slug files directly under ~/.claude/coordination)
+    // 3. legacy migration (pre-slug files directly under ~/.claude/coordination)
     const legacyDir = path.join(home, ".claude", "coordination");
     const legacy = legacyCoordinationFiles(legacyDir);
     if (legacy.length > 0 && info) {
@@ -258,18 +217,18 @@ export async function runInit(argv: string[]): Promise<void> {
       } else {
         out(
           `● left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; ` +
-            "to migrate later, re-run: agent-bus init --skip-build --migrate",
+            "to migrate later, re-run: agent-bus init --migrate",
         );
       }
     }
 
-    // 7. next steps
+    // 4. next steps
     out("");
     out("Done. Next steps:");
-    out("  1. in this repo's main checkout, start the command center:   /foreman   (or /loop /foreman)");
-    out(`  2. add workers:   node ${path.join(pkgDir, "dist", "cli.js")} worker add -n 2`);
-    out(`  3. optional live dashboard:   ${nodeBin} ${serverJs} serve   → http://localhost:4319`);
-    out("  (restart running Claude Code sessions to pick up the MCP registration)");
+    out("  1. main checkout: /agent-bus:foreman   (or /loop /agent-bus:foreman)");
+    out("  2. add workers:   agent-bus worker add -n 2");
+    out("  3. dashboard:     agent-bus serve   → http://localhost:4319");
+    out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");
   } finally {
     rl?.close();
   }
