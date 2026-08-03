@@ -2,7 +2,7 @@
 const [maj, min] = process.versions.node.split(".").map(Number);
 if (maj < 22 || (maj === 22 && (min ?? 0) < 5)) {
   console.error(
-    `agent-bus: Node >= 22.5 is required (node:sqlite); found ${process.versions.node}. ` +
+    `yes-chef: Node >= 22.5 is required (node:sqlite); found ${process.versions.node}. ` +
       "Install a current Node and make sure it is first on PATH for Claude Code.",
   );
   process.exit(1);

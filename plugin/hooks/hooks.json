@@ -1,5 +1,5 @@
 {
-  "description": "roundhouse passive standup: turn-end status publish + per-prompt board delta.",
+  "description": "yes-chef passive standup: turn-end status publish + per-prompt board delta.",
   "hooks": {
     "Stop": [
       {

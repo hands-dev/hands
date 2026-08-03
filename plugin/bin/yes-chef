@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# agent-bus CLI shim — on the Bash PATH whenever the plugin is enabled.
+# yes-chef CLI shim — on the Bash PATH whenever the plugin is enabled.
 # The version gate lives in dist/cli.mjs; this just resolves the plugin root.
 set -euo pipefail
 exec node --no-warnings "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/dist/cli.mjs" "$@"

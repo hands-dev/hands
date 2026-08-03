@@ -18,8 +18,8 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ## Step 1 — Install the plugin
 
 ```
-/plugin marketplace add heymichaelp/roundhouse
-/plugin install rh@roundhouse
+/plugin marketplace add heymichaelp/yes-chef
+/plugin install yc@yes-chef
 ```
 
 ## Step 2 — Clone the project + configure
@@ -27,7 +27,7 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ```bash
 git clone <REPO_SSH> <REPO_DIR>
 cd <REPO_DIR>
-roundhouse init           # scaffold config (or restore your committed agent-bus.config.json)
+yes-chef init           # scaffold config (or restore your committed agent-bus.config.json)
 ```
 
 If `agent-bus.config.json` is committed in the project repo, init leaves it alone — the journal
@@ -37,8 +37,8 @@ url + handle come back with the clone.
 
 ```bash
 cd <REPO_DIR>
-roundhouse restore        # pulls the journal repo, replays your handle's events
-roundhouse paths          # verify: agentId "foreman", journalSync healthy
+yes-chef restore        # pulls the journal repo, replays your handle's events
+yes-chef paths          # verify: agentId "expo", journalSync healthy
 ```
 
 ## Step 4 — Restore project memory (optional, if this repo carries a snapshot)
@@ -52,20 +52,20 @@ mkdir -p "$MEM" && cp memory/*.md "$MEM/"
 
 ## Step 5 — Run
 
-- Main checkout: `/rh:foreman` (or `/loop /rh:foreman`).
-- Workers: `roundhouse worker add -n <N>` — no `git worktree` commands, ever.
-- Dashboard: `roundhouse serve` → http://localhost:4319
+- Main checkout: `/yc:expo` (or `/loop /yc:expo`).
+- Stations: `yes-chef station add -n <N>` — no `git worktree` commands, ever.
+- Dashboard: `yes-chef serve` → http://localhost:4319
 
 ## Step 6 — Re-auth other MCP servers (human, as needed)
 
 Project-specific MCP servers (Linear, Sentry, …) re-add with `claude mcp add …` + OAuth. The
-roundhouse plugin is the only piece the fleet itself needs.
+yes-chef plugin is the only piece the fleet itself needs.
 
 ---
 
 ### What does NOT carry over
 
 - Auth (Step 0/6).
-- Live worker sessions — recreate with `roundhouse worker add`.
-- Claude session context — by design; the journal restores *state*, the foreman rehydrates from
+- Live station sessions — recreate with `yes-chef station add`.
+- Claude session context — by design; the books restore *state*; the expo rehydrates from
   board + tasks + priorities on its first pass.

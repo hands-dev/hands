@@ -1,9 +1,9 @@
 {
-  "name": "roundhouse",
+  "name": "yes-chef",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Roundhouse \u2014 per-repo foreman/worker coordination bus for Claude Code (stdio MCP server + provisioning CLI).",
+  "description": "Yes, Chef \u2014 per-repo expo/station coordination bus for Claude Code (stdio MCP server + provisioning CLI).",
   "bin": {
     "agent-bus": "dist/cli.js"
   },

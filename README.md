@@ -1,165 +1,147 @@
-# roundhouse — a foreman/worker fleet for Claude Code
+# Yes, Chef
 
-Turn independently-launched Claude Code instances on one machine into a coordinated fleet: the
-repo's main checkout is the **foreman** (command center), and N autonomous **workers** do the
-delegated work over a local, per-repo message bus. You think in *workers* — the tool manages the
-isolation underneath; you never touch `git worktree` yourself.
+An **expo/station agent fleet for Claude Code.** The repo's main checkout runs the **expo** — the
+expeditor at the pass: all of the context, none of the cooking. **Stations** are autonomous Claude
+instances that know exactly two things: their **focus** (an evolving specialization) and the
+**ticket** at hand. The principal — you — is the chef. Everything is coordinated over a local,
+per-repo message bus with strict pass discipline, and optionally recorded in **the books**: a
+durable, browsable journal.
 
-Distributed as a **Claude Code plugin** (this repo is its own marketplace).
+Distributed as a Claude Code plugin (this repo is its own marketplace).
 
 ## Install
 
 ```
-/plugin marketplace add heymichaelp/roundhouse
-/plugin install rh@roundhouse
+/plugin marketplace add heymichaelp/yes-chef
+/plugin install yc@yes-chef
 ```
 
-That registers everything: the MCP server (`agent_bus_*` tools), the two passive-standup hooks
-(`Stop → publish`, `UserPromptSubmit → board`), the `/rh:foreman` + `/rh:worker`
-skills, and the `roundhouse` CLI on your Bash PATH. Requires Node ≥ 22.5 on PATH (`node:sqlite`).
+That registers everything: the MCP server (`agent_bus_*` tools), the passive-standup hooks
+(`Stop → publish`, `UserPromptSubmit → board`), the `/yc:expo` · `/yc:station` · `/yc:init`
+skills, and the `yes-chef` CLI on your Bash PATH. Requires Node ≥ 22.5.
 
 Then, per repo (from its main checkout) — one slash command:
 
 ```
-/rh:init               # conversational setup: principal + optional journal repo
-                       # (or skip straight ahead — /rh:foreman bootstraps itself on first run)
+/yc:init          # conversational setup: principal + optional books repo
+                  # (or skip it — /yc:expo bootstraps itself on first run)
 ```
 
-(`roundhouse init` remains for terminal use; `/rh:init` drives the same CLI underneath.)
-
-## Run it
+## Run the kitchen
 
 ```bash
-/rh:foreman            # main checkout — or /loop /rh:foreman for always-on
-roundhouse worker add -n 3     # provision + launch 3 workers (tmux/iTerm/paste-command)
-roundhouse serve               # live dashboard → http://localhost:4319
+/yc:expo                     # main checkout — or /loop /yc:expo for always-on
+yes-chef station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
+yes-chef serve               # live dashboard → http://localhost:4319
 ```
 
-Workers register on the foreman's board as `worker-<n>`. Manage the pool with
-`roundhouse worker ls`, `roundhouse scale <N>`, `roundhouse worker rm worker-<n>` — or let the
-foreman scale it itself (`workers.allowForemanScaling`).
+The expo asks for **today's specials** (the ranked priorities — they change day to day with what's
+available and what the day calls for), then works the pass: fires **tickets** to stations, reviews
+everything that returns, escalates only what genuinely needs the chef. Ask it *"what's on the
+rail?"* any time for the in-flight picture, grouped by **dish** (the external deliverable — your
+Linear ticket or PR; several rail tickets usually assemble one dish; the tracker itself is **the
+board**, which yes-chef references but never owns).
+
+Manage the line: `yes-chef station ls` · `yes-chef scale <N>` · `yes-chef station rm station-<n>`
+— or let the expo scale it (`stations.allowScaling`). Stations carry focus labels
+(`station-2 · developer API`) set via `agent_bus_focus` — addressable by label, journaled, shown
+everywhere; the numeric id stays the routing key.
 
 ## How it stays cheap (wakes are the cost)
 
-A **wake** — a `.notify` line firing a worker's Monitor — costs one full model turn over that
-worker's entire context. The bus minimizes and meters wakes structurally:
+A **wake** — a `.notify` line firing a station's Monitor — costs one full model turn over that
+station's entire context. The bus minimizes and meters wakes structurally:
 
-- **Strict hub-and-spoke, server-enforced:** workers can only message the foreman and the
-  principal; worker↔worker sends and broadcasts are rejected *before* any write — a blocked send
-  never wakes anyone. (`topology: "open"` opts out.)
-- **Non-waking FYIs:** `agent_bus_send({ wake: false })` delivers on the recipient's next natural
-  drain — status updates cost zero wakes.
+- **Strict pass discipline, server-enforced:** stations talk only to the expo and the chef;
+  station↔station sends and broadcasts are rejected *before* any write. (`topology: "open"` opts
+  out.)
+- **Non-waking FYIs:** `agent_bus_send({ wake: false })` delivers on the next natural drain.
 - **Burst suppression:** an undrained recipient isn't re-woken; one drain returns everything.
-- **`stateHash` + bundled board:** the foreman's 15-minute utilization review short-circuits when
-  nothing changed, and `board({ full: true })` is one read instead of four.
-- **Wake accounting:** every real wake is logged and surfaced as `wakesLastHour` per worker on the
-  board and dashboard. Visibility, not throttles.
+- **`stateHash` + one bundled read:** the expo's 15-minute utilization review short-circuits when
+  nothing changed; `board({ full: true })` is one read, not four.
+- **Wake accounting:** every real wake is logged and surfaced per station on the dashboard.
 
-## Durable journal (opt-in) — restarts, machine moves, multiplayer
+## The books (opt-in) — restarts, machine moves, multiplayer
 
-Point the bus at a **separate, private** git repo and every state-changing action (messages,
-tasks, questions, todos, priorities, cursors) mirrors there — organized for BROWSING, so the repo
-reads as a team activity feed on GitHub:
+Point the bus at a **separate, private** git repo and every action goes **on the books** — an
+append-only event log rendered into browsable daily digest pages (repo → contributor → date):
 
 ```
 agent-bus.json                                          layout marker
-journal/<project>/<handle>/<date>.md                    daily digest — the primary artifact
+journal/<project>/<handle>/<date>.md                    the day's page — the primary artifact
 journal/<project>/<handle>/README.md                    per-contributor index
 journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
 ```
 
 ```jsonc
-"remote": {
-  "url": "git@github.com:you/roundhouse-state.git",
-  "handle": "michael",          // contributor namespace
-  "project": null               // null = derived from the repo's origin (owner--repo)
-}
+"remote": { "url": "git@github.com:you/yes-chef-books.git", "handle": "michael", "project": null }
 ```
 
-- **Digests are generated, deterministic markdown** — foreman notes first (see
-  `agent_bus_digest_note`), then per-agent sections (foreman, worker-N): task lifecycle, questions
-  + answers, todos, priorities, message *counts*. Message **bodies never render** — they stay in
-  the NDJSON layer. Regenerated automatically on every sync, including past days when their events
-  arrive late; `roundhouse digest [--date]` re-renders manually.
-- **One journal repo serves every project and contributor.** `project` derives from the code
-  repo's origin (`owner--repo`), so all machines agree on it; set `remote.project` explicitly for
-  origin-less repos. Writers only ever touch their own `journal/<project>/<handle>/` — plus the
-  marker — so sync needs no merge logic, and same-handle machines write per-machine log files.
-  Digest files are the one shared surface; conflicts there auto-resolve and re-render from the
-  merged events (both sides converge on identical bytes).
+- **Digest pages are deterministic markdown:** the expo's Notes first (see
+  `agent_bus_digest_note` — its end-of-day narrative), then per-agent sections
+  (`## station-2 · developer API`): ticket lifecycle with dish refs, questions + answers,
+  specials, message *counts*. Message **bodies never render** — they stay in the NDJSON layer.
+  Regenerated automatically on every sync, including past days when events arrive late;
+  `yes-chef digest [--date]` re-renders manually.
+- **One books repo serves every project and contributor.** `project` derives from the code repo's
+  origin (`owner--repo`); writers only touch their own namespace, so sync needs no merge logic.
+  Digest conflicts (same handle, two machines) auto-resolve and re-render from the merged events.
 - Pushes ride the turn-end hook (debounced ~1/min, offline-tolerant, never fails a bus action).
-- `roundhouse restore` rebuilds the whole coordination state on a restart or a new machine, and
-  lists the journal's projects if your key doesn't match.
-- **The repo's shape is validated, not assumed:** an empty repo initializes itself on first sync;
-  a repo with other content is refused until an explicit `roundhouse sync --adopt`; a journal
-  written by a newer roundhouse fails loudly. Anything outside the tool's namespace is left alone.
-- **Upgrading from the v1 layout is automatic**: the old `log/<handle>` tree is frozen in place
-  (still read on restore) and new writes use the v2 tree. ⚠ The first v2 sync bumps the layout
-  marker, which **locks out machines still on an older plugin** (sync *and* restore) until they
-  update — their unpushed events wait safely in the local clone (`agent_bus_paths` → journalSync).
-- **Plaintext:** event bodies are stored as-is. Private repo only; never put secrets on the bus.
-
-Why a separate repo (not the project repo): journal pushes are frequent small commits — history
-that belongs next to the coordination data, not in your project's git log.
+- `yes-chef restore` rebuilds the whole coordination state — tickets, questions, specials, focus,
+  history — on a restart or a new machine. **If it's not on the books, it didn't happen; you also
+  can't cook them** (append-only by construction).
+- **Shape is validated, never assumed:** empty repos self-initialize; a repo with other content is
+  refused until an explicit `yes-chef sync --adopt`; newer layouts fail loudly. Legacy v1 layouts
+  freeze in place and stay readable — note that the first v2 sync version-gates older plugins out
+  until they update.
+- **Open books = multiplayer.** Two people pointing at one books repo each write their own pages
+  and read each other's — the whole cross-kitchen story is "every kitchen keeps its book; skim the
+  other kitchens' pages." (A dashboard lane for that is the natural next phase.)
+- **Plaintext.** Private repo only; never put secrets on the bus.
 
 ## Configuration
 
-`agent-bus.config.json` at the repo root (user-level fallback `~/.claude/agent-bus.config.json`):
+`agent-bus.config.json` at the repo root (user fallback `~/.claude/agent-bus.config.json`):
 
 ```jsonc
 {
-  "principal": { "name": "Michael" },        // the human decider
-  "topology":  "strict-hub",                 // or "open"
-  "foreman":   { "basename": null },         // null = main-worktree autodetect
-  "workers": {
-    "model": "sonnet",                       // default tier for workers
-    "overrides": { "worker-4": "opus" },     // per-worker tier
-    "launcher": "auto",                      // auto | tmux | iterm | manual
-    "worktreeRoot": null,                    // null = ~/.agent-bus/worktrees/<slug>
-    "baseBranch": null,                      // null = current HEAD of the main checkout
-    "allowForemanScaling": true
+  "principal": { "name": "Michael" },          // the chef
+  "topology":  "strict-hub",                   // or "open"
+  "expo":      { "basename": null },           // null = main-worktree autodetect
+  "stations": {
+    "model": "sonnet",                         // default tier
+    "overrides": { "station-4": "opus" },      // per-station tier
+    "launcher": "auto",                        // auto | tmux | iterm | manual
+    "worktreeRoot": null,                      // null = ~/.agent-bus/worktrees/<slug>
+    "baseBranch": null,                        // null = current HEAD of the main checkout
+    "allowScaling": true                       // may the expo open/close stations itself
   },
-  "merge":  { "adminMergeLowRisk": false },  // may the foreman admin-merge low-risk PRs
-  "remote": { "url": null, "handle": null }, // opt-in durable journal (separate private repo)
+  "merge":  { "adminMergeLowRisk": false },    // may the expo admin-merge low-risk PRs
+  "remote": { "url": null, "handle": null, "project": null },   // the books (opt-in)
   "gh":     { "poll": true }
 }
 ```
 
-Each git repo gets its own isolated bus automatically (state under
-`~/.claude/coordination/<repo>-<hash>/`); two projects never cross-talk. `agent_bus_paths` (or
-`roundhouse paths`) shows where any directory resolves, including journal sync health.
+Legacy `foreman`/`workers` keys and `foreman`/`worker-N` agent ids are permanently aliased — old
+buses, books, and configs keep working. Each git repo gets its own isolated bus automatically;
+`agent_bus_paths` (or `yes-chef paths`) shows where anything resolves, including books sync health.
 
 ## Choosing an execution pattern
 
-Two ways to run durable multi-agent work — the foreman picks **per task**, never by habit:
-
-1. **Durable sub-agents** — session-scoped helpers spawned by one instance, reporting back through
-   that hub; resumable mid-session with context intact. ~Zero setup; per-spawn cheap-model
-   overrides; hub accrues every return.
-2. **Workers on this bus** — persistent, physically-isolated full instances. True file-write
-   isolation, cross-session durability, independent ownership; N× context bootstrap.
-
-Three questions decide: parallel file mutation? → workers (or worktree-isolated sub-agents).
-Survives across sessions / independently owned? → workers. Decomposed-and-converging vs ongoing
-independent streams? → sub-agents vs workers. **Default to sub-agents; escalate to a worker** for
-isolated parallel writes or cross-session persistence. (Long form: `agent-bus/README.md`.)
-
-## Upgrading from a pre-plugin install
-
-If you previously ran the old `init` (user-scope MCP registration + hand-merged hooks + copied
-skills): install the plugin, then **immediately** run `roundhouse init` — it removes the old
-registrations so you don't get duplicate board injections and two MCP servers. Note the fully-
-qualified MCP tool prefix changes to `mcp__plugin_…` — update any `permissions.allow` rules.
+The expo picks **per ticket**, never by habit: **durable sub-agents** (session-scoped, hub-and-
+spoke, per-spawn cheap-model overrides, resumable mid-session) for work that decomposes and
+converges; **stations** for isolated parallel file-writes, cross-session persistence, and
+independent ownership. Three questions decide — parallel file mutation? cross-session ownership?
+converging vs independent stream? Default to sub-agents; escalate to a station when the answer
+says so. (Long form: `agent-bus/README.md`.)
 
 ## Repo layout
 
 ```
 plugin/          the Claude Code plugin (manifest, .mcp.json, hooks, skills, bin, committed bundles)
 agent-bus/       the TypeScript source + tests (bundled into plugin/dist by `npm run bundle`)
-SETUP.md         manual/dev setup and internals pointers
-BOOTSTRAP.md     restore-a-machine runbook
+SETUP.md         dev setup · BOOTSTRAP.md  restore-a-machine runbook
 ```
 
 Development: `cd agent-bus && npm install && npm run test:run`. After changing `src/`, run
-`npm run bundle` — the committed plugin bundles are what installs actually execute, and
-`bundle.test.ts` fails if they go stale.
+`npm run bundle` — installs execute the committed bundles, and `bundle.test.ts` fails when stale.

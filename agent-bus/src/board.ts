@@ -156,7 +156,7 @@ export function buildBoard(
     return { text: "", journalCount: 0, collisions: 0 };
   }
 
-  const lines: string[] = ["[agent-bus] update:"];
+  const lines: string[] = ["[yes-chef] update:"];
   const shownMsgs = inbox.slice(-MAX_MSGS);
   for (const msg of shownMsgs) {
     const to = msg.to_id === null ? "all" : "you";

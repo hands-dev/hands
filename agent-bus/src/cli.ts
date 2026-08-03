@@ -2,14 +2,14 @@
 /**
  * agent-bus CLI — provisioning + setup. The user thinks in workers:
  *
- *   roundhouse init                per-repo config scaffold + old-install cleanup/migration
- *   roundhouse worker add [-n N]   spin up N workers (worktree hidden inside)
- *   roundhouse worker ls           list this repo's workers
- *   roundhouse worker rm <id>      retire a worker (idempotent; --force discards)
- *   roundhouse scale <N>           reconcile the pool to exactly N workers
- *   roundhouse restore             rebuild local bus state from the remote journal
- *   roundhouse sync                push pending journal appends now
- *   roundhouse paths               where this cwd resolves (debug)
+ *   yes-chef init                per-repo config scaffold + old-install cleanup/migration
+ *   yes-chef station add [-n N]   spin up N workers (worktree hidden inside)
+ *   yes-chef station ls           list this repo's workers
+ *   yes-chef station rm <id>      retire a worker (idempotent; --force discards)
+ *   yes-chef scale <N>           reconcile the pool to exactly N workers
+ *   yes-chef restore             rebuild local bus state from the remote journal
+ *   yes-chef sync                push pending journal appends now
+ *   yes-chef paths               where this cwd resolves (debug)
  *
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
  * the human/foreman-facing lifecycle tool (on the Bash PATH via plugin/bin).
@@ -45,7 +45,7 @@ function out(line: string): void {
 }
 
 function fail(message: string): never {
-  process.stderr.write(`roundhouse: ${message}\n`);
+  process.stderr.write(`yes-chef: ${message}\n`);
   process.exit(1);
 }
 
@@ -113,7 +113,7 @@ function cmdScale(argv: string[]): void {
 function requireRemote() {
   const j = openJournal();
   if (!j) {
-    fail('no remote journal configured — set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/roundhouse-state.git"}}');
+    fail('no remote journal configured — set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/yes-chef-books.git"}}');
   }
   if (!fs.existsSync(path.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
@@ -162,14 +162,14 @@ function cmdDigest(argv: string[]): void {
   syncPull(j.dir); // best-effort — render from the freshest merged view we have
   const i = argv.indexOf("--date");
   const date = i !== -1 ? argv[i + 1] : undefined;
-  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("usage: roundhouse digest [--date YYYY-MM-DD]");
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("usage: yes-chef digest [--date YYYY-MM-DD]");
   const changed = regenerateDigests(j, date ? new Set([date]) : undefined);
   if (changed.length === 0) {
     out("digests already up to date");
     return;
   }
   for (const f of changed) out(`✔ ${f}`);
-  out("(committed + pushed on the next sync — or run: roundhouse sync)");
+  out("(committed + pushed on the next sync — or run: yes-chef sync)");
 }
 
 function cmdPaths(): void {
@@ -202,25 +202,25 @@ async function main(): Promise<void> {
       case "dashboard": {
         const { serve } = await import("./serve.js");
         const handle = await serve();
-        out(`roundhouse dashboard → ${handle.url}\n(Ctrl-C to stop)`);
+        out(`yes-chef dashboard → ${handle.url}\n(Ctrl-C to stop)`);
         return; // the http server keeps the process alive
       }
       case "paths":
         return cmdPaths();
       default: {
-        out("roundhouse — foreman/worker fleet for Claude Code");
+        out("yes-chef — an expo/station agent fleet for Claude Code");
         out("");
-        out("  roundhouse init                scaffold agent-bus.config.json + clean up pre-plugin installs");
-        out("  roundhouse worker add [-n N]   spin up N workers");
-        out("  roundhouse worker ls           list this repo's workers");
-        out("  roundhouse worker rm <id>      retire a worker (--force discards uncommitted work)");
-        out("  roundhouse scale <N>           reconcile the pool to exactly N workers");
-        out("  roundhouse restore             rebuild local bus state from the remote journal (remote.url)");
-        out("  roundhouse sync [--adopt]      push pending journal appends now (--adopt initializes a");
+        out("  yes-chef init                scaffold agent-bus.config.json + clean up pre-plugin installs");
+        out("  yes-chef station add [-n N]   spin up N workers");
+        out("  yes-chef station ls           list this repo's workers");
+        out("  yes-chef station rm <id>      retire a worker (--force discards uncommitted work)");
+        out("  yes-chef scale <N>           reconcile the pool to exactly N workers");
+        out("  yes-chef restore             rebuild local bus state from the remote journal (remote.url)");
+        out("  yes-chef sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out("                                non-empty repo as a journal — explicit by design)");
-        out("  roundhouse digest [--date D]  re-render journal digests (normally automatic on sync)");
-        out("  roundhouse serve               live dashboard → http://localhost:4319");
-        out("  roundhouse paths               show where this directory resolves (debug)");
+        out("  yes-chef digest [--date D]  re-render journal digests (normally automatic on sync)");
+        out("  yes-chef serve               live dashboard → http://localhost:4319");
+        out("  yes-chef paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
       }
     }

@@ -25,7 +25,7 @@ import type { Store } from "./store.js";
  * deliberately not the coordination slug, which hashes the machine-local path.
  * `writer` = sanitized hostname, so two machines on one handle never contend
  * on a file. Pushes ride the Stop-hook publish cadence (debounced,
- * best-effort, offline-tolerant). Restore = pull + replay (`roundhouse restore`).
+ * best-effort, offline-tolerant). Restore = pull + replay (`yes-chef restore`).
  *
  * Multiplayer is the same mechanism pointed at a shared repo: each fleet
  * appends ONLY under its own project/handle namespace, so writers never touch
@@ -315,7 +315,7 @@ export function validateJournal(
     if (marker.journal > JOURNAL_LAYOUT) {
       return {
         ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer roundhouse — update the plugin`,
+        reason: `journal layout v${marker.journal} was written by a newer yes-chef — update the plugin`,
       };
     }
     if (marker.journal < JOURNAL_LAYOUT && opts?.write) {
@@ -343,7 +343,7 @@ export function validateJournal(
       reason:
         "the configured remote.url is not an agent-bus journal (no agent-bus.json marker — either " +
         "this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is " +
-        "really where the journal should live, run `roundhouse sync --adopt` once to initialize " +
+        "really where the journal should live, run `yes-chef sync --adopt` once to initialize " +
         "the journal structure alongside the existing content.",
     };
   }
