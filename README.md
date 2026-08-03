@@ -10,7 +10,7 @@ Distributed as a **Claude Code plugin** (this repo is its own marketplace).
 ## Install
 
 ```
-/plugin marketplace add and-michael/agent-bus-workflow
+/plugin marketplace add heymichaelp/roundhouse
 /plugin install roundhouse@roundhouse
 ```
 

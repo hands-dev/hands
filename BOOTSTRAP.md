@@ -18,7 +18,7 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ## Step 1 — Install the plugin
 
 ```
-/plugin marketplace add and-michael/agent-bus-workflow
+/plugin marketplace add heymichaelp/roundhouse
 /plugin install roundhouse@roundhouse
 ```
 
