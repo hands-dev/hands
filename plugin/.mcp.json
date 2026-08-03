@@ -1,6 +1,9 @@
 {
-  "agent-bus": {
+  "roundhouse": {
     "command": "node",
-    "args": ["--no-warnings", "${CLAUDE_PLUGIN_ROOT}/dist/server.mjs"]
+    "args": [
+      "--no-warnings",
+      "${CLAUDE_PLUGIN_ROOT}/dist/server.mjs"
+    ]
   }
 }

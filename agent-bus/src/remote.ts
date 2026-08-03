@@ -17,7 +17,7 @@ import type { Store } from "./store.js";
  * so two machines on one handle never contend on a file) in a local clone;
  * pushes ride the
  * Stop-hook publish cadence (debounced, best-effort, offline-tolerant).
- * Restore = pull + replay (`agent-bus restore`).
+ * Restore = pull + replay (`roundhouse restore`).
  *
  * Multiplayer is the same mechanism pointed at a shared repo: each fleet
  * appends ONLY under its own handle, so writers never touch the same path
@@ -199,7 +199,7 @@ export function validateJournal(
     if (marker.journal > JOURNAL_LAYOUT) {
       return {
         ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer agent-bus — update the plugin`,
+        reason: `journal layout v${marker.journal} was written by a newer roundhouse — update the plugin`,
       };
     }
     return { ok: true };
@@ -218,7 +218,7 @@ export function validateJournal(
       needsAdopt: true,
       reason:
         "the configured remote.url is not an agent-bus journal (no agent-bus.json) and is not empty. " +
-        "If this repo is really where the journal should live, run `agent-bus sync --adopt` once to " +
+        "If this repo is really where the journal should live, run `roundhouse sync --adopt` once to " +
         "initialize the journal structure alongside the existing content.",
     };
   }

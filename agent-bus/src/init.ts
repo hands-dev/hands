@@ -5,7 +5,7 @@ import * as readline from "node:readline/promises";
 import { coordinationDir, repoInfo } from "./paths.js";
 
 /**
- * `agent-bus init` — per-repo setup, run from inside the target repo. The
+ * `roundhouse init` — per-repo setup, run from inside the target repo. The
  * PLUGIN now owns what the old installer hand-wired (MCP registration, hooks,
  * skills); this command handles what must stay per-repo/per-user:
  *
@@ -217,7 +217,7 @@ export async function runInit(argv: string[]): Promise<void> {
       } else {
         out(
           `● left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; ` +
-            "to migrate later, re-run: agent-bus init --migrate",
+            "to migrate later, re-run: roundhouse init --migrate",
         );
       }
     }
@@ -225,9 +225,9 @@ export async function runInit(argv: string[]): Promise<void> {
     // 4. next steps
     out("");
     out("Done. Next steps:");
-    out("  1. main checkout: /agent-bus:foreman   (or /loop /agent-bus:foreman)");
-    out("  2. add workers:   agent-bus worker add -n 2");
-    out("  3. dashboard:     agent-bus serve   → http://localhost:4319");
+    out("  1. main checkout: /roundhouse:foreman   (or /loop /roundhouse:foreman)");
+    out("  2. add workers:   roundhouse worker add -n 2");
+    out("  3. dashboard:     roundhouse serve   → http://localhost:4319");
     out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");
   } finally {
     rl?.close();

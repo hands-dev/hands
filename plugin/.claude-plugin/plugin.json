@@ -1,5 +1,5 @@
 {
-  "name": "agent-bus",
+  "name": "roundhouse",
   "description": "Foreman/worker fleet on a per-repo coordination bus: strict hub-and-spoke topology, wake-cost accounting, worker provisioning, and an opt-in durable journal.",
   "author": {
     "name": "Michael Phillips"

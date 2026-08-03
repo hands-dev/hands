@@ -99,7 +99,7 @@ function branchExists(cwd: string, branch: string): boolean {
 
 /** Compose the paste-able launch command for a worker (plugin-namespaced skill). */
 export function launchCommand(worker: { id: string; dir: string; model: string }): string {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /agent-bus:worker")}`;
+  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /roundhouse:worker")}`;
 }
 
 function shellQuote(s: string): string {

@@ -8191,7 +8191,7 @@ function branchExists(cwd, branch) {
   }
 }
 function launchCommand(worker) {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /agent-bus:worker")}`;
+  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /roundhouse:worker")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
@@ -8349,7 +8349,7 @@ function dashboardHtml(principal) {
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <link rel="icon" href="data:," />
-<title>agent-bus</title>
+<title>roundhouse</title>
 <style>
   /* shadcn/ui baseline theme tokens (default / "zinc") */
   :root {
@@ -8478,7 +8478,7 @@ function dashboardHtml(principal) {
 <body>
 <header>
   <div>
-    <div class="title">agent-bus <span class="accent">\xB7 fleet</span></div>
+    <div class="title">roundhouse <span class="accent">\xB7 fleet</span></div>
   </div>
   <div class="spacer"></div>
   <span class="live"><span class="pulse"></span> <span id="livetxt">live</span></span>
@@ -32473,7 +32473,7 @@ function validateJournal(dir, opts) {
     if (marker.journal > JOURNAL_LAYOUT) {
       return {
         ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer agent-bus \u2014 update the plugin`
+        reason: `journal layout v${marker.journal} was written by a newer roundhouse \u2014 update the plugin`
       };
     }
     return { ok: true };
@@ -32490,7 +32490,7 @@ function validateJournal(dir, opts) {
     return {
       ok: false,
       needsAdopt: true,
-      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json) and is not empty. If this repo is really where the journal should live, run `agent-bus sync --adopt` once to initialize the journal structure alongside the existing content."
+      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json) and is not empty. If this repo is really where the journal should live, run `roundhouse sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
   fs7.writeFileSync(path7.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
@@ -32624,7 +32624,7 @@ function buildServer(store, agentId, config2) {
     store.markWakePending(recipients);
   };
   const server = new McpServer(
-    { name: "agent-bus", version: "0.1.0" },
+    { name: "roundhouse", version: "0.1.0" },
     {
       instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (foreman, worker-1, \u2026; see agent_bus_peers). Use agent_bus_peers to discover the team, agent_bus_send to message one, and agent_bus_receive to read messages addressed to you. Call agent_bus_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with agent_bus_ask \u2014 the foreman (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the foreman for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (agentId === "foreman" ? ` You ARE the foreman / command center: run agent_bus_questions to see open questions, agent_bus_priorities to read/set the ranked priorities, agent_bus_answer to resolve, agent_bus_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: agent_bus_todo_add concrete things only they can do (idempotent via dedupKey), and agent_bus_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "")
     }
@@ -33356,7 +33356,7 @@ async function main() {
   if (subcommand === "serve") {
     const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
     const handle = await serve2();
-    process.stdout.write(`agent-bus dashboard \u2192 ${handle.url}
+    process.stdout.write(`roundhouse dashboard \u2192 ${handle.url}
 (Ctrl-C to stop)
 `);
     if (!process.argv.includes("--no-open") && process.platform === "darwin") {

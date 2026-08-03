@@ -1,5 +1,5 @@
 {
-  "description": "agent-bus passive standup: turn-end status publish + per-prompt board delta.",
+  "description": "roundhouse passive standup: turn-end status publish + per-prompt board delta.",
   "hooks": {
     "Stop": [
       {
