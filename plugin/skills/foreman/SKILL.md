@@ -313,6 +313,14 @@ stopped being relevant without being done.
 INN-240; merge #2354"*), and note anything you just crossed off. The dashboard's **"your to-do"**
 lane shows the same list live.
 
+## 8. End-of-day digest note (optional, when journaling is enabled)
+
+If the durable journal is configured (`remote.url`), once per day — on your last pass of the day,
+or when the principal wraps up — record a 2–5 line narrative with `agent_bus_digest_note`: what
+moved, what's blocked, what tomorrow starts with. It renders under **Notes** at the top of today's
+digest page in the journal repo — the first thing a human (or a coworker's foreman) reads when
+browsing the day. Skip it on uneventful days; never spend worker wakes on prose.
+
 ## Desktop ping (on escalation)
 
 Fire a macOS notification so the principal knows to look at the command-center pane:
