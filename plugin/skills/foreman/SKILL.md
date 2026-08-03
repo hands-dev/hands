@@ -25,6 +25,10 @@ The bus is **scoped per repo**. Your paths (coordination dir, notify file, DB) a
 sync health come from the `agent_bus_paths` tool — never guess them. Call it once per session and
 reuse `coordinationDir` + `notify` below.
 
+**First run in a fresh repo:** if `<repoRoot>/agent-bus.config.json` doesn't exist, bootstrap
+before anything else — follow the `/rh:init` skill's flow (ask for the principal + optional
+journal repo, then run `roundhouse init --yes …`). One question round, then continue this loop.
+
 ## Operating mode — cost-aware: trade verification for velocity
 
 Same throughput, less double-checking. Every token costs, so cut the redundant verification — but

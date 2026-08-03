@@ -25,10 +25,11 @@ interface InitFlags {
   migrate: boolean | null; // null = ask
   principal: string | null;
   journalUrl: string | null;
+  handle: string | null;
 }
 
 function parseFlags(argv: string[]): InitFlags {
-  const flags: InitFlags = { yes: false, migrate: null, principal: null, journalUrl: null };
+  const flags: InitFlags = { yes: false, migrate: null, principal: null, journalUrl: null, handle: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]!;
     if (a === "--yes" || a === "-y") flags.yes = true;
@@ -38,6 +39,8 @@ function parseFlags(argv: string[]): InitFlags {
     else if (a.startsWith("--principal=")) flags.principal = a.slice("--principal=".length);
     else if (a === "--journal") flags.journalUrl = argv[++i] ?? null;
     else if (a.startsWith("--journal=")) flags.journalUrl = a.slice("--journal=".length);
+    else if (a === "--handle") flags.handle = argv[++i] ?? null;
+    else if (a.startsWith("--handle=")) flags.handle = a.slice("--handle=".length);
   }
   return flags;
 }
@@ -150,7 +153,8 @@ export async function runInit(argv: string[]): Promise<void> {
           gh: { poll: true },
         };
         if (journalUrl.trim()) {
-          const handle = await ask("Journal handle (your fleet's namespace)?", os.userInfo().username);
+          const handle =
+            flags.handle ?? (await ask("Journal handle (your fleet's namespace)?", os.userInfo().username));
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
         fs.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}\n`);

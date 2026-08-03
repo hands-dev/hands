@@ -18,11 +18,14 @@ That registers everything: the MCP server (`agent_bus_*` tools), the two passive
 (`Stop → publish`, `UserPromptSubmit → board`), the `/rh:foreman` + `/rh:worker`
 skills, and the `roundhouse` CLI on your Bash PATH. Requires Node ≥ 22.5 on PATH (`node:sqlite`).
 
-Then, per repo (from its main checkout):
+Then, per repo (from its main checkout) — one slash command:
 
-```bash
-roundhouse init        # scaffolds agent-bus.config.json; cleans up any pre-plugin install
 ```
+/rh:init               # conversational setup: principal + optional journal repo
+                       # (or skip straight ahead — /rh:foreman bootstraps itself on first run)
+```
+
+(`roundhouse init` remains for terminal use; `/rh:init` drives the same CLI underneath.)
 
 ## Run it
 
