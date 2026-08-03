@@ -192,7 +192,7 @@ export async function runInit(argv: string[]): Promise<void> {
         }
         for (const s of oldSkills) {
           fs.rmSync(path.join(home, ".claude", "skills", s), { recursive: true, force: true });
-          out(`✔ removed old ~/.claude/skills/${s} (the plugin ships /agent-bus:${s})`);
+          out(`✔ removed old ~/.claude/skills/${s} (the plugin ships /rh:${s})`);
         }
       } else {
         out("● left the old install in place — expect duplicate board injections and two MCP servers");
