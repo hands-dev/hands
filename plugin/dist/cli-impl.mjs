@@ -5,11 +5,20 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -139,7 +148,8 @@ function merge(base, layer) {
     },
     remote: {
       url: layer.remote?.url !== void 0 ? layer.remote.url : base.remote.url,
-      handle: layer.remote?.handle !== void 0 ? layer.remote.handle : base.remote.handle
+      handle: layer.remote?.handle !== void 0 ? layer.remote.handle : base.remote.handle,
+      project: layer.remote?.project !== void 0 ? layer.remote.project : base.remote.project
     },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll }
@@ -182,7 +192,7 @@ var init_config = __esm({
         baseBranch: null,
         allowForemanScaling: true
       },
-      remote: { url: null, handle: null },
+      remote: { url: null, handle: null, project: null },
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
@@ -3386,8 +3396,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path11) {
-      let input = path11;
+    function removeDotSegments(path12) {
+      let input = path12;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3639,8 +3649,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path11, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path11 && path11 !== "/" ? path11 : void 0;
+        const [path12, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path12 && path12 !== "/" ? path12 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7039,12 +7049,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs11, exportName) {
+    function addFormats(ajv, list, fs12, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs11[f]);
+        ajv.addFormat(f, fs12[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -9531,8 +9541,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path11, errorMaps, issueData } = params;
-  const fullPath = [...path11, ...issueData.path || []];
+  const { data, path: path12, errorMaps, issueData } = params;
+  const fullPath = [...path12, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -9647,11 +9657,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path11, key) {
+  constructor(parent, value, path12, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path11;
+    this._path = path12;
     this._key = key;
   }
   get path() {
@@ -13574,10 +13584,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path11) {
-  if (!path11)
+function getElementAtPath(obj, path12) {
+  if (!path12)
     return obj;
-  return path11.reduce((acc, key) => acc?.[key], obj);
+  return path12.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -13960,11 +13970,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path11, issues) {
+function prefixIssues(path12, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path11);
+    iss.path.unshift(path12);
     return iss;
   });
 }
@@ -14147,7 +14157,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path11 = []) => {
+  const processError = (error49, path12 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -14157,7 +14167,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path11, ...issue2.path];
+        const fullpath = [...path12, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -14189,8 +14199,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path11 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path11) {
+  const path12 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path12) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -26596,13 +26606,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path11 = ref.slice(1).split("/").filter(Boolean);
-  if (path11.length === 0) {
+  const path12 = ref.slice(1).split("/").filter(Boolean);
+  if (path12.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path11[0] === defsKey) {
-    const key = path11[1];
+  if (path12[0] === defsKey) {
+    const key = path12[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -32567,7 +32577,7 @@ import * as fs7 from "node:fs";
 import * as os4 from "node:os";
 import * as path7 from "node:path";
 var JOURNAL_VERSION = 1;
-var JOURNAL_LAYOUT = 1;
+var JOURNAL_LAYOUT = 2;
 var MARKER_FILE = "agent-bus.json";
 var PUSH_DEBOUNCE_MS = 6e4;
 var GIT_TIMEOUT_MS = 2e4;
@@ -32586,6 +32596,40 @@ function tryGit(cwd, args) {
     return null;
   }
 }
+function sanitizeSegment(raw, fallback = "unnamed") {
+  const clean = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^\.+/, "");
+  return clean || fallback;
+}
+function projectFromOrigin(originUrl) {
+  let p = originUrl.trim().replace(/\.git\/?$/, "");
+  if (!p) return null;
+  const scp = p.match(/^[^@/]+@[^:/]+:(.+)$/);
+  if (scp) p = scp[1];
+  else {
+    try {
+      p = new URL(p).pathname;
+    } catch {
+    }
+  }
+  const segments = p.split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+  const tail = segments.slice(-2).map((seg) => sanitizeSegment(seg));
+  return tail.join("--");
+}
+var projectCache = /* @__PURE__ */ new Map();
+function resolveProject(config2, cwd = process.cwd()) {
+  const override = config2.remote.project?.trim();
+  if (override) return sanitizeSegment(override);
+  const cached2 = projectCache.get(cwd);
+  if (cached2 !== void 0) return cached2;
+  let project = null;
+  const root = repoInfo(cwd)?.repoRoot ?? cwd;
+  const origin = tryGit(root, ["remote", "get-url", "origin"]);
+  if (origin) project = projectFromOrigin(origin);
+  if (!project) project = sanitizeSegment(path7.basename(root));
+  projectCache.set(cwd, project);
+  return project;
+}
 function defaultWriterId() {
   try {
     const host = os4.hostname().split(".")[0] ?? "";
@@ -32597,9 +32641,9 @@ function defaultWriterId() {
 }
 function resolveHandle(config2) {
   const h = config2.remote.handle?.trim();
-  if (h) return h;
+  if (h) return sanitizeSegment(h, "local");
   try {
-    return os4.userInfo().username;
+    return sanitizeSegment(os4.userInfo().username, "local");
   } catch {
     return "local";
   }
@@ -32637,6 +32681,7 @@ function syncPull(dir) {
   }
   return true;
 }
+var OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal", "log"]);
 function readMarker(dir) {
   const file2 = path7.join(dir, MARKER_FILE);
   let raw;
@@ -32664,6 +32709,11 @@ function validateJournal(dir, opts) {
         reason: `journal layout v${marker.journal} was written by a newer roundhouse \u2014 update the plugin`
       };
     }
+    if (marker.journal < JOURNAL_LAYOUT && opts?.write) {
+      fs7.writeFileSync(path7.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+`);
+      return { ok: true, bootstrapped: true };
+    }
     return { ok: true };
   }
   if (!opts?.write) return { ok: true };
@@ -32673,12 +32723,12 @@ function validateJournal(dir, opts) {
   } catch {
     return { ok: false, reason: `journal dir unreadable: ${dir}` };
   }
-  const foreign = entries.filter((e) => e !== "log");
+  const foreign = entries.filter((e) => !OWNED_ROOT.has(e));
   if (foreign.length > 0 && !opts.adopt) {
     return {
       ok: false,
       needsAdopt: true,
-      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json) and is not empty. If this repo is really where the journal should live, run `roundhouse sync --adopt` once to initialize the journal structure alongside the existing content."
+      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `roundhouse sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
   fs7.writeFileSync(path7.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
@@ -32705,7 +32755,8 @@ function readSyncStatus(dir) {
     return null;
   }
 }
-function syncPush(dir, opts) {
+function syncPush(journal, opts) {
+  const { dir, project, handle } = journal;
   const now = opts?.now ?? Date.now();
   const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
@@ -32719,9 +32770,10 @@ function syncPush(dir, opts) {
     return result;
   };
   try {
-    const own = ["log", MARKER_FILE].filter((p) => fs7.existsSync(path7.join(dir, p)));
+    const ownPaths = [path7.join("journal", project, handle), "log", MARKER_FILE];
+    const own = ownPaths.filter((p) => fs7.existsSync(path7.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
-    let dirty = git3(dir, ["status", "--porcelain", "--", "log", MARKER_FILE]) !== "";
+    let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
       git3(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
     }
@@ -32730,7 +32782,7 @@ function syncPush(dir, opts) {
     if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
     if (validation.bootstrapped) {
       git3(dir, ["add", "--", MARKER_FILE]);
-      git3(dir, ["commit", "-q", "-m", "journal: initialize agent-bus structure"]);
+      git3(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
       dirty = true;
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
@@ -32756,19 +32808,29 @@ function openJournal(options) {
   if (!url2) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url2);
+  const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
   const writerId = options?.writerId ?? defaultWriterId();
-  const logDir = path7.join(dir, "log", handle);
+  const agentId = options?.agentId ?? null;
+  const logDir = path7.join(dir, "journal", project, handle, "log");
   return {
     dir,
+    project,
     handle,
     url: url2,
     writerId,
+    agentId,
     append(type, data) {
       try {
         fs7.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const event = { v: JOURNAL_VERSION, ts: Date.now(), type, data };
+        const event = {
+          v: JOURNAL_VERSION,
+          ts: Date.now(),
+          type,
+          ...agentId ? { agent: agentId } : {},
+          data
+        };
         fs7.appendFileSync(
           path7.join(logDir, `${day}.${writerId}.ndjson`),
           `${JSON.stringify(event)}
@@ -32780,15 +32842,13 @@ function openJournal(options) {
     }
   };
 }
-function readEvents(dir, handle) {
-  const logDir = path7.join(dir, "log", handle);
+function readEventsFromDir(logDir, into) {
   let files = [];
   try {
     files = fs7.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
-    return [];
+    return;
   }
-  const events = [];
   for (const file2 of files) {
     let body;
     try {
@@ -32800,18 +32860,35 @@ function readEvents(dir, handle) {
       if (!line.trim()) continue;
       try {
         const parsed = JSON.parse(line);
-        if (parsed && typeof parsed.type === "string" && parsed.data) events.push(parsed);
+        if (parsed && typeof parsed.type === "string" && parsed.data) into.push(parsed);
       } catch {
       }
     }
   }
+}
+function readEvents(dir, project, handle) {
+  const events = [];
+  readEventsFromDir(path7.join(dir, "log", handle), events);
+  readEventsFromDir(path7.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
+}
+function listProjects(dir) {
+  try {
+    return fs7.readdirSync(path7.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch {
+    return [];
+  }
 }
 function replayInto(store, events, env = process.env) {
   let applied = 0;
   let skipped = 0;
+  const stateless = /* @__PURE__ */ new Set(["digest.note"]);
   for (const event of events) {
     try {
+      if (stateless.has(event.type)) {
+        applied++;
+        continue;
+      }
       if (event.type === "priorities.set") {
         const items = Array.isArray(event.data.items) ? event.data.items : [];
         writePriorities(items, env);
@@ -33524,7 +33601,8 @@ function resolveSelf() {
 }
 function pathsReport(agentId, cfg) {
   const info = repoInfo();
-  const journal = cfg.remote.url?.trim() ? readSyncStatus(journalDir()) : null;
+  const enabled = Boolean(cfg.remote.url?.trim());
+  const journal = enabled ? readSyncStatus(journalDir()) : null;
   return {
     cwd: process.cwd(),
     agentId,
@@ -33534,7 +33612,8 @@ function pathsReport(agentId, cfg) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
-    journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : cfg.remote.url ? "never-synced" : "disabled"
+    journalProject: enabled ? resolveProject(cfg) : null,
+    journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : enabled ? "never-synced" : "disabled"
   };
 }
 function runCli(subcommand, argv) {
@@ -33545,12 +33624,12 @@ function runCli(subcommand, argv) {
   }
   const agentId = resolveSelf();
   const store = new Store();
-  const journal = openJournal();
+  const journal = openJournal({ agentId });
   if (journal) store.setJournal(journal.append);
   try {
     if (subcommand === "publish") {
       runPublish(store, { agentId, cwd: process.cwd() });
-      if (journal) syncPush(journal.dir);
+      if (journal) syncPush(journal);
       return 0;
     }
     if (subcommand === "board") {
@@ -33604,7 +33683,7 @@ async function main() {
   }
   const agentId = resolveSelf();
   const store = new Store();
-  const journal = openJournal();
+  const journal = openJournal({ agentId });
   if (journal) store.setJournal(journal.append);
   store.registerAgent({ id: agentId, cwd: process.cwd(), pid: process.pid });
   const server = buildServer(store, agentId);
@@ -33632,6 +33711,8 @@ if (invokedDirectly) {
 // src/cli.ts
 init_provision();
 init_store();
+import * as fs11 from "node:fs";
+import * as path11 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -33699,23 +33780,26 @@ function cmdScale(argv) {
   if (added.length === 0 && removed.length === 0) out2(`already at ${target} workers`);
 }
 function requireRemote() {
-  const cfg = loadConfig();
-  const url2 = cfg.remote.url?.trim();
-  if (!url2) {
-    fail('no remote journal configured \u2014 set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/agent-bus-state.git"}}');
+  const j = openJournal();
+  if (!j) {
+    fail('no remote journal configured \u2014 set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/roundhouse-state.git"}}');
   }
-  const dir = journalDir();
-  if (!ensureRepo(dir, url2)) fail(`could not set up the journal clone at ${dir}`);
-  return { dir, handle: resolveHandle(cfg) };
+  if (!fs11.existsSync(path11.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  return j;
 }
 function cmdRestore() {
-  const { dir, handle } = requireRemote();
+  const { dir, project, handle } = requireRemote();
   if (!syncPull(dir)) fail("could not pull the journal remote (offline? empty repo is fine, a failed fetch is not)");
   const shape = validateJournal(dir);
   if (!shape.ok) fail(shape.reason ?? "journal repo failed validation");
-  const events = readEvents(dir, handle);
+  const events = readEvents(dir, project, handle);
   if (events.length === 0) {
-    out2(`no events for handle "${handle}" in the journal \u2014 nothing to restore`);
+    out2(`no events for project "${project}" / handle "${handle}" \u2014 nothing to restore`);
+    const projects = listProjects(dir);
+    if (projects.length > 0) {
+      out2(`  journal has projects: ${projects.join(", ")}`);
+      out2("  (a different key? set remote.project in agent-bus.config.json \u2014 origin-less repos derive it from the dir name, which varies per machine)");
+    }
     return;
   }
   const store = new Store();
@@ -33728,8 +33812,9 @@ function cmdRestore() {
   }
 }
 function cmdSync(argv) {
-  const { dir, handle } = requireRemote();
-  const res = syncPush(dir, { force: true, adopt: flag(argv, "--adopt") });
+  const j = requireRemote();
+  const { handle } = j;
+  const res = syncPush(j, { force: true, adopt: flag(argv, "--adopt") });
   if (res.status === "error") fail(`sync failed: ${res.detail}`);
   if (res.status === "invalid") fail(res.detail ?? "journal repo failed validation");
   out2(`\u2714 journal ${res.status} (handle "${handle}")`);
