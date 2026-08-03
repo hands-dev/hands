@@ -61,11 +61,15 @@ function describe(event: JournalEvent): string | null {
   const d = event.data;
   const t = hhmm(event.ts);
   switch (event.type) {
-    case "task.create":
-      return `- ${t} task #${d.id} created: **${oneLine(d.title)}**${d.assignee ? ` → ${d.assignee}` : " (queue)"}`;
+    case "task.create": {
+      const dish = d.dish ? ` (${oneLine(d.dish)})` : "";
+      return `- ${t} ticket #${d.id}${dish} fired: **${oneLine(d.title)}**${d.assignee ? ` → ${d.assignee}` : " (unassigned)"}`;
+    }
     case "task.update": {
       const result = d.result ? ` — ${oneLine(d.result)}` : "";
-      return `- ${t} task #${d.id} → ${d.state}${result}`;
+      const verb =
+        d.state === "cancelled" ? "86'd" : d.state === "in_progress" ? "picked up" : String(d.state);
+      return `- ${t} ticket #${d.id} ${verb}${result}`;
     }
     case "question.ask":
       return `- ${t} question #${d.id} asked: ${oneLine(d.question)}`;
@@ -84,7 +88,7 @@ function describe(event: JournalEvent): string | null {
     case "priorities.set": {
       const items = Array.isArray(d.items) ? (d.items as unknown[]) : [];
       const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" · ");
-      return `- ${t} priorities set (${items.length}): ${list}`;
+      return `- ${t} specials set (${items.length}): ${list}`;
     }
     default:
       return null; // messages/cursors are counted, not itemized; unknown types skipped

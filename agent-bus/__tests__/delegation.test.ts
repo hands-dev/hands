@@ -29,7 +29,7 @@ describe("delegation lifecycle", () => {
 
     // worker sees the new assignment in its board delta
     expect(buildBoard(store, { agentId: "wt3", since: 500, advance: false, now: 1500 }).text).toContain(
-      "foreman delegated",
+      "foreman fired",
     );
 
     store.updateTaskState({ id, state: "in_progress", now: 2000 });

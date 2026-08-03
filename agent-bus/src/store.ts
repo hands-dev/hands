@@ -79,6 +79,8 @@ export interface TaskRow {
   state: string;
   result: string | null;
   priority_ref: string | null;
+  /** the DISH this ticket helps assemble — an external ref (Linear "ENG-1476", "PR #2455") */
+  dish: string | null;
   thread_id: string | null;
   created_at: number;
   updated_at: number;
@@ -337,6 +339,7 @@ export class Store {
     this.ensureColumn("agents", "state", "TEXT");
     this.ensureColumn("agents", "last_active", "INTEGER");
     this.ensureColumn("agents", "focus", "TEXT");
+    this.ensureColumn("tasks", "dish", "TEXT");
 
     // Foreman self-audit: hindsight verdict on each recommendation.
     this.ensureColumn("questions", "outcome", "TEXT");
@@ -907,6 +910,7 @@ export class Store {
     title: string;
     body?: string | null;
     priority?: string | null;
+    dish?: string | null;
     thread?: string | null;
     now?: number;
   }): number {
@@ -915,8 +919,8 @@ export class Store {
     const id = this.withRetry(() => {
       const result = this.db
         .prepare(
-          `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, thread_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.createdBy,
@@ -925,6 +929,7 @@ export class Store {
           input.body ?? null,
           state,
           input.priority ?? null,
+          input.dish ?? null,
           input.thread ?? null,
           now,
           now,
@@ -939,6 +944,7 @@ export class Store {
       body: input.body ?? null,
       state,
       priority: input.priority ?? null,
+      dish: input.dish ?? null,
       thread: input.thread ?? null,
       at: now,
     });
@@ -1222,8 +1228,8 @@ export class Store {
         this.withRetry(() =>
           this.db
             .prepare(
-              `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, thread_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               f("id"),
@@ -1233,6 +1239,7 @@ export class Store {
               f("body"),
               f("state"),
               f("priority"),
+              f("dish"),
               f("thread"),
               at,
               at,

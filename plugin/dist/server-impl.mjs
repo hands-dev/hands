@@ -7202,6 +7202,7 @@ var init_store = __esm({
         this.ensureColumn("agents", "state", "TEXT");
         this.ensureColumn("agents", "last_active", "INTEGER");
         this.ensureColumn("agents", "focus", "TEXT");
+        this.ensureColumn("tasks", "dish", "TEXT");
         this.ensureColumn("questions", "outcome", "TEXT");
         this.ensureColumn("questions", "outcome_note", "TEXT");
         this.ensureColumn("questions", "outcome_at", "INTEGER");
@@ -7633,8 +7634,8 @@ var init_store = __esm({
         const state = input.assignee ? "assigned" : "open";
         const id = this.withRetry(() => {
           const result = this.db.prepare(
-            `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, thread_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             input.createdBy,
             input.assignee ?? null,
@@ -7642,6 +7643,7 @@ var init_store = __esm({
             input.body ?? null,
             state,
             input.priority ?? null,
+            input.dish ?? null,
             input.thread ?? null,
             now,
             now
@@ -7656,6 +7658,7 @@ var init_store = __esm({
           body: input.body ?? null,
           state,
           priority: input.priority ?? null,
+          dish: input.dish ?? null,
           thread: input.thread ?? null,
           at: now
         });
@@ -7870,8 +7873,8 @@ var init_store = __esm({
           case "task.create":
             this.withRetry(
               () => this.db.prepare(
-                `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, thread_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
               ).run(
                 f("id"),
                 f("by"),
@@ -7880,6 +7883,7 @@ var init_store = __esm({
                 f("body"),
                 f("state"),
                 f("priority"),
+                f("dish"),
                 f("thread"),
                 at,
                 at
@@ -8042,7 +8046,7 @@ function buildBoard(store, opts) {
     lines.push(`  ? ${q.asker} asks: "${q.question}" \u2014 adjudicate or escalate`);
   }
   for (const t of assignedToMe) {
-    lines.push(`  \u{1F4CB} ${t.created_by} delegated: "${t.title}" \u2014 start with agent_bus_task_update`);
+    lines.push(`  \u{1F4CB} ${t.created_by} fired: "${t.title}" \u2014 start with agent_bus_task_update`);
   }
   for (const t of returnedToMe) {
     lines.push(`  \u{1F4CB} ${t.assignee ?? ""} returned: "${t.title}" \u2014 review it`);
@@ -8597,15 +8601,15 @@ function dashboardHtml(principal) {
 <main>
   <div id="needs"></div>
   <div class="card"><div class="card-header"><span class="card-title">Overall utilization</span><span id="util-badge"></span></div><div class="card-content" id="util-body"></div></div>
-  <div class="card"><div class="card-header"><span class="card-title">Workers</span><span id="workers-badge"></span></div><div class="card-content" id="workers-body"></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Stations</span><span id="workers-badge"></span></div><div class="card-content" id="workers-body"></div></div>
   <div id="collstrip"></div>
-  <div class="card"><div class="card-header"><span class="card-title">Foreman effectiveness</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Expo effectiveness</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
   <div id="others"></div>
 </main>
 <script>
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function age(now,t){ if(t==null) return '\u2014'; var ms=now-t; if(ms<60000) return 'now'; var m=Math.floor(ms/60000); if(m<60) return m+'m'; var h=Math.floor(m/60); return h<24? h+'h':Math.floor(h/24)+'d'; }
-  function wtNum(id){ var m=/^worker-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
+  function wtNum(id){ var m=/^(?:station|worker)-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
   var PRINCIPAL=${JSON.stringify(principal)};
   function nmeOnly(id){ return id; }
   function dotColor(s){ return s==='active'?'hsl(var(--success))':s==='idle'?'hsl(var(--warning))':'hsl(var(--muted-foreground))'; }
@@ -8679,7 +8683,7 @@ function dashboardHtml(principal) {
           '<div class="stat idle"><div class="n">'+idle+'</div><div class="l">Idle</div></div>'+
           '<div class="stat offline"><div class="n">'+off+'</div><div class="l">Offline</div></div>'+
         '</div>'+
-        '<div>'+(rows||'<div class="empty">no priorities set \u2014 ask the foreman</div>')+'</div>'+
+        '<div>'+(rows||'<div class="empty">no specials set \u2014 ask the expo</div>')+'</div>'+
       '</div>';
   }
 
@@ -8698,7 +8702,7 @@ function dashboardHtml(principal) {
     var cls='wcard'+(w.state==='offline'?' offline':'')+(collide[w.id]?' collide':'');
     var wp=workerPriority(s,w); var t=wp.task;
     var taskHtml = t
-      ? '<div class="wtask"><span class="ar">\u25B8</span><span class="tt">'+esc(t.title)+'</span></div>'
+      ? '<div class="wtask"><span class="ar">\u25B8</span><span class="tt">'+esc(t.title)+(t.dish?' <span class="wt mono">('+esc(t.dish)+')</span>':'')+'</span></div>'
       : '<div class="wtask none"><span class="ar">\u25B8</span><span class="tt">'+(w.state==='offline'?'offline':(w.branch?'self-directed':'no task'))+'</span></div>';
     var ptag;
     if(wp.i>=0 && wp.src==='branch'){
@@ -8755,7 +8759,7 @@ function dashboardHtml(principal) {
     }).join('');
     var table = recs.length
       ? '<table class="tbl"><thead><tr><th>outcome</th><th>from</th><th>recommendation</th><th>priority</th><th class="right">age</th></tr></thead><tbody>'+rows+'</tbody></table>'
-      : '<div class="empty">no foreman recommendations yet</div>';
+      : '<div class="empty">no expo recommendations yet</div>';
     document.getElementById('fore-body').innerHTML =
       '<div class="fore-top">'+
         '<span class="score'+(assessed?' has':'')+'">'+score+'</span>'+
@@ -8765,9 +8769,9 @@ function dashboardHtml(principal) {
           badge('badge-secondary','<b>'+pend+'</b>&nbsp;not yet judged')+
         '</div>'+
       '</div>'+
-      '<p class="card-desc" style="padding:0 0 12px">The foreman grades its own calls in hindsight \u2014 did each recommendation hold up, or did a later finding overturn it? '+
+      '<p class="card-desc" style="padding:0 0 12px">The expo grades its own calls in hindsight \u2014 did each recommendation hold up, or did a later finding overturn it? '+
         'Score = held up \xF7 (held up + overturned), recency-weighted. It measures the foreman\\'s judgment, not whether '+esc(PRINCIPAL)+' accepted its advice.'+
-        (assessed?'':' Nothing judged yet \u2014 the score appears once the foreman starts introspecting on how its recommendations played out.')+'</p>'+
+        (assessed?'':' Nothing judged yet \u2014 the score appears once the expo starts introspecting on how its recommendations played out.')+'</p>'+
       table;
   }
 
@@ -8937,6 +8941,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     assignee: t.assignee ?? "queue",
     state: t.state,
     priority: t.priority_ref,
+    dish: t.dish,
     result: t.result,
     at: t.updated_at
   }));
@@ -32481,11 +32486,14 @@ function describe3(event) {
   const d = event.data;
   const t = hhmm(event.ts);
   switch (event.type) {
-    case "task.create":
-      return `- ${t} task #${d.id} created: **${oneLine(d.title)}**${d.assignee ? ` \u2192 ${d.assignee}` : " (queue)"}`;
+    case "task.create": {
+      const dish = d.dish ? ` (${oneLine(d.dish)})` : "";
+      return `- ${t} ticket #${d.id}${dish} fired: **${oneLine(d.title)}**${d.assignee ? ` \u2192 ${d.assignee}` : " (unassigned)"}`;
+    }
     case "task.update": {
       const result = d.result ? ` \u2014 ${oneLine(d.result)}` : "";
-      return `- ${t} task #${d.id} \u2192 ${d.state}${result}`;
+      const verb = d.state === "cancelled" ? "86'd" : d.state === "in_progress" ? "picked up" : String(d.state);
+      return `- ${t} ticket #${d.id} ${verb}${result}`;
     }
     case "question.ask":
       return `- ${t} question #${d.id} asked: ${oneLine(d.question)}`;
@@ -32504,7 +32512,7 @@ function describe3(event) {
     case "priorities.set": {
       const items = Array.isArray(d.items) ? d.items : [];
       const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
-      return `- ${t} priorities set (${items.length}): ${list}`;
+      return `- ${t} specials set (${items.length}): ${list}`;
     }
     default:
       return null;
@@ -33198,6 +33206,7 @@ function buildServer(store, agentId, config2) {
         assignee: t.assignee ?? "queue",
         state: t.state,
         priority: t.priority_ref ?? void 0,
+        dish: t.dish ?? void 0,
         updatedAt: new Date(t.updated_at).toISOString()
       }));
       const openQuestions = store.listQuestions({ state: "open" }).map((q) => ({
@@ -33398,7 +33407,8 @@ function buildServer(store, agentId, config2) {
         title: external_exports3.string(),
         body: external_exports3.string().optional(),
         to: external_exports3.string().optional(),
-        priority: external_exports3.string().optional()
+        priority: external_exports3.string().optional(),
+        dish: external_exports3.string().optional().describe('the DISH this ticket helps assemble \u2014 external ref ("ENG-1476", "PR #2455")')
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     },
@@ -33426,7 +33436,8 @@ function buildServer(store, agentId, config2) {
         assignee,
         title: input.title,
         body: input.body ?? null,
-        priority: input.priority ?? null
+        priority: input.priority ?? null,
+        dish: input.dish ?? null
       });
       if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
       return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue" });
@@ -33464,6 +33475,7 @@ function buildServer(store, agentId, config2) {
           state: t.state,
           result: t.result ?? void 0,
           priority: t.priority_ref ?? void 0,
+          dish: t.dish ?? void 0,
           updatedAt: new Date(t.updated_at).toISOString()
         }))
       });
