@@ -6,12 +6,14 @@ import { type AgentBusConfig, loadConfig } from "./config.js";
 import { type RepoInfo, repoInfo } from "./paths.js";
 
 /**
- * Worker provisioning — the user thinks in WORKERS, never worktrees. Each
- * worker is a Claude Code session launched with AGENT_BUS_ID=worker-<n> inside
- * a managed git worktree (the hidden isolation primitive) under
- * `~/.agent-bus/worktrees/<slug>/worker-<n>`. That root lives OUTSIDE the repo
- * tree so nested-repo tooling never sees it, and the worktree shares the repo's
- * git common-dir, so every worker automatically lands on the foreman's bus.
+ * Station provisioning — the user thinks in STATIONS, never worktrees. Each
+ * station is a Claude Code session launched with AGENT_BUS_ID=station-<n>
+ * inside a managed git worktree (the hidden isolation primitive) under
+ * `~/.agent-bus/worktrees/<slug>/station-<n>`. That root lives OUTSIDE the
+ * repo tree so nested-repo tooling never sees it, and the worktree shares the
+ * repo's git common-dir, so every station automatically lands on the expo's
+ * bus. Legacy `worker-<n>` dirs/branches from the pre-brigade era are listed
+ * and retired transparently.
  */
 
 export interface ManagedWorker {
@@ -60,6 +62,11 @@ export function workerRoot(cwd: string = process.cwd(), config?: AgentBusConfig)
 }
 
 export function workerBranch(index: number): string {
+  return `roundhouse/station-${index}`;
+}
+
+/** Pre-brigade branch name — still recognized for teardown. */
+function legacyBranch(index: number): string {
   return `agent-bus/worker-${index}`;
 }
 
@@ -74,13 +81,13 @@ export function listWorkers(cwd: string = process.cwd(), config?: AgentBusConfig
   }
   const workers: ManagedWorker[] = [];
   for (const name of names) {
-    const m = name.match(/^worker-(\d+)$/);
+    const m = name.match(/^(?:station|worker)-(\d+)$/);
     if (!m) continue;
     const index = Number.parseInt(m[1]!, 10);
     workers.push({
-      id: name,
+      id: `station-${index}`,
       index,
-      dir: path.join(root, name),
+      dir: path.join(root, name), // legacy worker-<n> dirs keep their path
       branch: workerBranch(index),
       present: true,
     });
@@ -97,9 +104,9 @@ function branchExists(cwd: string, branch: string): boolean {
   }
 }
 
-/** Compose the paste-able launch command for a worker (plugin-namespaced skill). */
+/** Compose the paste-able launch command for a station (plugin-namespaced skill). */
 export function launchCommand(worker: { id: string; dir: string; model: string }): string {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /rh:worker")}`;
+  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /rh:station")}`;
 }
 
 function shellQuote(s: string): string {
@@ -190,7 +197,7 @@ export function addWorkers(
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
-    const id = `worker-${index}`;
+    const id = `station-${index}`;
     const dir = path.join(root, id);
     const branch = workerBranch(index);
     const base = cfg.workers.baseBranch ?? "HEAD";
@@ -200,7 +207,8 @@ export function addWorkers(
     } else {
       git(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
     }
-    const model = cfg.workers.overrides[id] ?? cfg.workers.model;
+    const model =
+      cfg.workers.overrides[id] ?? cfg.workers.overrides[`worker-${index}`] ?? cfg.workers.model;
     const res = launch({ id, dir, model }, cfg.workers.launcher, opts?.env);
     plans.push({
       id,
@@ -226,24 +234,30 @@ export function removeWorker(
 ): { id: string; removed: boolean } {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
-  const m = id.match(/^worker-(\d+)$/);
-  if (!m) throw new ProvisionError(`not a worker id: ${id} (expected worker-<n>)`);
+  const m = id.match(/^(?:station|worker)-(\d+)$/);
+  if (!m) throw new ProvisionError(`not a station id: ${id} (expected station-<n>)`);
+  const index = Number.parseInt(m[1]!, 10);
   const info = requireRepo(cwd);
-  const dir = path.join(workerRoot(cwd, cfg), id);
+  const root = workerRoot(cwd, cfg);
+  // canonical dir first, then the legacy worker-<n> location
+  const candidates = [path.join(root, `station-${index}`), path.join(root, `worker-${index}`)];
+  const dir = candidates.find((d) => fs.existsSync(d)) ?? candidates[0]!;
 
   // Stop the session's wake Monitor (the worker skill's tail); killing the
   // tail ends the watch. The pane/session itself is the human's to close —
   // we never kill a whole terminal that might hold other work.
-  try {
-    execFileSync("pkill", ["-f", `tail -F -n0 .*${id}\\.notify`], { stdio: "ignore", timeout: 5000 });
-  } catch {
-    // no tail running — fine
-  }
-  // A tmux session we created ourselves is ours to kill.
-  try {
-    execFileSync("tmux", ["kill-session", "-t", `agent-bus-${id}`], { stdio: "ignore", timeout: 5000 });
-  } catch {
-    // not tmux-launched / already gone — fine
+  for (const alias of [`station-${index}`, `worker-${index}`]) {
+    try {
+      execFileSync("pkill", ["-f", `tail -F -n0 .*${alias}\\.notify`], { stdio: "ignore", timeout: 5000 });
+    } catch {
+      // no tail running — fine
+    }
+    // A tmux session we created ourselves is ours to kill.
+    try {
+      execFileSync("tmux", ["kill-session", "-t", `agent-bus-${alias}`], { stdio: "ignore", timeout: 5000 });
+    } catch {
+      // not tmux-launched / already gone — fine
+    }
   }
 
   let removed = false;
@@ -261,15 +275,16 @@ export function removeWorker(
     removed = true;
   }
   git(info.repoRoot, ["worktree", "prune"]);
-  const branch = workerBranch(Number.parseInt(m[1]!, 10));
-  if (branchExists(info.repoRoot, branch)) {
-    try {
-      git(info.repoRoot, ["branch", "-D", branch]);
-    } catch {
-      // branch checked out elsewhere or protected — leave it
+  for (const branch of [workerBranch(index), legacyBranch(index)]) {
+    if (branchExists(info.repoRoot, branch)) {
+      try {
+        git(info.repoRoot, ["branch", "-D", branch]);
+      } catch {
+        // branch checked out elsewhere or protected — leave it
+      }
     }
   }
-  return { id, removed };
+  return { id: `station-${index}`, removed };
 }
 
 /** Reconcile the pool to exactly `target` workers (adds low free indices, retires the highest first). */

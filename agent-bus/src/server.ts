@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * agent-bus — a local stdio MCP coordination server for foreman/worker Claude
+ * agent-bus — a local stdio MCP coordination server for expo/station Claude
  * Code messaging.
  *
  * One process per Claude Code instance. State is a shared SQLite DB (WAL) under
@@ -8,7 +8,7 @@
  * so two projects on one machine never share a bus. No daemon — the DB file is
  * the single source of truth. Identity is derived at runtime from env + cwd
  * (the MCP registration is shared machine-wide): the repo's main checkout is
- * `foreman`, provisioned workers are `worker-<n>`.
+ * `expo` (the expeditor), provisioned stations are `station-<n>`.
  *
  * Known limitation: MCP cannot wake an idle interactive Claude Code. Delivery
  * is: the model calls `agent_bus_receive` at natural checkpoints (optionally a
@@ -22,7 +22,7 @@ import { z } from "zod";
 import { buildBoard, computeStateHash, IDLE_THRESHOLD_MS } from "./board.js";
 import { type AgentBusConfig, loadConfig } from "./config.js";
 import { pollGithub } from "./github.js";
-import { isWorker, resolveAgentId, resolveAgentRef } from "./identity.js";
+import { isExpo, isStation, resolveAgentId, resolveAgentRef } from "./identity.js";
 import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
@@ -70,17 +70,17 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     {
       instructions:
         `Per-repo agent message bus. You are agent "${agentId}". ` +
-        "Refer to teammates by their canonical id (foreman, worker-1, …; see agent_bus_peers). " +
+        "Refer to teammates by their canonical id (expo, station-1, …; see agent_bus_peers). " +
         "Use agent_bus_peers to discover the team, agent_bus_send to message one, and " +
         "agent_bus_receive to read messages addressed to you. Call agent_bus_receive at natural " +
         "checkpoints — MCP cannot wake you unprompted. Never put secrets in message bodies (the " +
         "shared DB stores them in plaintext). When you hit an open question or decision you can't " +
-        "resolve alone, escalate it with agent_bus_ask — the foreman (the main checkout) adjudicates " +
+        "resolve alone, escalate it with agent_bus_ask — the expo (the main checkout) adjudicates " +
         `against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the ` +
-        "foreman for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) " +
+        "expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) " +
         "call rather than deciding it yourself." +
-        (agentId === "foreman"
-          ? " You ARE the foreman / command center: run agent_bus_questions to see open questions, " +
+        (isExpo(agentId)
+          ? " You ARE the expo — the expeditor at the pass / command center: run agent_bus_questions, " +
             "agent_bus_priorities to read/set the ranked priorities, agent_bus_answer to resolve, " +
             `agent_bus_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal ` +
             "to-do list: agent_bus_todo_add concrete things only they can do (idempotent via dedupKey), " +
@@ -96,7 +96,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       title: "Send a message to another agent",
       description:
         "Enqueue a message to another agent on this repo's bus. `to` is a peer agent id " +
-        `(foreman, worker-2, … — see agent_bus_peers), the principal ("${principal}"), or "*" to ` +
+        `(expo, station-2, … — see agent_bus_peers), the principal ("${principal}"), or "*" to ` +
         "broadcast to everyone. Do not include secrets. Waking the recipient costs a full model " +
         "turn — for an FYI / status update that needs no immediate action, pass wake:false so it is " +
         "delivered on their next natural drain instead.",
@@ -116,27 +116,27 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       store.touch(agentId);
       const to = resolveAgentRef(input.to);
       const broadcast = to === "*";
-      // Strict hub-and-spoke: a worker may only address the foreman or the
+      // Strict hub-and-spoke: a station may only address the expo or the
       // principal. Rejected BEFORE any DB write or notify — a blocked send
       // must never wake anyone (that's the whole point of the topology).
-      if (cfg.topology === "strict-hub" && isWorker(agentId)) {
+      if (cfg.topology === "strict-hub" && isStation(agentId)) {
         if (broadcast) {
           return {
             ...asToolResult({
               ok: false,
               error:
-                "Only the foreman may broadcast. Send to the foreman instead — it relays what the team needs.",
+                "Only the expo may broadcast. Send to the expo instead — it relays what the team needs.",
             }),
             isError: true,
           };
         }
-        if (isWorker(to)) {
+        if (isStation(to)) {
           return {
             ...asToolResult({
               ok: false,
               error:
-                "Direct worker-to-worker messaging is disabled. Route via the foreman — use agent_bus_ask " +
-                "for a decision, or agent_bus_send({to:'foreman'}) for a handoff.",
+                "Direct station-to-station messaging is disabled. Route via the expo — use agent_bus_ask " +
+                "for a decision, or agent_bus_send({to:'expo'}) for a handoff.",
             }),
             isError: true,
           };
@@ -316,7 +316,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       };
       if (!input.full) return asToolResult(base);
 
-      // full:true — the foreman's bundled pass: one read instead of four.
+      // full:true — the expo's bundled pass: one read instead of four.
       const activeTasks = store.listTasks({ active: true }).map((t) => ({
         id: t.id,
         title: t.title,
@@ -365,14 +365,14 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
   );
 
-  // --- foreman / questions ---
+  // --- expo / questions ---
 
   server.registerTool(
     "agent_bus_ask",
     {
-      title: "Escalate an open question to the foreman",
+      title: "Escalate an open question to the expo",
       description:
-        "Raise an open question or decision you can't resolve alone. The foreman (main checkout) " +
+        "Raise an open question or decision you can't resolve alone. The expo (main checkout) " +
         `adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough ` +
         "context to decide; propose options if you have them.",
       inputSchema: {
@@ -384,8 +384,8 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     async (input) => {
       store.touch(agentId);
       const id = store.askQuestion({ asker: agentId, question: input.question, context: input.context ?? null });
-      deliverWake(["foreman"], { from: agentId, subject: "question" });
-      return asToolResult({ ok: true, id, routedTo: "foreman" });
+      deliverWake(["expo"], { from: agentId, subject: "question" });
+      return asToolResult({ ok: true, id, routedTo: "expo" });
     },
   );
 
@@ -394,7 +394,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     {
       title: "List questions on the bus",
       description:
-        "List questions. Foreman inbox = state 'open'. States: open | needs_human | answered. " +
+        "List questions. Expo inbox = state 'open'. States: open | needs_human | answered. " +
         "Omit state for all recent.",
       inputSchema: {
         state: z.enum(["open", "needs_human", "answered"]).optional(),
@@ -429,7 +429,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       title: "Answer a question (resolve it)",
       description:
         "Resolve a question and route the answer back to the asker. Set by='human' when relaying " +
-        `${principal}'s decision, 'foreman' when you auto-resolved it. Cite which priority it mapped to.`,
+        `${principal}'s decision, 'foreman' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
       inputSchema: {
         id: z.number().int(),
         answer: z.string(),
@@ -448,7 +448,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         resolvedBy: input.by ?? "foreman",
         priorityRef: input.priority ?? null,
       });
-      deliverWake([q.asker], { from: "foreman", subject: "answer" });
+      deliverWake([q.asker], { from: "expo", subject: "answer" });
       return asToolResult({ ok: true, id: input.id, asker: q.asker });
     },
   );
@@ -484,13 +484,13 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
   server.registerTool(
     "agent_bus_rec_outcome",
     {
-      title: "Record a recommendation's hindsight outcome (foreman self-audit)",
+      title: "Record a recommendation's hindsight outcome (expo self-audit)",
       description:
-        "The foreman's introspection. After one of your recommendations has played out, record whether it " +
+        "The expo's introspection. After one of your recommendations has played out, record whether it " +
         "HELD UP ('validated') or was OVERTURNED by a later finding ('contradicted'), with a short " +
         `reason. This grades YOUR OWN judgment in hindsight — not whether ${principal} accepted the advice ` +
-        "— and feeds the foreman-effectiveness score on the dashboard. Run it as part of your routine: " +
-        "revisit recent recommendations, and when a worker's later finding overturns a call you made, " +
+        "— and feeds the expo-effectiveness score on the dashboard. Run it as part of your routine: " +
+        "revisit recent recommendations, and when a station's later finding overturns a call you made, " +
         `mark it 'contradicted' honestly (that is the signal ${principal} wants to see degrade the score).`,
       inputSchema: {
         id: z.number().int().describe("the question/recommendation id to grade"),
@@ -511,11 +511,11 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
   server.registerTool(
     "agent_bus_priorities",
     {
-      title: "Read or set the foreman's ranked priorities",
+      title: "Read or set the menu — the expo's ranked priorities",
       description:
         "No args: read the current ranked priorities (+ whether they're stale/unset). Pass `set` to " +
         "replace them (ranked, most-important first). Pass confirm=true to mark the existing list " +
-        `still-current. If items is empty/unset, ask ${principal} for today's priorities.`,
+        `still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
       inputSchema: {
         set: z.array(z.string()).optional(),
         confirm: z.boolean().optional(),
@@ -552,10 +552,10 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
   server.registerTool(
     "agent_bus_delegate",
     {
-      title: "Delegate a task to a worker",
+      title: "Fire a ticket to a station (delegate a task)",
       description:
-        "Hand a unit of real work to a worker (foreman use). `to` = a worker agent id " +
-        '(worker-1, worker-2, …), or omit for the unassigned queue ("any available worker"). The ' +
+        "Hand a ticket (a unit of real work) to a station — expo use. `to` = a station agent id " +
+        '(station-1, station-2, …), or omit for the unassigned rail ("any available station"). The ' +
         "first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.",
       inputSchema: {
         title: z.string(),
@@ -568,13 +568,13 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     async (input) => {
       store.touch(agentId);
       // Strict hub-and-spoke: delegation flows downward from the hub only.
-      if (cfg.topology === "strict-hub" && isWorker(agentId)) {
+      if (cfg.topology === "strict-hub" && isStation(agentId)) {
         return {
           ...asToolResult({
             ok: false,
             error:
-              "Workers don't delegate tasks. Hand work upward instead: agent_bus_ask for a decision, or " +
-              "agent_bus_send({to:'foreman'}) to propose the task — the foreman delegates it.",
+              "Stations don't fire tickets. Hand work upward instead: agent_bus_ask for a decision, or " +
+              "agent_bus_send({to:'expo'}) to propose the ticket — the expo delegates it.",
           }),
           isError: true,
         };
@@ -597,7 +597,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     {
       title: "List delegated tasks",
       description:
-        "List tasks. A worktree checks its own with assignee=<me>; the foreman omits filters or uses " +
+        "List tickets (tasks). A station checks its own with assignee=<me>; the expo omits filters or uses " +
         "active=true. States: open | assigned | in_progress | returned | done | cancelled.",
       inputSchema: {
         state: z.enum(["open", "assigned", "in_progress", "returned", "done", "cancelled"]).optional(),
@@ -635,10 +635,10 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
   server.registerTool(
     "agent_bus_task_update",
     {
-      title: "Advance a delegated task",
+      title: "Advance a ticket (fire / plate / serve / 86)",
       description:
-        "Move a task through its lifecycle. Worker: 'in_progress' when you start (claims an unassigned one), " +
-        "'returned' with result when you report back. Foreman: 'done' to accept, 'cancelled' to drop.",
+        "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), " +
+        "'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it.",
       inputSchema: {
         id: z.number().int(),
         state: z.enum(["in_progress", "returned", "done", "cancelled"]),
@@ -665,15 +665,15 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
   );
 
-  // --- todos (foreman-managed personal to-do list for the principal) ---
+  // --- todos (expo-managed personal to-do list for the principal) ---
 
   server.registerTool(
     "agent_bus_todos",
     {
       title: "Read the principal's to-do list",
       description:
-        `List the personal to-do items the foreman is tracking for ${principal}. No args: everything ` +
-        "(open first). Pass state to filter: open | done | dismissed. Read-only — the foreman " +
+        `List the personal to-do items the expo is tracking for ${principal}. No args: everything ` +
+        "(open first). Pass state to filter: open | done | dismissed. Read-only — the expo " +
         "manages the list via agent_bus_todo_add / agent_bus_todo_update.",
       inputSchema: {
         state: z.enum(["open", "done", "dismissed"]).optional(),
@@ -764,12 +764,12 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
   );
 
-  // --- foreman-only: team-awareness GitHub poll + digest notes ---
-  if (agentId === "foreman") {
+  // --- expo-only: team-awareness GitHub poll + digest notes ---
+  if (isExpo(agentId)) {
     server.registerTool(
       "agent_bus_digest_note",
       {
-        title: "Add a prose note to today's journal digest (foreman only)",
+        title: "Add a prose note to today's journal digest (expo only)",
         description:
           "Record a short narrative note (2–5 lines) into the durable journal's daily digest — " +
           "the end-of-day wrap-up a human reads when browsing the journal repo. Renders under " +
@@ -794,10 +794,10 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     server.registerTool(
       "agent_bus_gh_poll",
       {
-        title: "Poll GitHub for other engineers' PRs (foreman only)",
+        title: "Poll GitHub for other engineers' PRs (expo only)",
         description:
           "Record what OTHER engineers are shipping (open + recently-merged PRs on this repo, " +
-          "excluding the principal's) for the dashboard team lane and per-worker relevance matching. " +
+          "excluding the principal's) for the dashboard team lane and per-station relevance matching. " +
           "Network call — run once every few passes, not every tick" +
           (cfg.gh.poll ? "." : ". NOTE: gh.poll is disabled in this repo's config — skip it."),
         inputSchema: {},
@@ -818,10 +818,10 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     );
   }
 
-  // --- foreman-directed scaling (spins up/retires local worker sessions) ---
-  // Registered ONLY for the foreman, and only when the config opts in — these
+  // --- expo-directed scaling (opens/closes local station sessions) ---
+  // Registered ONLY for the expo, and only when the config opts in — these
   // launch local processes, so they're off unless explicitly enabled.
-  if (agentId === "foreman" && cfg.workers.allowForemanScaling) {
+  if (isExpo(agentId) && cfg.workers.allowForemanScaling) {
     const presentPlans = (plans: import("./provision.js").LaunchPlan[]) =>
       plans.map((p) => ({
         id: p.id,
@@ -835,10 +835,10 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     server.registerTool(
       "agent_bus_worker_add",
       {
-        title: "Spin up more workers (foreman only)",
+        title: "Open more stations (expo only)",
         description:
-          "Provision and launch `count` new worker sessions for this repo. Use when the ranked " +
-          "priorities are under-staffed. Each worker appears on the board as worker-<n> once its " +
+          "Provision and launch `count` new station sessions for this repo. Use when the menu " +
+          "(ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its " +
           "session takes its first turn. If the launcher is manual, relay the pasteCommand to " +
           `${principal} to start the pane.`,
         inputSchema: { count: z.number().int().min(1).max(12).optional() },
@@ -858,12 +858,12 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     server.registerTool(
       "agent_bus_worker_remove",
       {
-        title: "Retire a worker (foreman only)",
+        title: "Close a station (expo only)",
         description:
-          "Stop a worker's session and remove its managed workspace. Refuses if the worker has " +
+          "Stop a station's session and remove its managed workspace. Refuses if the station has " +
           "uncommitted work unless force:true. Idempotent.",
         inputSchema: {
-          id: z.string().describe("worker-<n>"),
+          id: z.string().describe("station-<n>"),
           force: z.boolean().optional().describe("true = discard uncommitted work"),
         },
         annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
@@ -882,9 +882,9 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     server.registerTool(
       "agent_bus_scale",
       {
-        title: "Scale the worker pool (foreman only)",
+        title: "Scale the station line (expo only)",
         description:
-          "Reconcile the pool to exactly `target` workers — adds or retires as needed (highest " +
+          "Reconcile the line to exactly `target` stations — adds or opens/closes as needed (highest " +
           "index retired first; refuses to discard uncommitted work unless force:true).",
         inputSchema: {
           target: z.number().int().min(0).max(12),
