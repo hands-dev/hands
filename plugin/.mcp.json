@@ -1,0 +1,6 @@
+{
+  "agent-bus": {
+    "command": "node",
+    "args": ["--no-warnings", "${CLAUDE_PLUGIN_ROOT}/dist/server.mjs"]
+  }
+}

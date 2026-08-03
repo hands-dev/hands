@@ -172,6 +172,13 @@ async function main(): Promise<void> {
         return cmdRestore();
       case "sync":
         return cmdSync(rest);
+      case "serve":
+      case "dashboard": {
+        const { serve } = await import("./serve.js");
+        const handle = await serve();
+        out(`agent-bus dashboard → ${handle.url}\n(Ctrl-C to stop)`);
+        return; // the http server keeps the process alive
+      }
       case "paths":
         return cmdPaths();
       default: {
@@ -185,6 +192,7 @@ async function main(): Promise<void> {
         out("  agent-bus restore             rebuild local bus state from the remote journal (remote.url)");
         out("  agent-bus sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out("                                non-empty repo as a journal — explicit by design)");
+        out("  agent-bus serve               live dashboard → http://localhost:4319");
         out("  agent-bus paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
       }

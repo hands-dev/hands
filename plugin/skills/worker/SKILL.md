@@ -1,6 +1,6 @@
 ---
 name: worker
-description: Make THIS pane an autonomous, event-driven worker on the agent-bus. Arms a persistent Monitor on this worker's `.notify` file so it wakes the instant a message or delegated task lands — no timer polling. On each wake it drains the inbox, responds or does safe reversible work, then yields. Run via `/loop /worker`; the Monitor is the wake signal and a long heartbeat is only a fallback. Use when {{PRINCIPAL}} says /worker, "make this pane a worker", "auto-respond to the bus", or runs /loop /worker.
+description: Make THIS pane an autonomous, event-driven worker on the agent-bus. Arms a persistent Monitor on this worker's `.notify` file so it wakes the instant a message or delegated task lands — no timer polling. On each wake it drains the inbox, responds or does safe reversible work, then yields. Run via `/loop /agent-bus:worker`; the Monitor is the wake signal and a long heartbeat is only a fallback. Use when the principal says /agent-bus:worker, "make this pane a worker", "auto-respond to the bus", or runs /loop /agent-bus:worker.
 ---
 
 # Worker — event-driven responder on the agent-bus
@@ -17,7 +17,7 @@ model turn over their whole context, not free. The wake is the cost, not the mes
 counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
 
 - **The topology is strict hub-and-spoke, server-enforced.** You can only message the **foreman** and
-  **{{PRINCIPAL}}**; worker↔worker sends and broadcasts are rejected by the server. Route decisions
+  **the principal** (the human named in the server instructions); worker↔worker sends and broadcasts are rejected by the server. Route decisions
   and handoffs through the foreman.
 - **Route through the foreman (`agent_bus_ask`)** for anything that needs a **decision** — the
   foreman adjudicates against the day's priorities in one directive instead of a ping-pong.
@@ -28,14 +28,9 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
 
 ## First invocation — find your identity, then arm the Monitor (once)
 
-1. **Resolve your id + notify path** (one Bash call — the bus is scoped per repo, so never guess the
-   path):
-
-   ```
-   {{NODE}} --no-warnings {{SERVER_JS}} paths
-   ```
-
-   Note `agentId` (your `worker-<n>`) and `notify` (your `.notify` file) from the output.
+1. **Resolve your id + notify path** with the `agent_bus_paths` tool — the bus is scoped per repo,
+   so never guess paths. Note `agentId` (your `worker-<n>`), `notify` (your `.notify` file), and
+   `coordinationDir` from the output.
 2. **Don't double-arm.** Check whether the tail is already running — substitute your id:
 
    ```
@@ -95,7 +90,7 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
 
 - The **Monitor is the primary wake signal** — sub-second from an inbound message/task to your drain
   pass.
-- Keep only a **long fallback heartbeat** (~20–30 min `ScheduleWakeup`, prompt `/loop /worker`) so the
+- Keep only a **long fallback heartbeat** (~20–30 min `ScheduleWakeup`, prompt `/loop /agent-bus:worker`) so the
   loop survives a missed beat or a file rotation. Do **not** set a short cadence — idle ticks are pure
   overhead now that the Monitor does the waking.
 - **Compaction cadence.** A long-lived worker accretes context; compact it proactively during idle
@@ -111,21 +106,21 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
   ```
 
   If it prints **DUE**, reset the clock and end the turn by scheduling the next wakeup with prompt
-  **`/compact`** instead of `/loop /worker`:
+  **`/compact`** instead of `/loop /agent-bus:worker`:
 
   ```
   touch <coordinationDir>/<id>.last-compact    # reset the clock BEFORE the compact fires
   ScheduleWakeup({ delaySeconds: <normal heartbeat>, prompt: "/compact", reason: "worker context compaction cadence" })
   ```
 
-  Otherwise re-arm the normal `/loop /worker` heartbeat as usual. (A plain not-due check never touches
+  Otherwise re-arm the normal `/loop /agent-bus:worker` heartbeat as usual. (A plain not-due check never touches
   the marker, so the clock ages correctly.)
 
   Why this shape: the wakeup-prompt channel is the **only** way the loop can trigger a built-in slash
   command — the assistant can't self-invoke `/compact` from inside a turn; this is the identical
-  channel that re-enters `/loop /worker` every heartbeat. When it fires, `/compact` summarizes the
+  channel that re-enters `/loop /agent-bus:worker` every heartbeat. When it fires, `/compact` summarizes the
   session and the turn ends. The **persistent Monitor stays armed across the compaction**, so the next
-  inbound message wakes the worker normally and re-arms the standard `/loop /worker` heartbeat. The
+  inbound message wakes the worker normally and re-arms the standard `/loop /agent-bus:worker` heartbeat. The
   skill instructions survive in the post-compaction summary, so the loop continues seamlessly. Tune
   the 60-min interval to taste; this composes with (does not replace) Claude Code's automatic
   threshold compaction.
@@ -133,14 +128,14 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
 ## Guardrails
 
 - **Arm the Monitor once.** `pgrep` before arming on every invocation; never stack duplicates.
-- **When the loop stops** ({{PRINCIPAL}} cancels, or `/loop` stop), stop the Monitor so it doesn't
+- **When the loop stops** (the principal cancels, or `/loop` stop), stop the Monitor so it doesn't
   outlive the loop: `TaskStop` it if you still have its task id from this session, otherwise kill the
   stream directly — `pkill -f "tail -F -n0 .*<id>.notify"` (killing the tail ends the watch). Don't
   rely on `TaskList` to find it — it isn't listed there.
 - **Never push, merge, deploy, or mutate shared state autonomously.** Reply, do reversible in-workspace
   work, or escalate — that's the whole menu.
-- **Don't hijack a pane {{PRINCIPAL}} is actively using.** A worker pane is dedicated to this loop; if
-  {{PRINCIPAL}} starts giving you real work here, stop the loop (`TaskStop` the Monitor too) — don't
+- **Don't hijack a pane the principal is actively using.** A worker pane is dedicated to this loop; if
+  the principal starts giving you real work here, stop the loop (`TaskStop` the Monitor too) — don't
   fight them for turns.
 - Be terse. You're a responder, not a narrator.
 
@@ -149,5 +144,5 @@ counts your wakes (`wakesLastHour` on the board), so chatty behavior is visible.
 Sub-second: the Monitor turns a new `.notify` line straight into a wake and drain. Fully idle
 otherwise — no polling, no timer ticks, no per-tick cost.
 
-Start it with **`/loop /worker`** in any worker pane. The repo's main checkout runs `/loop /foreman`
+Start it with **`/loop /agent-bus:worker`** in any worker pane. The repo's main checkout runs `/loop /agent-bus:foreman`
 instead (it's the conductor, not a worker).
