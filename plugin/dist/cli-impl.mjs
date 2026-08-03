@@ -8944,7 +8944,7 @@ import * as os6 from "node:os";
 import * as path11 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
-  const flags = { yes: false, migrate: null, principal: null, journalUrl: null };
+  const flags = { yes: false, migrate: null, principal: null, journalUrl: null, handle: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--yes" || a === "-y") flags.yes = true;
@@ -8954,6 +8954,8 @@ function parseFlags(argv) {
     else if (a.startsWith("--principal=")) flags.principal = a.slice("--principal=".length);
     else if (a === "--journal") flags.journalUrl = argv[++i] ?? null;
     else if (a.startsWith("--journal=")) flags.journalUrl = a.slice("--journal=".length);
+    else if (a === "--handle") flags.handle = argv[++i] ?? null;
+    else if (a.startsWith("--handle=")) flags.handle = a.slice("--handle=".length);
   }
   return flags;
 }
@@ -9045,7 +9047,7 @@ async function runInit(argv) {
           gh: { poll: true }
         };
         if (journalUrl.trim()) {
-          const handle = await ask("Journal handle (your fleet's namespace)?", os6.userInfo().username);
+          const handle = flags.handle ?? await ask("Journal handle (your fleet's namespace)?", os6.userInfo().username);
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
         fs11.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
