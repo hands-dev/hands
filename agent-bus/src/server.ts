@@ -764,8 +764,33 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
   );
 
-  // --- foreman-only: team-awareness GitHub poll ---
+  // --- foreman-only: team-awareness GitHub poll + digest notes ---
   if (agentId === "foreman") {
+    server.registerTool(
+      "agent_bus_digest_note",
+      {
+        title: "Add a prose note to today's journal digest (foreman only)",
+        description:
+          "Record a short narrative note (2–5 lines) into the durable journal's daily digest — " +
+          "the end-of-day wrap-up a human reads when browsing the journal repo. Renders under " +
+          "'Notes' in journal/<project>/<handle>/<date>.md on the next sync. No-op guidance: " +
+          "requires remote journaling (config remote.url); notes are plaintext in the journal repo.",
+        inputSchema: { text: z.string().min(1).max(2000) },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        if (!cfg.remote.url?.trim()) {
+          return {
+            ...asToolResult({ ok: false, error: "remote journaling is not configured (remote.url)" }),
+            isError: true,
+          };
+        }
+        store.journal("digest.note", { text: input.text, at: Date.now() });
+        return asToolResult({ ok: true, rendersOn: "next journal sync" });
+      },
+    );
+
     server.registerTool(
       "agent_bus_gh_poll",
       {
