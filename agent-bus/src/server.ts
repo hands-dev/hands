@@ -27,7 +27,7 @@ import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
-import { journalDir, openJournal, readSyncStatus, syncPush } from "./remote.js";
+import { journalDir, openJournal, readSyncStatus, resolveProject, syncPush } from "./remote.js";
 import { type MessageRow, Store } from "./store.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
@@ -895,7 +895,8 @@ function resolveSelf(): string {
  */
 export function pathsReport(agentId: string, cfg: AgentBusConfig) {
   const info = repoInfo();
-  const journal = cfg.remote.url?.trim() ? readSyncStatus(journalDir()) : null;
+  const enabled = Boolean(cfg.remote.url?.trim());
+  const journal = enabled ? readSyncStatus(journalDir()) : null;
   return {
     cwd: process.cwd(),
     agentId,
@@ -905,9 +906,10 @@ export function pathsReport(agentId: string, cfg: AgentBusConfig) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
+    journalProject: enabled ? resolveProject(cfg) : null,
     journalSync: journal
       ? { ...journal, at: new Date(journal.at).toISOString() }
-      : cfg.remote.url
+      : enabled
         ? "never-synced"
         : "disabled",
   };
@@ -921,13 +923,13 @@ function runCli(subcommand: string, argv: string[]): number {
   }
   const agentId = resolveSelf();
   const store = new Store();
-  const journal = openJournal();
+  const journal = openJournal({ agentId });
   if (journal) store.setJournal(journal.append);
   try {
     if (subcommand === "publish") {
       runPublish(store, { agentId, cwd: process.cwd() });
       // Durable-journal push rides the turn-end publish (debounced inside).
-      if (journal) syncPush(journal.dir);
+      if (journal) syncPush(journal);
       return 0;
     }
     if (subcommand === "board") {
@@ -982,7 +984,7 @@ async function main(): Promise<void> {
   }
   const agentId = resolveSelf();
   const store = new Store();
-  const journal = openJournal();
+  const journal = openJournal({ agentId });
   if (journal) store.setJournal(journal.append);
   store.registerAgent({ id: agentId, cwd: process.cwd(), pid: process.pid });
   const server = buildServer(store, agentId);

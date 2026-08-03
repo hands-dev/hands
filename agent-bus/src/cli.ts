@@ -27,15 +27,16 @@ import {
   scaleWorkers,
 } from "./provision.js";
 import {
-  ensureRepo,
-  journalDir,
+  listProjects,
+  openJournal,
   readEvents,
   replayInto,
-  resolveHandle,
   syncPull,
   syncPush,
   validateJournal,
 } from "./remote.js";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { Store } from "./store.js";
 
 function out(line: string): void {
@@ -108,26 +109,29 @@ function cmdScale(argv: string[]): void {
   if (added.length === 0 && removed.length === 0) out(`already at ${target} workers`);
 }
 
-function requireRemote(): { dir: string; handle: string } {
-  const cfg = loadConfig();
-  const url = cfg.remote.url?.trim();
-  if (!url) {
-    fail('no remote journal configured — set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/agent-bus-state.git"}}');
+function requireRemote() {
+  const j = openJournal();
+  if (!j) {
+    fail('no remote journal configured — set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/roundhouse-state.git"}}');
   }
-  const dir = journalDir();
-  if (!ensureRepo(dir, url)) fail(`could not set up the journal clone at ${dir}`);
-  return { dir, handle: resolveHandle(cfg) };
+  if (!fs.existsSync(path.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  return j;
 }
 
-/** Pull the remote journal and materialize this handle's events into the local bus. */
+/** Pull the remote journal and materialize this project+handle's events into the local bus. */
 function cmdRestore(): void {
-  const { dir, handle } = requireRemote();
+  const { dir, project, handle } = requireRemote();
   if (!syncPull(dir)) fail("could not pull the journal remote (offline? empty repo is fine, a failed fetch is not)");
   const shape = validateJournal(dir); // read mode: layout-version gate only
   if (!shape.ok) fail(shape.reason ?? "journal repo failed validation");
-  const events = readEvents(dir, handle);
+  const events = readEvents(dir, project, handle);
   if (events.length === 0) {
-    out(`no events for handle "${handle}" in the journal — nothing to restore`);
+    out(`no events for project "${project}" / handle "${handle}" — nothing to restore`);
+    const projects = listProjects(dir);
+    if (projects.length > 0) {
+      out(`  journal has projects: ${projects.join(", ")}`);
+      out('  (a different key? set remote.project in agent-bus.config.json — origin-less repos derive it from the dir name, which varies per machine)');
+    }
     return;
   }
   const store = new Store(); // deliberately NOT journal-wired: replay must not re-append
@@ -142,8 +146,9 @@ function cmdRestore(): void {
 
 /** Push any pending journal appends now (no debounce) — also the `--adopt` entry point. */
 function cmdSync(argv: string[]): void {
-  const { dir, handle } = requireRemote();
-  const res = syncPush(dir, { force: true, adopt: flag(argv, "--adopt") });
+  const j = requireRemote();
+  const { handle } = j;
+  const res = syncPush(j, { force: true, adopt: flag(argv, "--adopt") });
   if (res.status === "error") fail(`sync failed: ${res.detail}`);
   if (res.status === "invalid") fail(res.detail ?? "journal repo failed validation");
   out(`✔ journal ${res.status} (handle "${handle}")`);

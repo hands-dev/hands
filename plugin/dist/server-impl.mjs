@@ -5,11 +5,20 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -8021,7 +8030,8 @@ function merge2(base, layer) {
     },
     remote: {
       url: layer.remote?.url !== void 0 ? layer.remote.url : base.remote.url,
-      handle: layer.remote?.handle !== void 0 ? layer.remote.handle : base.remote.handle
+      handle: layer.remote?.handle !== void 0 ? layer.remote.handle : base.remote.handle,
+      project: layer.remote?.project !== void 0 ? layer.remote.project : base.remote.project
     },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll }
@@ -8064,7 +8074,7 @@ var init_config = __esm({
         baseBranch: null,
         allowForemanScaling: true
       },
-      remote: { url: null, handle: null },
+      remote: { url: null, handle: null, project: null },
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
@@ -32370,7 +32380,7 @@ import * as fs7 from "node:fs";
 import * as os4 from "node:os";
 import * as path7 from "node:path";
 var JOURNAL_VERSION = 1;
-var JOURNAL_LAYOUT = 1;
+var JOURNAL_LAYOUT = 2;
 var MARKER_FILE = "agent-bus.json";
 var PUSH_DEBOUNCE_MS = 6e4;
 var GIT_TIMEOUT_MS = 2e4;
@@ -32389,6 +32399,40 @@ function tryGit(cwd, args) {
     return null;
   }
 }
+function sanitizeSegment(raw, fallback = "unnamed") {
+  const clean = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^\.+/, "");
+  return clean || fallback;
+}
+function projectFromOrigin(originUrl) {
+  let p = originUrl.trim().replace(/\.git\/?$/, "");
+  if (!p) return null;
+  const scp = p.match(/^[^@/]+@[^:/]+:(.+)$/);
+  if (scp) p = scp[1];
+  else {
+    try {
+      p = new URL(p).pathname;
+    } catch {
+    }
+  }
+  const segments = p.split("/").filter(Boolean);
+  if (segments.length === 0) return null;
+  const tail = segments.slice(-2).map((seg) => sanitizeSegment(seg));
+  return tail.join("--");
+}
+var projectCache = /* @__PURE__ */ new Map();
+function resolveProject(config2, cwd = process.cwd()) {
+  const override = config2.remote.project?.trim();
+  if (override) return sanitizeSegment(override);
+  const cached2 = projectCache.get(cwd);
+  if (cached2 !== void 0) return cached2;
+  let project = null;
+  const root = repoInfo(cwd)?.repoRoot ?? cwd;
+  const origin = tryGit(root, ["remote", "get-url", "origin"]);
+  if (origin) project = projectFromOrigin(origin);
+  if (!project) project = sanitizeSegment(path7.basename(root));
+  projectCache.set(cwd, project);
+  return project;
+}
 function defaultWriterId() {
   try {
     const host = os4.hostname().split(".")[0] ?? "";
@@ -32400,9 +32444,9 @@ function defaultWriterId() {
 }
 function resolveHandle(config2) {
   const h = config2.remote.handle?.trim();
-  if (h) return h;
+  if (h) return sanitizeSegment(h, "local");
   try {
-    return os4.userInfo().username;
+    return sanitizeSegment(os4.userInfo().username, "local");
   } catch {
     return "local";
   }
@@ -32440,6 +32484,7 @@ function syncPull(dir) {
   }
   return true;
 }
+var OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal", "log"]);
 function readMarker(dir) {
   const file2 = path7.join(dir, MARKER_FILE);
   let raw;
@@ -32467,6 +32512,11 @@ function validateJournal(dir, opts) {
         reason: `journal layout v${marker.journal} was written by a newer roundhouse \u2014 update the plugin`
       };
     }
+    if (marker.journal < JOURNAL_LAYOUT && opts?.write) {
+      fs7.writeFileSync(path7.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+`);
+      return { ok: true, bootstrapped: true };
+    }
     return { ok: true };
   }
   if (!opts?.write) return { ok: true };
@@ -32476,12 +32526,12 @@ function validateJournal(dir, opts) {
   } catch {
     return { ok: false, reason: `journal dir unreadable: ${dir}` };
   }
-  const foreign = entries.filter((e) => e !== "log");
+  const foreign = entries.filter((e) => !OWNED_ROOT.has(e));
   if (foreign.length > 0 && !opts.adopt) {
     return {
       ok: false,
       needsAdopt: true,
-      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json) and is not empty. If this repo is really where the journal should live, run `roundhouse sync --adopt` once to initialize the journal structure alongside the existing content."
+      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `roundhouse sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
   fs7.writeFileSync(path7.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
@@ -32508,7 +32558,8 @@ function readSyncStatus(dir) {
     return null;
   }
 }
-function syncPush(dir, opts) {
+function syncPush(journal, opts) {
+  const { dir, project, handle } = journal;
   const now = opts?.now ?? Date.now();
   const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
@@ -32522,9 +32573,10 @@ function syncPush(dir, opts) {
     return result;
   };
   try {
-    const own = ["log", MARKER_FILE].filter((p) => fs7.existsSync(path7.join(dir, p)));
+    const ownPaths = [path7.join("journal", project, handle), "log", MARKER_FILE];
+    const own = ownPaths.filter((p) => fs7.existsSync(path7.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
-    let dirty = git3(dir, ["status", "--porcelain", "--", "log", MARKER_FILE]) !== "";
+    let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
       git3(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
     }
@@ -32533,7 +32585,7 @@ function syncPush(dir, opts) {
     if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
     if (validation.bootstrapped) {
       git3(dir, ["add", "--", MARKER_FILE]);
-      git3(dir, ["commit", "-q", "-m", "journal: initialize agent-bus structure"]);
+      git3(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
       dirty = true;
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
@@ -32559,19 +32611,29 @@ function openJournal(options) {
   if (!url2) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url2);
+  const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
   const writerId = options?.writerId ?? defaultWriterId();
-  const logDir = path7.join(dir, "log", handle);
+  const agentId = options?.agentId ?? null;
+  const logDir = path7.join(dir, "journal", project, handle, "log");
   return {
     dir,
+    project,
     handle,
     url: url2,
     writerId,
+    agentId,
     append(type, data) {
       try {
         fs7.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const event = { v: JOURNAL_VERSION, ts: Date.now(), type, data };
+        const event = {
+          v: JOURNAL_VERSION,
+          ts: Date.now(),
+          type,
+          ...agentId ? { agent: agentId } : {},
+          data
+        };
         fs7.appendFileSync(
           path7.join(logDir, `${day}.${writerId}.ndjson`),
           `${JSON.stringify(event)}
@@ -33281,7 +33343,8 @@ function resolveSelf() {
 }
 function pathsReport(agentId, cfg) {
   const info = repoInfo();
-  const journal = cfg.remote.url?.trim() ? readSyncStatus(journalDir()) : null;
+  const enabled = Boolean(cfg.remote.url?.trim());
+  const journal = enabled ? readSyncStatus(journalDir()) : null;
   return {
     cwd: process.cwd(),
     agentId,
@@ -33291,7 +33354,8 @@ function pathsReport(agentId, cfg) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
-    journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : cfg.remote.url ? "never-synced" : "disabled"
+    journalProject: enabled ? resolveProject(cfg) : null,
+    journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : enabled ? "never-synced" : "disabled"
   };
 }
 function runCli(subcommand, argv) {
@@ -33302,12 +33366,12 @@ function runCli(subcommand, argv) {
   }
   const agentId = resolveSelf();
   const store = new Store();
-  const journal = openJournal();
+  const journal = openJournal({ agentId });
   if (journal) store.setJournal(journal.append);
   try {
     if (subcommand === "publish") {
       runPublish(store, { agentId, cwd: process.cwd() });
-      if (journal) syncPush(journal.dir);
+      if (journal) syncPush(journal);
       return 0;
     }
     if (subcommand === "board") {
@@ -33361,7 +33425,7 @@ async function main() {
   }
   const agentId = resolveSelf();
   const store = new Store();
-  const journal = openJournal();
+  const journal = openJournal({ agentId });
   if (journal) store.setJournal(journal.append);
   store.registerAgent({ id: agentId, cwd: process.cwd(), pid: process.pid });
   const server = buildServer(store, agentId);
