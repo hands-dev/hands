@@ -16,7 +16,8 @@
  */
 import { loadConfig } from "./config.js";
 import { resolveAgentId } from "./identity.js";
-import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
+import { dbPath } from "./paths.js";
+import { pathsReport } from "./server.js";
 import {
   addWorkers,
   type LaunchPlan,
@@ -29,7 +30,6 @@ import {
   ensureRepo,
   journalDir,
   readEvents,
-  readSyncStatus,
   replayInto,
   resolveHandle,
   syncPull,
@@ -151,30 +151,8 @@ function cmdSync(argv: string[]): void {
 
 function cmdPaths(): void {
   const cfg = loadConfig();
-  const info = repoInfo();
   const agentId = resolveAgentId({ foremanBasename: cfg.foreman.basename });
-  const journal = cfg.remote.url?.trim() ? readSyncStatus(journalDir()) : null;
-  out(
-    JSON.stringify(
-      {
-        cwd: process.cwd(),
-        agentId,
-        repoRoot: info?.repoRoot ?? null,
-        isMainWorktree: info?.isMainWorktree ?? null,
-        slug: info?.slug ?? "_global",
-        coordinationDir: coordinationDir(),
-        db: dbPath(),
-        notify: notifyPath(agentId),
-        journalSync: journal
-          ? { ...journal, at: new Date(journal.at).toISOString() }
-          : cfg.remote.url
-            ? "never-synced"
-            : "disabled",
-      },
-      null,
-      2,
-    ),
-  );
+  out(JSON.stringify(pathsReport(agentId, cfg), null, 2));
 }
 
 async function main(): Promise<void> {

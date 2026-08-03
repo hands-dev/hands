@@ -14,6 +14,8 @@
  * is: the model calls `agent_bus_receive` at natural checkpoints (optionally a
  * parked long-poll), or a Monitor tails the per-agent `.notify` file. See README.
  */
+import * as fs from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -25,7 +27,7 @@ import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
-import { openJournal, syncPush } from "./remote.js";
+import { journalDir, openJournal, readSyncStatus, syncPush } from "./remote.js";
 import { type MessageRow, Store } from "./store.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
@@ -343,6 +345,23 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
           stale: confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS,
         },
       });
+    },
+  );
+
+  server.registerTool(
+    "agent_bus_paths",
+    {
+      title: "Where does this agent resolve? (paths + identity + journal health)",
+      description:
+        "Your canonical identity and this repo's bus locations: agentId, coordinationDir, db, your " +
+        ".notify file (arm your Monitor on it), repo root/slug, and the durable-journal sync health. " +
+        "The bus is scoped per repo — always read paths from here, never guess them.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async () => {
+      store.touch(agentId);
+      return asToolResult(pathsReport(agentId, cfg));
     },
   );
 
@@ -745,6 +764,35 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
   );
 
+  // --- foreman-only: team-awareness GitHub poll ---
+  if (agentId === "foreman") {
+    server.registerTool(
+      "agent_bus_gh_poll",
+      {
+        title: "Poll GitHub for other engineers' PRs (foreman only)",
+        description:
+          "Record what OTHER engineers are shipping (open + recently-merged PRs on this repo, " +
+          "excluding the principal's) for the dashboard team lane and per-worker relevance matching. " +
+          "Network call — run once every few passes, not every tick" +
+          (cfg.gh.poll ? "." : ". NOTE: gh.poll is disabled in this repo's config — skip it."),
+        inputSchema: {},
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+      },
+      async () => {
+        store.touch(agentId);
+        const r = pollGithub(store, { cwd: process.cwd() });
+        if (!r.ok) return asToolResult({ ok: false, error: r.error }); // best-effort, not isError
+        return asToolResult({
+          ok: true,
+          repo: r.repo,
+          fromOthers: r.fromOthers,
+          new: r.new,
+          updated: r.updated,
+        });
+      },
+    );
+  }
+
   // --- foreman-directed scaling (spins up/retires local worker sessions) ---
   // Registered ONLY for the foreman, and only when the config opts in — these
   // launch local processes, so they're off unless explicitly enabled.
@@ -840,27 +888,35 @@ function resolveSelf(): string {
   return resolveAgentId({ foremanBasename: loadConfig().foreman.basename });
 }
 
+/**
+ * Where does this process resolve? Shared by the `paths` CLI subcommand, the
+ * `agent-bus paths` CLI, and the agent_bus_paths MCP tool — the one authority
+ * agents consult instead of guessing per-repo paths.
+ */
+export function pathsReport(agentId: string, cfg: AgentBusConfig) {
+  const info = repoInfo();
+  const journal = cfg.remote.url?.trim() ? readSyncStatus(journalDir()) : null;
+  return {
+    cwd: process.cwd(),
+    agentId,
+    repoRoot: info?.repoRoot ?? null,
+    isMainWorktree: info?.isMainWorktree ?? null,
+    slug: info?.slug ?? "_global",
+    coordinationDir: coordinationDir(),
+    db: dbPath(),
+    notify: notifyPath(agentId),
+    journalSync: journal
+      ? { ...journal, at: new Date(journal.at).toISOString() }
+      : cfg.remote.url
+        ? "never-synced"
+        : "disabled",
+  };
+}
+
 function runCli(subcommand: string, argv: string[]): number {
   if (subcommand === "paths") {
     // Debug: where does this cwd resolve? (isolation check — no DB touch)
-    const info = repoInfo();
-    const agentId = resolveSelf();
-    process.stdout.write(
-      `${JSON.stringify(
-        {
-          cwd: process.cwd(),
-          agentId,
-          repoRoot: info?.repoRoot ?? null,
-          isMainWorktree: info?.isMainWorktree ?? null,
-          slug: info?.slug ?? "_global",
-          coordinationDir: coordinationDir(),
-          db: dbPath(),
-          notify: notifyPath(agentId),
-        },
-        null,
-        2,
-      )}\n`,
-    );
+    process.stdout.write(`${JSON.stringify(pathsReport(resolveSelf(), loadConfig()), null, 2)}\n`);
     return 0;
   }
   const agentId = resolveSelf();
@@ -933,9 +989,20 @@ async function main(): Promise<void> {
   await server.connect(new StdioServerTransport());
 }
 
-// Only run when executed directly (not when imported by tests).
-const invokedDirectly =
-  process.argv[1] !== undefined && import.meta.url === `file://${process.argv[1]}`;
+// Only run when executed directly (not when imported by tests). Compare as
+// URLs with realpath'd sides — a raw string compare breaks on spaces
+// (percent-encoding) and symlinks, both possible in plugin install paths.
+const invokedDirectly = (() => {
+  const argv1 = process.argv[1];
+  if (argv1 === undefined) return false;
+  try {
+    const entry = pathToFileURL(fs.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs.realpathSync(fileURLToPath(import.meta.url))).href;
+    return entry === self;
+  } catch {
+    return import.meta.url === pathToFileURL(argv1).href;
+  }
+})();
 if (invokedDirectly) {
   main().catch((err) => {
     // stderr is safe — stdout is the MCP protocol channel.

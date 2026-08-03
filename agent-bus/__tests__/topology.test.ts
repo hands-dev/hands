@@ -133,3 +133,24 @@ describe("open topology (opt-out)", () => {
     expect(del.isError).toBe(false);
   });
 });
+
+describe("paths + gh-poll tools", () => {
+  it("agent_bus_paths is available to every agent and reports identity", async () => {
+    const w1 = await connect("worker-1");
+    const res = await call(w1, "agent_bus_paths", {});
+    expect(res.isError).toBe(false);
+    expect(res.body.agentId).toBe("worker-1");
+    expect(res.body.journalSync).toBe("disabled"); // no remote configured
+    expect(String(res.body.notify)).toContain("worker-1.notify");
+  });
+
+  it("agent_bus_gh_poll registers for the foreman only", async () => {
+    const foreman = await connect("foreman");
+    const w1 = await connect("worker-1");
+    const foremanTools = (await foreman.listTools()).tools.map((t) => t.name);
+    const workerTools = (await w1.listTools()).tools.map((t) => t.name);
+    expect(foremanTools).toContain("agent_bus_gh_poll");
+    expect(workerTools).not.toContain("agent_bus_gh_poll");
+    expect(workerTools).toContain("agent_bus_paths");
+  });
+});
