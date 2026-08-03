@@ -276,6 +276,7 @@ export function dashboardHtml(principal: string): string {
       '<div class="wtop">'+
         '<span class="dot" style="background:'+dotColor(w.state)+'"></span>'+
         '<span class="nm mono">'+esc(w.id)+'</span>'+
+        (w.focus?badge('badge-outline', esc(w.focus)):'')+
         '<span class="st">'+w.state+' '+age(s.now,w.lastActive)+'</span>'+
       '</div>'+
       taskHtml+

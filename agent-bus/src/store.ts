@@ -29,6 +29,8 @@ export interface AgentRow {
   state: string | null;
   /** last turn-end heartbeat (Stop hook); drives the worker idle-gate */
   last_active: number | null;
+  /** the station's evolving specialization label ("developer API") — not part of its id */
+  focus: string | null;
 }
 
 export interface JournalRow {
@@ -334,6 +336,7 @@ export class Store {
     this.ensureColumn("agents", "activity", "TEXT");
     this.ensureColumn("agents", "state", "TEXT");
     this.ensureColumn("agents", "last_active", "INTEGER");
+    this.ensureColumn("agents", "focus", "TEXT");
 
     // Foreman self-audit: hindsight verdict on each recommendation.
     this.ensureColumn("questions", "outcome", "TEXT");
@@ -404,6 +407,34 @@ export class Store {
     this.withRetry(() =>
       this.db.prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?").run(now, agentId),
     );
+  }
+
+  /**
+   * Set a station's focus — its evolving specialization label. The id stays
+   * the routing key (the persona-layer lesson); the label rides along, shows
+   * on the board/digests, and is addressable as a convenience lookup. Upserts
+   * so a focus can be assigned before the station's first turn.
+   */
+  setFocus(agentId: string, focus: string | null, now: number = Date.now()): void {
+    this.withRetry(() =>
+      this.db
+        .prepare(
+          `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, focus)
+           VALUES (?, '', 0, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET focus = excluded.focus`,
+        )
+        .run(agentId, now, now, focus),
+    );
+    this.journal("focus.set", { station: agentId, focus, at: now });
+  }
+
+  /** Agent ids whose focus label matches (case-insensitive) — label addressing. */
+  findByFocus(label: string): string[] {
+    return (
+      this.db
+        .prepare("SELECT id FROM agents WHERE focus IS NOT NULL AND lower(focus) = lower(?) ORDER BY id")
+        .all(label.trim()) as unknown as Array<{ id: string }>
+    ).map((r) => r.id);
   }
 
   /** Enqueue a message; returns its autoincrement id. */
@@ -1236,6 +1267,17 @@ export class Store {
               at,
               at,
             ),
+        );
+        return true;
+      case "focus.set":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, focus)
+               VALUES (?, '', 0, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET focus = excluded.focus`,
+            )
+            .run(f("station"), at, at, f("focus")),
         );
         return true;
       case "todo.update":

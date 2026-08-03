@@ -19,6 +19,8 @@ export interface SnapshotAgent {
   /** real .notify wakes delivered to this agent in the trailing hour / 24h */
   wakesLastHour: number;
   wakes24h: number;
+  /** the station's evolving specialization label */
+  focus: string | null;
 }
 
 export interface SnapshotMessage {
@@ -159,6 +161,7 @@ export function buildSnapshot(
       lastSeen: p.last_seen_at,
       wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
       wakes24h: wakes.get(p.id)?.last24h ?? 0,
+      focus: p.focus,
     };
   });
 

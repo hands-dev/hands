@@ -58,6 +58,22 @@ function presentMessage(row: MessageRow) {
 export function buildServer(store: Store, agentId: string, config?: AgentBusConfig): McpServer {
   const cfg = config ?? loadConfig();
   const principal = cfg.principal.name;
+  // Resolve a recipient ref: canonical/legacy ids pass through; anything else
+  // tries the focus-label lookup ("developer API" → station-2). Label matches
+  // are a live-lookup convenience — ids remain the only durable routing keys.
+  const resolveRecipient = (ref: string): { id: string } | { error: string } => {
+    const id = resolveAgentRef(ref);
+    if (id === "*" || isExpo(id) || isStation(id)) return { id };
+    const peers = new Set(store.listPeers().map((p) => p.id));
+    if (peers.has(id)) return { id };
+    const byFocus = store.findByFocus(id);
+    if (byFocus.length === 1) return { id: byFocus[0]! };
+    if (byFocus.length > 1) {
+      return { error: `focus label "${ref}" is ambiguous — matches: ${byFocus.join(", ")}` };
+    }
+    return { id }; // unknown ref (e.g. the principal) — passes through as before
+  };
+
   // Deliver a real wake: append .notify lines AND log them (wake accounting).
   // Every actual wake goes through here so wakesLastHour on the board stays true.
   const deliverWake = (recipients: readonly string[], meta: { from: string; subject?: string | null }) => {
@@ -114,7 +130,11 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
     },
     async (input) => {
       store.touch(agentId);
-      const to = resolveAgentRef(input.to);
+      const resolved = resolveRecipient(input.to);
+      if ("error" in resolved) {
+        return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
+      }
+      const to = resolved.id;
       const broadcast = to === "*";
       // Strict hub-and-spoke: a station may only address the expo or the
       // principal. Rejected BEFORE any DB write or notify — a blocked send
@@ -227,6 +247,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       store.touch(agentId);
       const peers = store.listPeers().map((p) => ({
         id: p.id,
+        focus: p.focus ?? undefined,
         online: p.online,
         cwd: p.cwd,
         pid: p.pid,
@@ -288,6 +309,7 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
         const activeAge = p.last_active ? now - p.last_active : null;
         return {
           id: p.id,
+          focus: p.focus ?? undefined,
           isSelf: p.id === agentId,
           online: p.online,
           branch: p.branch ?? undefined,
@@ -579,7 +601,14 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
           isError: true,
         };
       }
-      const assignee = input.to ? resolveAgentRef(input.to) : null;
+      let assignee: string | null = null;
+      if (input.to) {
+        const resolved = resolveRecipient(input.to);
+        if ("error" in resolved) {
+          return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
+        }
+        assignee = resolved.id;
+      }
       const id = store.createTask({
         createdBy: agentId,
         assignee,
@@ -761,6 +790,41 @@ export function buildServer(store: Store, agentId: string, config?: AgentBusConf
       if (!todo) return { ...asToolResult({ ok: false, error: "no such todo" }), isError: true };
       store.updateTodoState({ id: input.id, state: input.state, doneSignal: input.doneSignal ?? null });
       return asToolResult({ ok: true, id: input.id, state: input.state });
+    },
+  );
+
+  server.registerTool(
+    "agent_bus_focus",
+    {
+      title: "Set a station's focus (its evolving specialization)",
+      description:
+        'Label a station with its current specialization ("developer API", "billing") — shown on ' +
+        "the board and in the books, and addressable in agent_bus_send/delegate as a convenience " +
+        "(the station-<n> id stays the durable key). A station may set its own focus; the expo may " +
+        "set anyone's. Pass focus: null to clear.",
+      inputSchema: {
+        station: z.string().optional().describe("target station id (default: yourself)"),
+        focus: z.string().min(1).max(80).nullable(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      store.touch(agentId);
+      const target = input.station ? resolveAgentRef(input.station) : agentId;
+      if (target !== agentId && !isExpo(agentId)) {
+        return {
+          ...asToolResult({ ok: false, error: "only the expo may set another agent's focus" }),
+          isError: true,
+        };
+      }
+      if (!isStation(target) && !isExpo(target)) {
+        return {
+          ...asToolResult({ ok: false, error: `not a station id: ${target}` }),
+          isError: true,
+        };
+      }
+      store.setFocus(target, input.focus);
+      return asToolResult({ ok: true, station: target, focus: input.focus });
     },
   );
 

@@ -154,3 +154,49 @@ describe("paths + gh-poll tools", () => {
     expect(workerTools).toContain("agent_bus_paths");
   });
 });
+
+describe("focus labels", () => {
+  it("a station sets its own focus; only the expo sets others'", async () => {
+    const w1 = await connect("station-1");
+    const own = await call(w1, "agent_bus_focus", { focus: "developer API" });
+    expect(own.isError).toBe(false);
+    const other = await call(w1, "agent_bus_focus", { station: "station-2", focus: "billing" });
+    expect(other.isError).toBe(true);
+    const expo = await connect("expo");
+    const assigned = await call(expo, "agent_bus_focus", { station: "station-2", focus: "billing" });
+    expect(assigned.isError).toBe(false);
+    const peers = await call(expo, "agent_bus_peers", {});
+    const byId = Object.fromEntries((peers.body.peers as Array<{ id: string; focus?: string }>).map((p) => [p.id, p.focus]));
+    expect(byId["station-1"]).toBe("developer API");
+    expect(byId["station-2"]).toBe("billing");
+  });
+
+  it("send resolves a unique focus label to its station; ambiguity errors", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
+    stores[0]!.setFocus("station-2", "developer API");
+    const byLabel = await call(expo, "agent_bus_send", { to: "developer API", body: "rotate keys" });
+    expect(byLabel.isError).toBe(false);
+    expect(byLabel.body.to).toBe("station-2");
+    expect(notifyLines("station-2")).toHaveLength(1);
+
+    stores[0]!.setFocus("station-1", "developer API");
+    const ambiguous = await call(expo, "agent_bus_send", { to: "developer API", body: "x" });
+    expect(ambiguous.isError).toBe(true);
+    expect(String(ambiguous.body.error)).toContain("ambiguous");
+  });
+
+  it("focus journals as focus.set and replays into a fresh store", async () => {
+    const store = stores[0] ?? new Store({ env });
+    if (!stores.includes(store)) stores.push(store);
+    const events: Array<{ type: string; data: Record<string, unknown> }> = [];
+    store.setJournal((type, data) => events.push({ type, data }));
+    store.setFocus("station-3", "infra");
+    expect(events).toEqual([{ type: "focus.set", data: expect.objectContaining({ station: "station-3", focus: "infra" }) }]);
+    const fresh = new Store({ env, path: ":memory:" });
+    expect(fresh.applyEvent("focus.set", events[0]!.data)).toBe(true);
+    expect(fresh.listPeers().find((p) => p.id === "station-3")?.focus).toBe("infra");
+    fresh.close();
+  });
+});

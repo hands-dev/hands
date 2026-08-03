@@ -7304,6 +7304,7 @@ var init_store = __esm({
         this.ensureColumn("agents", "activity", "TEXT");
         this.ensureColumn("agents", "state", "TEXT");
         this.ensureColumn("agents", "last_active", "INTEGER");
+        this.ensureColumn("agents", "focus", "TEXT");
         this.ensureColumn("questions", "outcome", "TEXT");
         this.ensureColumn("questions", "outcome_note", "TEXT");
         this.ensureColumn("questions", "outcome_at", "INTEGER");
@@ -7363,6 +7364,26 @@ var init_store = __esm({
         this.withRetry(
           () => this.db.prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?").run(now, agentId)
         );
+      }
+      /**
+       * Set a station's focus — its evolving specialization label. The id stays
+       * the routing key (the persona-layer lesson); the label rides along, shows
+       * on the board/digests, and is addressable as a convenience lookup. Upserts
+       * so a focus can be assigned before the station's first turn.
+       */
+      setFocus(agentId, focus, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare(
+            `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, focus)
+           VALUES (?, '', 0, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET focus = excluded.focus`
+          ).run(agentId, now, now, focus)
+        );
+        this.journal("focus.set", { station: agentId, focus, at: now });
+      }
+      /** Agent ids whose focus label matches (case-insensitive) — label addressing. */
+      findByFocus(label) {
+        return this.db.prepare("SELECT id FROM agents WHERE focus IS NOT NULL AND lower(focus) = lower(?) ORDER BY id").all(label.trim()).map((r) => r.id);
       }
       /** Enqueue a message; returns its autoincrement id. */
       insertMessage(input) {
@@ -7994,6 +8015,15 @@ var init_store = __esm({
               )
             );
             return true;
+          case "focus.set":
+            this.withRetry(
+              () => this.db.prepare(
+                `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, focus)
+               VALUES (?, '', 0, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET focus = excluded.focus`
+              ).run(f("station"), at, at, f("focus"))
+            );
+            return true;
           case "todo.update":
             this.withRetry(
               () => this.db.prepare(
@@ -8020,7 +8050,7 @@ function computeStateHash(store, now = Date.now()) {
   const peers = store.listPeers(now).map((p) => {
     const activeAge = p.last_active ? now - p.last_active : null;
     const state = !p.online ? "offline" : activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
-    return `${p.id}|${state}|${p.branch ?? ""}`;
+    return `${p.id}|${state}|${p.branch ?? ""}|${p.focus ?? ""}`;
   });
   const tasks = store.listTasks({ active: true }).map((t) => `${t.id}|${t.assignee ?? ""}|${t.state}`).sort();
   return createHash2("sha1").update([...peers, ...tasks].join("\n")).digest("hex").slice(0, 12);
@@ -8136,7 +8166,7 @@ function buildBoard(store, opts) {
 function peerLabel(p, now) {
   const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
   const where = p.branch ?? "?";
-  const who = p.id;
+  const who = p.focus ? `${p.id}\xB7${p.focus}` : p.id;
   if (!p.online) return `${who}\xB7offline`;
   if (activeAge > IDLE_THRESHOLD_MS) return `${who}\xB7idle ${fmtAge(activeAge)}\xB7${where}`;
   return `${who}\xB7${where}`;
@@ -8682,6 +8712,7 @@ function dashboardHtml(principal) {
       '<div class="wtop">'+
         '<span class="dot" style="background:'+dotColor(w.state)+'"></span>'+
         '<span class="nm mono">'+esc(w.id)+'</span>'+
+        (w.focus?badge('badge-outline', esc(w.focus)):'')+
         '<span class="st">'+w.state+' '+age(s.now,w.lastActive)+'</span>'+
       '</div>'+
       taskHtml+
@@ -8829,7 +8860,8 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       lastActive: p.last_active,
       lastSeen: p.last_seen_at,
       wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
-      wakes24h: wakes.get(p.id)?.last24h ?? 0
+      wakes24h: wakes.get(p.id)?.last24h ?? 0,
+      focus: p.focus
     };
   });
   const collisions = [];
@@ -32632,9 +32664,9 @@ function oneLine(text) {
   return points.length <= RESULT_MAX ? flat : `${points.slice(0, RESULT_MAX - 1).join("")}\u2026`;
 }
 function agentRank(agent) {
-  if (agent === "foreman") return [0, 0, agent];
-  const worker = agent.match(/^worker-(\d+)$/);
-  if (worker) return [1, Number.parseInt(worker[1], 10), agent];
+  if (agent === "expo" || agent === "foreman") return [0, 0, agent];
+  const station = agent.match(/^(?:station|worker)-(\d+)$/);
+  if (station) return [1, Number.parseInt(station[1], 10), agent];
   if (agent === "unattributed") return [3, 0, agent];
   return [2, 0, agent];
 }
@@ -32665,6 +32697,8 @@ function describe3(event) {
       return `- ${t} todo #${d.id} added: ${oneLine(d.title)}`;
     case "todo.update":
       return `- ${t} todo #${d.id} \u2192 ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
+    case "focus.set":
+      return `- ${t} focus \u2192 ${oneLine(d.focus) || "(cleared)"}`;
     case "priorities.set": {
       const items = Array.isArray(d.items) ? d.items : [];
       const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
@@ -32676,6 +32710,15 @@ function describe3(event) {
 }
 function renderDigest(events, opts) {
   const day = events.filter((e) => dayOf(e.ts) === opts.date);
+  const focusAsOf = /* @__PURE__ */ new Map();
+  for (const e of events) {
+    if (e.type !== "focus.set" || dayOf(e.ts) > opts.date) continue;
+    const station = String(e.data.station ?? "");
+    const focus = e.data.focus;
+    if (!station) continue;
+    if (typeof focus === "string" && focus.trim()) focusAsOf.set(station, focus.trim());
+    else focusAsOf.delete(station);
+  }
   const byAgent = /* @__PURE__ */ new Map();
   const notes = [];
   let messages = 0;
@@ -32692,9 +32735,10 @@ function renderDigest(events, opts) {
       continue;
     }
     if (event.type === "cursor") continue;
-    const bucket = byAgent.get(agent);
+    const owner = event.type === "focus.set" ? String(event.data.station ?? agent) : agent;
+    const bucket = byAgent.get(owner);
     if (bucket) bucket.push(event);
-    else byAgent.set(agent, [event]);
+    else byAgent.set(owner, [event]);
   }
   const lines = [STAMP, `# ${opts.date} \xB7 ${opts.handle} \xB7 ${opts.project}`, ""];
   if (notes.length > 0) {
@@ -32708,7 +32752,8 @@ function renderDigest(events, opts) {
     const items = (byAgent.get(agent) ?? []).map(describe3).filter((line) => line !== null);
     const sent = messagesByAgent.get(agent) ?? 0;
     if (items.length === 0 && sent === 0) continue;
-    lines.push(`## ${agent}`);
+    const label = focusAsOf.get(agent);
+    lines.push(label ? `## ${agent} \xB7 ${label}` : `## ${agent}`);
     lines.push(...items);
     if (sent > 0) lines.push(`- messages sent: ${sent}`);
     lines.push("");
@@ -33167,6 +33212,18 @@ function presentMessage(row) {
 function buildServer(store, agentId, config2) {
   const cfg = config2 ?? loadConfig();
   const principal = cfg.principal.name;
+  const resolveRecipient = (ref) => {
+    const id = resolveAgentRef(ref);
+    if (id === "*" || isExpo(id) || isStation(id)) return { id };
+    const peers = new Set(store.listPeers().map((p) => p.id));
+    if (peers.has(id)) return { id };
+    const byFocus = store.findByFocus(id);
+    if (byFocus.length === 1) return { id: byFocus[0] };
+    if (byFocus.length > 1) {
+      return { error: `focus label "${ref}" is ambiguous \u2014 matches: ${byFocus.join(", ")}` };
+    }
+    return { id };
+  };
   const deliverWake = (recipients, meta3) => {
     notify(recipients, meta3);
     store.recordWakes(recipients);
@@ -33194,7 +33251,11 @@ function buildServer(store, agentId, config2) {
     },
     async (input) => {
       store.touch(agentId);
-      const to = resolveAgentRef(input.to);
+      const resolved = resolveRecipient(input.to);
+      if ("error" in resolved) {
+        return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
+      }
+      const to = resolved.id;
       const broadcast = to === "*";
       if (cfg.topology === "strict-hub" && isStation(agentId)) {
         if (broadcast) {
@@ -33283,6 +33344,7 @@ function buildServer(store, agentId, config2) {
       store.touch(agentId);
       const peers = store.listPeers().map((p) => ({
         id: p.id,
+        focus: p.focus ?? void 0,
         online: p.online,
         cwd: p.cwd,
         pid: p.pid,
@@ -33332,6 +33394,7 @@ function buildServer(store, agentId, config2) {
         const activeAge = p2.last_active ? now - p2.last_active : null;
         return {
           id: p2.id,
+          focus: p2.focus ?? void 0,
           isSelf: p2.id === agentId,
           online: p2.online,
           branch: p2.branch ?? void 0,
@@ -33579,7 +33642,14 @@ function buildServer(store, agentId, config2) {
           isError: true
         };
       }
-      const assignee = input.to ? resolveAgentRef(input.to) : null;
+      let assignee = null;
+      if (input.to) {
+        const resolved = resolveRecipient(input.to);
+        if ("error" in resolved) {
+          return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
+        }
+        assignee = resolved.id;
+      }
       const id = store.createTask({
         createdBy: agentId,
         assignee,
@@ -33736,6 +33806,36 @@ function buildServer(store, agentId, config2) {
       if (!todo) return { ...asToolResult({ ok: false, error: "no such todo" }), isError: true };
       store.updateTodoState({ id: input.id, state: input.state, doneSignal: input.doneSignal ?? null });
       return asToolResult({ ok: true, id: input.id, state: input.state });
+    }
+  );
+  server.registerTool(
+    "agent_bus_focus",
+    {
+      title: "Set a station's focus (its evolving specialization)",
+      description: `Label a station with its current specialization ("developer API", "billing") \u2014 shown on the board and in the books, and addressable in agent_bus_send/delegate as a convenience (the station-<n> id stays the durable key). A station may set its own focus; the expo may set anyone's. Pass focus: null to clear.`,
+      inputSchema: {
+        station: external_exports3.string().optional().describe("target station id (default: yourself)"),
+        focus: external_exports3.string().min(1).max(80).nullable()
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      const target = input.station ? resolveAgentRef(input.station) : agentId;
+      if (target !== agentId && !isExpo(agentId)) {
+        return {
+          ...asToolResult({ ok: false, error: "only the expo may set another agent's focus" }),
+          isError: true
+        };
+      }
+      if (!isStation(target) && !isExpo(target)) {
+        return {
+          ...asToolResult({ ok: false, error: `not a station id: ${target}` }),
+          isError: true
+        };
+      }
+      store.setFocus(target, input.focus);
+      return asToolResult({ ok: true, station: target, focus: input.focus });
     }
   );
   if (isExpo(agentId)) {
