@@ -19,7 +19,7 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 
 ```
 /plugin marketplace add heymichaelp/roundhouse
-/plugin install roundhouse@roundhouse
+/plugin install rh@roundhouse
 ```
 
 ## Step 2 — Clone the project + configure
@@ -52,7 +52,7 @@ mkdir -p "$MEM" && cp memory/*.md "$MEM/"
 
 ## Step 5 — Run
 
-- Main checkout: `/roundhouse:foreman` (or `/loop /roundhouse:foreman`).
+- Main checkout: `/rh:foreman` (or `/loop /rh:foreman`).
 - Workers: `roundhouse worker add -n <N>` — no `git worktree` commands, ever.
 - Dashboard: `roundhouse serve` → http://localhost:4319
 

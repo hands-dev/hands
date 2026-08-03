@@ -8191,7 +8191,7 @@ function branchExists(cwd, branch) {
   }
 }
 function launchCommand(worker) {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /roundhouse:worker")}`;
+  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /rh:worker")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
@@ -9109,7 +9109,7 @@ async function runInit(argv) {
     }
     out("");
     out("Done. Next steps:");
-    out("  1. main checkout: /roundhouse:foreman   (or /loop /roundhouse:foreman)");
+    out("  1. main checkout: /rh:foreman   (or /loop /rh:foreman)");
     out("  2. add workers:   roundhouse worker add -n 2");
     out("  3. dashboard:     roundhouse serve   \u2192 http://localhost:4319");
     out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");

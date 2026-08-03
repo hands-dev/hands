@@ -11,11 +11,11 @@ Distributed as a **Claude Code plugin** (this repo is its own marketplace).
 
 ```
 /plugin marketplace add heymichaelp/roundhouse
-/plugin install roundhouse@roundhouse
+/plugin install rh@roundhouse
 ```
 
 That registers everything: the MCP server (`agent_bus_*` tools), the two passive-standup hooks
-(`Stop → publish`, `UserPromptSubmit → board`), the `/roundhouse:foreman` + `/roundhouse:worker`
+(`Stop → publish`, `UserPromptSubmit → board`), the `/rh:foreman` + `/rh:worker`
 skills, and the `roundhouse` CLI on your Bash PATH. Requires Node ≥ 22.5 on PATH (`node:sqlite`).
 
 Then, per repo (from its main checkout):
@@ -27,7 +27,7 @@ roundhouse init        # scaffolds agent-bus.config.json; cleans up any pre-plug
 ## Run it
 
 ```bash
-/roundhouse:foreman            # main checkout — or /loop /roundhouse:foreman for always-on
+/rh:foreman            # main checkout — or /loop /rh:foreman for always-on
 roundhouse worker add -n 3     # provision + launch 3 workers (tmux/iTerm/paste-command)
 roundhouse serve               # live dashboard → http://localhost:4319
 ```
