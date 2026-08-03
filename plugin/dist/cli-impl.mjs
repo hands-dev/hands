@@ -3396,8 +3396,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path12) {
-      let input = path12;
+    function removeDotSegments(path13) {
+      let input = path13;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3649,8 +3649,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path12, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path12 && path12 !== "/" ? path12 : void 0;
+        const [path13, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path13 && path13 !== "/" ? path13 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7049,12 +7049,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs12, exportName) {
+    function addFormats(ajv, list, fs13, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs12[f]);
+        ajv.addFormat(f, fs13[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8136,9 +8136,9 @@ __export(provision_exports, {
   workerRoot: () => workerRoot
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
-import * as fs8 from "node:fs";
+import * as fs9 from "node:fs";
 import * as os5 from "node:os";
-import * as path8 from "node:path";
+import * as path9 from "node:path";
 function git4(cwd, args) {
   return execFileSync5("git", args, {
     cwd,
@@ -8155,7 +8155,7 @@ function requireRepo(cwd) {
 function workerRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.workers.worktreeRoot) return cfg.workers.worktreeRoot;
-  return path8.join(os5.homedir(), ".agent-bus", "worktrees", requireRepo(cwd).slug);
+  return path9.join(os5.homedir(), ".agent-bus", "worktrees", requireRepo(cwd).slug);
 }
 function workerBranch(index) {
   return `agent-bus/worker-${index}`;
@@ -8164,7 +8164,7 @@ function listWorkers(cwd = process.cwd(), config2) {
   const root = workerRoot(cwd, config2);
   let names = [];
   try {
-    names = fs8.readdirSync(root);
+    names = fs9.readdirSync(root);
   } catch {
     return [];
   }
@@ -8176,7 +8176,7 @@ function listWorkers(cwd = process.cwd(), config2) {
     workers.push({
       id: name,
       index,
-      dir: path8.join(root, name),
+      dir: path9.join(root, name),
       branch: workerBranch(index),
       present: true
     });
@@ -8248,14 +8248,14 @@ function addWorkers(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = workerRoot(cwd, cfg);
-  fs8.mkdirSync(root, { recursive: true });
+  fs9.mkdirSync(root, { recursive: true });
   const taken = new Set(listWorkers(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `worker-${index}`;
-    const dir = path8.join(root, id);
+    const dir = path9.join(root, id);
     const branch = workerBranch(index);
     const base = cfg.workers.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -8284,7 +8284,7 @@ function removeWorker(id, opts) {
   const m = id.match(/^worker-(\d+)$/);
   if (!m) throw new ProvisionError(`not a worker id: ${id} (expected worker-<n>)`);
   const info = requireRepo(cwd);
-  const dir = path8.join(workerRoot(cwd, cfg), id);
+  const dir = path9.join(workerRoot(cwd, cfg), id);
   try {
     execFileSync5("pkill", ["-f", `tail -F -n0 .*${id}\\.notify`], { stdio: "ignore", timeout: 5e3 });
   } catch {
@@ -8294,7 +8294,7 @@ function removeWorker(id, opts) {
   } catch {
   }
   let removed = false;
-  if (fs8.existsSync(dir)) {
+  if (fs9.existsSync(dir)) {
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
     try {
@@ -8720,7 +8720,7 @@ var init_dashboard = __esm({
 });
 
 // src/snapshot.ts
-import * as path9 from "node:path";
+import * as path10 from "node:path";
 function activity(raw) {
   if (!raw) return { files: [], ticket: null };
   try {
@@ -8760,7 +8760,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       const b = online[j];
       const shared = a.files.find((f) => b.files.includes(f));
       if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path9.basename(shared) });
+        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path10.basename(shared) });
       } else if (a.ticket && a.ticket === b.ticket) {
         collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
       }
@@ -8939,9 +8939,9 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs10 from "node:fs";
+import * as fs11 from "node:fs";
 import * as os6 from "node:os";
-import * as path10 from "node:path";
+import * as path11 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, migrate: null, principal: null, journalUrl: null };
@@ -8963,15 +8963,15 @@ function out(line) {
 }
 function readJsonFile(file2) {
   try {
-    return JSON.parse(fs10.readFileSync(file2, "utf8"));
+    return JSON.parse(fs11.readFileSync(file2, "utf8"));
   } catch {
     return {};
   }
 }
 function writeJsonWithBackup(file2, value) {
-  fs10.mkdirSync(path10.dirname(file2), { recursive: true });
-  if (fs10.existsSync(file2)) fs10.copyFileSync(file2, `${file2}.agent-bus.bak`);
-  fs10.writeFileSync(file2, `${JSON.stringify(value, null, 2)}
+  fs11.mkdirSync(path11.dirname(file2), { recursive: true });
+  if (fs11.existsSync(file2)) fs11.copyFileSync(file2, `${file2}.agent-bus.bak`);
+  fs11.writeFileSync(file2, `${JSON.stringify(value, null, 2)}
 `);
 }
 function removeHooks(settings, signature) {
@@ -8994,7 +8994,7 @@ function removeHooks(settings, signature) {
 function legacyCoordinationFiles(dir) {
   let names = [];
   try {
-    names = fs10.readdirSync(dir);
+    names = fs11.readdirSync(dir);
   } catch {
     return [];
   }
@@ -9023,8 +9023,8 @@ async function runInit(argv) {
     if (!info) {
       out("\u26A0 not inside a git repo \u2014 skipped agent-bus.config.json (run init from your repo's main checkout)");
     } else {
-      const configPath = path10.join(info.repoRoot, "agent-bus.config.json");
-      if (fs10.existsSync(configPath)) {
+      const configPath = path11.join(info.repoRoot, "agent-bus.config.json");
+      if (fs11.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
       } else {
         const principal = flags.principal ?? await ask("Who is the principal (the human the foreman reports to)?", "Michael");
@@ -9048,21 +9048,21 @@ async function runInit(argv) {
           const handle = await ask("Journal handle (your fleet's namespace)?", os6.userInfo().username);
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs10.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs11.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
     }
-    const claudeJsonPath = path10.join(home, ".claude.json");
+    const claudeJsonPath = path11.join(home, ".claude.json");
     const claudeJson = readJsonFile(claudeJsonPath);
     const mcpServers = claudeJson.mcpServers;
     const oldMcp = mcpServers?.["agent-bus"] !== void 0;
-    const settingsPath = path10.join(home, ".claude", "settings.json");
+    const settingsPath = path11.join(home, ".claude", "settings.json");
     const settings = readJsonFile(settingsPath);
     const settingsRaw = JSON.stringify(settings);
     const oldHooks = /server\.js (publish|board)/.test(settingsRaw);
     const oldSkills = ["foreman", "worker"].filter(
-      (s) => fs10.existsSync(path10.join(home, ".claude", "skills", s, "SKILL.md"))
+      (s) => fs11.existsSync(path11.join(home, ".claude", "skills", s, "SKILL.md"))
     );
     if (oldMcp || oldHooks || oldSkills.length > 0) {
       const doClean = await confirm(
@@ -9083,14 +9083,14 @@ async function runInit(argv) {
           }
         }
         for (const s of oldSkills) {
-          fs10.rmSync(path10.join(home, ".claude", "skills", s), { recursive: true, force: true });
+          fs11.rmSync(path11.join(home, ".claude", "skills", s), { recursive: true, force: true });
           out(`\u2714 removed old ~/.claude/skills/${s} (the plugin ships /rh:${s})`);
         }
       } else {
         out("\u25CF left the old install in place \u2014 expect duplicate board injections and two MCP servers");
       }
     }
-    const legacyDir = path10.join(home, ".claude", "coordination");
+    const legacyDir = path11.join(home, ".claude", "coordination");
     const legacy = legacyCoordinationFiles(legacyDir);
     if (legacy.length > 0 && info) {
       const target = coordinationDir({}, process.cwd());
@@ -9099,8 +9099,8 @@ async function runInit(argv) {
         false
       );
       if (doMove) {
-        fs10.mkdirSync(target, { recursive: true, mode: 448 });
-        for (const name of legacy) fs10.renameSync(path10.join(legacyDir, name), path10.join(target, name));
+        fs11.mkdirSync(target, { recursive: true, mode: 448 });
+        for (const name of legacy) fs11.renameSync(path11.join(legacyDir, name), path11.join(target, name));
         out(`\u2714 migrated ${legacy.length} file(s) \u2192 ${target}`);
       } else {
         out(
@@ -9179,7 +9179,7 @@ function resolveAgentId(options) {
 init_paths();
 
 // src/server.ts
-import * as fs9 from "node:fs";
+import * as fs10 from "node:fs";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -9541,8 +9541,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path12, errorMaps, issueData } = params;
-  const fullPath = [...path12, ...issueData.path || []];
+  const { data, path: path13, errorMaps, issueData } = params;
+  const fullPath = [...path13, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -9657,11 +9657,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path12, key) {
+  constructor(parent, value, path13, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path12;
+    this._path = path13;
     this._key = key;
   }
   get path() {
@@ -13584,10 +13584,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path12) {
-  if (!path12)
+function getElementAtPath(obj, path13) {
+  if (!path13)
     return obj;
-  return path12.reduce((acc, key) => acc?.[key], obj);
+  return path13.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -13970,11 +13970,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path12, issues) {
+function prefixIssues(path13, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path12);
+    iss.path.unshift(path13);
     return iss;
   });
 }
@@ -14157,7 +14157,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path12 = []) => {
+  const processError = (error49, path13 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -14167,7 +14167,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path12, ...issue2.path];
+        const fullpath = [...path13, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -14199,8 +14199,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path12 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path12) {
+  const path13 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path13) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -14419,8 +14419,8 @@ var e164 = /^\+[1-9]\d{6,14}$/;
 var dateSource = `(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))`;
 var date = /* @__PURE__ */ new RegExp(`^${dateSource}$`);
 function timeSource(args) {
-  const hhmm = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
-  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm}` : args.precision === 0 ? `${hhmm}:[0-5]\\d` : `${hhmm}:[0-5]\\d\\.\\d{${args.precision}}` : `${hhmm}(?::[0-5]\\d(?:\\.\\d+)?)?`;
+  const hhmm2 = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
+  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm2}` : args.precision === 0 ? `${hhmm2}:[0-5]\\d` : `${hhmm2}:[0-5]\\d\\.\\d{${args.precision}}` : `${hhmm2}(?::[0-5]\\d(?:\\.\\d+)?)?`;
   return regex;
 }
 function time(args) {
@@ -26606,13 +26606,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path12 = ref.slice(1).split("/").filter(Boolean);
-  if (path12.length === 0) {
+  const path13 = ref.slice(1).split("/").filter(Boolean);
+  if (path13.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path12[0] === defsKey) {
-    const key = path12[1];
+  if (path13[0] === defsKey) {
+    const key = path13[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -32570,12 +32570,172 @@ function runPublish(store, opts) {
 
 // src/remote.ts
 init_config();
+import { execFileSync as execFileSync4 } from "node:child_process";
+import * as fs8 from "node:fs";
+import * as os4 from "node:os";
+import * as path8 from "node:path";
+
+// src/digest.ts
+import * as fs7 from "node:fs";
+import * as path7 from "node:path";
+var DIGEST_VERSION = 1;
+var STAMP_PREFIX = "<!-- roundhouse digest v";
+var STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
+var STAMP_RE = /^<!-- roundhouse digest v(\d+) -->/;
+var RESULT_MAX = 120;
+function dayOf(ts) {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+function hhmm(ts) {
+  return new Date(ts).toISOString().slice(11, 16);
+}
+function oneLine(text) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  const points = Array.from(flat);
+  return points.length <= RESULT_MAX ? flat : `${points.slice(0, RESULT_MAX - 1).join("")}\u2026`;
+}
+function agentRank(agent) {
+  if (agent === "foreman") return [0, 0, agent];
+  const worker = agent.match(/^worker-(\d+)$/);
+  if (worker) return [1, Number.parseInt(worker[1], 10), agent];
+  if (agent === "unattributed") return [3, 0, agent];
+  return [2, 0, agent];
+}
+function compareAgents(a, b) {
+  const [ga, na, sa] = agentRank(a);
+  const [gb, nb, sb] = agentRank(b);
+  return ga - gb || na - nb || sa.localeCompare(sb);
+}
+function describe3(event) {
+  const d = event.data;
+  const t = hhmm(event.ts);
+  switch (event.type) {
+    case "task.create":
+      return `- ${t} task #${d.id} created: **${oneLine(d.title)}**${d.assignee ? ` \u2192 ${d.assignee}` : " (queue)"}`;
+    case "task.update": {
+      const result = d.result ? ` \u2014 ${oneLine(d.result)}` : "";
+      return `- ${t} task #${d.id} \u2192 ${d.state}${result}`;
+    }
+    case "question.ask":
+      return `- ${t} question #${d.id} asked: ${oneLine(d.question)}`;
+    case "question.escalate":
+      return `- ${t} question #${d.id} escalated${d.recommendation ? ` (rec: ${oneLine(d.recommendation)})` : ""}`;
+    case "question.answer":
+      return `- ${t} question #${d.id} answered by ${d.by}: ${oneLine(d.answer)}`;
+    case "question.outcome":
+      return `- ${t} question #${d.id} outcome: ${d.outcome}${d.note ? ` \u2014 ${oneLine(d.note)}` : ""}`;
+    case "todo.create":
+      return `- ${t} todo #${d.id} added: ${oneLine(d.title)}`;
+    case "todo.update":
+      return `- ${t} todo #${d.id} \u2192 ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
+    case "priorities.set": {
+      const items = Array.isArray(d.items) ? d.items : [];
+      const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
+      return `- ${t} priorities set (${items.length}): ${list}`;
+    }
+    default:
+      return null;
+  }
+}
+function renderDigest(events, opts) {
+  const day = events.filter((e) => dayOf(e.ts) === opts.date);
+  const byAgent = /* @__PURE__ */ new Map();
+  const notes = [];
+  let messages = 0;
+  const messagesByAgent = /* @__PURE__ */ new Map();
+  for (const event of day) {
+    const agent = event.agent ?? "unattributed";
+    if (event.type === "digest.note") {
+      notes.push(event);
+      continue;
+    }
+    if (event.type === "message") {
+      messages++;
+      messagesByAgent.set(agent, (messagesByAgent.get(agent) ?? 0) + 1);
+      continue;
+    }
+    if (event.type === "cursor") continue;
+    const bucket = byAgent.get(agent);
+    if (bucket) bucket.push(event);
+    else byAgent.set(agent, [event]);
+  }
+  const lines = [STAMP, `# ${opts.date} \xB7 ${opts.handle} \xB7 ${opts.project}`, ""];
+  if (notes.length > 0) {
+    lines.push("## Notes");
+    for (const note of notes) lines.push(`- ${hhmm(note.ts)} ${oneLine(note.data.text)}`);
+    lines.push("");
+  }
+  const agents = [.../* @__PURE__ */ new Set([...byAgent.keys(), ...messagesByAgent.keys()])].sort(compareAgents);
+  let itemized = 0;
+  for (const agent of agents) {
+    const items = (byAgent.get(agent) ?? []).map(describe3).filter((line) => line !== null);
+    const sent = messagesByAgent.get(agent) ?? 0;
+    if (items.length === 0 && sent === 0) continue;
+    lines.push(`## ${agent}`);
+    lines.push(...items);
+    if (sent > 0) lines.push(`- messages sent: ${sent}`);
+    lines.push("");
+    itemized += items.length;
+  }
+  if (agents.length === 0 && notes.length === 0) {
+    lines.push("_no activity_", "");
+  }
+  const summary = `${itemized} item${itemized === 1 ? "" : "s"} \xB7 ${messages} message${messages === 1 ? "" : "s"}${notes.length > 0 ? ` \xB7 ${notes.length} note${notes.length === 1 ? "" : "s"}` : ""}`;
+  return { date: opts.date, body: `${lines.join("\n")}
+`, summary };
+}
+function renderIndex(days, opts) {
+  const lines = [STAMP, `# ${opts.handle} \xB7 ${opts.project}`, ""];
+  const sorted = [...days].sort((a, b) => b.date.localeCompare(a.date));
+  for (const day of sorted) {
+    lines.push(`- [${day.date}](./${day.date}.md) \u2014 ${day.summary}`);
+  }
+  if (sorted.length === 0) lines.push("_no digests yet_");
+  return `${lines.join("\n")}
+`;
+}
+function writeIfOwn(file2, content) {
+  let existing = null;
+  try {
+    existing = fs7.readFileSync(file2, "utf8");
+  } catch {
+  }
+  if (existing !== null) {
+    if (existing === content) return false;
+    const stamped = existing.match(STAMP_RE);
+    if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
+  }
+  fs7.writeFileSync(file2, content);
+  return true;
+}
+function regenerateDigests(journal, dates) {
+  const events = readEvents(journal.dir, journal.project, journal.handle);
+  if (events.length === 0) return [];
+  const handleDir = path7.join(journal.dir, "journal", journal.project, journal.handle);
+  fs7.mkdirSync(handleDir, { recursive: true });
+  const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
+  const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
+  const changed = [];
+  const index = [];
+  for (const date5 of allDates) {
+    const digest = renderDigest(events, { project: journal.project, handle: journal.handle, date: date5 });
+    index.push({ date: date5, summary: digest.summary });
+    if (!target.includes(date5)) continue;
+    const file2 = path7.join(handleDir, `${date5}.md`);
+    if (writeIfOwn(file2, digest.body)) {
+      changed.push(path7.join("journal", journal.project, journal.handle, `${date5}.md`));
+    }
+  }
+  const readme = renderIndex(index, { project: journal.project, handle: journal.handle });
+  if (writeIfOwn(path7.join(handleDir, "README.md"), readme)) {
+    changed.push(path7.join("journal", journal.project, journal.handle, "README.md"));
+  }
+  return changed;
+}
+
+// src/remote.ts
 init_paths();
 init_priorities();
-import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs7 from "node:fs";
-import * as os4 from "node:os";
-import * as path7 from "node:path";
 var JOURNAL_VERSION = 1;
 var JOURNAL_LAYOUT = 2;
 var MARKER_FILE = "agent-bus.json";
@@ -32626,7 +32786,7 @@ function resolveProject(config2, cwd = process.cwd()) {
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   const origin = tryGit(root, ["remote", "get-url", "origin"]);
   if (origin) project = projectFromOrigin(origin);
-  if (!project) project = sanitizeSegment(path7.basename(root));
+  if (!project) project = sanitizeSegment(path8.basename(root));
   projectCache.set(cwd, project);
   return project;
 }
@@ -32649,12 +32809,12 @@ function resolveHandle(config2) {
   }
 }
 function journalDir(env = process.env, cwd = process.cwd()) {
-  return path7.join(coordinationDir(env, cwd), "remote");
+  return path8.join(coordinationDir(env, cwd), "remote");
 }
 function ensureRepo(dir, url2) {
   try {
-    fs7.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs7.existsSync(path7.join(dir, ".git"))) {
+    fs8.mkdirSync(dir, { recursive: true, mode: 448 });
+    if (!fs8.existsSync(path8.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
       git3(dir, ["config", "user.name", "agent-bus"]);
       git3(dir, ["config", "user.email", "agent-bus@localhost"]);
@@ -32670,23 +32830,32 @@ function ensureRepo(dir, url2) {
   }
 }
 function syncPull(dir) {
-  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return false;
-  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return true;
+  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return { ok: false, reason: "offline" };
+  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return { ok: true };
   if (tryGit(dir, ["rev-parse", "--verify", "HEAD"]) === null) {
-    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null;
+    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null ? { ok: true } : { ok: false, reason: "conflict" };
   }
-  if (tryGit(dir, ["rebase", "-q", "origin/main"]) === null) {
-    tryGit(dir, ["rebase", "--abort"]);
-    return false;
+  if (tryGit(dir, ["rebase", "-q", "origin/main"]) !== null) return { ok: true };
+  for (let round = 0; round < 10; round++) {
+    const conflictedRaw = tryGit(dir, ["diff", "--name-only", "--diff-filter=U"]);
+    const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
+    const digestOnly = conflicted.length > 0 && conflicted.every((f) => f.startsWith("journal/") && f.endsWith(".md"));
+    if (!digestOnly) break;
+    if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["-c", "core.editor=true", "rebase", "--continue"]) !== null) {
+      return { ok: true };
+    }
   }
-  return true;
+  tryGit(dir, ["rebase", "--abort"]);
+  return { ok: false, reason: "conflict" };
 }
 var OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal", "log"]);
 function readMarker(dir) {
-  const file2 = path7.join(dir, MARKER_FILE);
+  const file2 = path8.join(dir, MARKER_FILE);
   let raw;
   try {
-    raw = fs7.readFileSync(file2, "utf8");
+    raw = fs8.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -32710,7 +32879,7 @@ function validateJournal(dir, opts) {
       };
     }
     if (marker.journal < JOURNAL_LAYOUT && opts?.write) {
-      fs7.writeFileSync(path7.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+      fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
       return { ok: true, bootstrapped: true };
     }
@@ -32719,7 +32888,7 @@ function validateJournal(dir, opts) {
   if (!opts?.write) return { ok: true };
   let entries = [];
   try {
-    entries = fs7.readdirSync(dir).filter((e) => e !== ".git");
+    entries = fs8.readdirSync(dir).filter((e) => e !== ".git");
   } catch {
     return { ok: false, reason: `journal dir unreadable: ${dir}` };
   }
@@ -32731,29 +32900,47 @@ function validateJournal(dir, opts) {
       reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `roundhouse sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
-  fs7.writeFileSync(path7.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+  fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
   return { ok: true, bootstrapped: true };
 }
 function debounceMarkerPath(dir) {
-  return path7.join(dir, ".git", "agent-bus-last-push");
+  return path8.join(dir, ".git", "agent-bus-last-push");
 }
 function syncStatusPath(dir) {
-  return path7.join(dir, ".git", "agent-bus-sync-status");
+  return path8.join(dir, ".git", "agent-bus-sync-status");
 }
 function writeSyncStatus(dir, result, now) {
   try {
-    fs7.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
+    fs8.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
 `);
   } catch {
   }
 }
 function readSyncStatus(dir) {
   try {
-    return JSON.parse(fs7.readFileSync(syncStatusPath(dir), "utf8"));
+    return JSON.parse(fs8.readFileSync(syncStatusPath(dir), "utf8"));
   } catch {
     return null;
   }
+}
+function changedLogDates(dir, head0, journal) {
+  if (!head0) return void 0;
+  const diff = tryGit(dir, [
+    "diff",
+    "--name-only",
+    `${head0}..HEAD`,
+    "--",
+    path8.join("journal", journal.project, journal.handle, "log"),
+    path8.join("log", journal.handle)
+  ]);
+  if (diff === null) return void 0;
+  const dates = /* @__PURE__ */ new Set();
+  for (const line of diff.split("\n")) {
+    const m = path8.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
+    if (m) dates.add(m[1]);
+  }
+  return dates;
 }
 function syncPush(journal, opts) {
   const { dir, project, handle } = journal;
@@ -32761,7 +32948,7 @@ function syncPush(journal, opts) {
   const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
     try {
-      if (now - fs7.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
+      if (now - fs8.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
     } catch {
     }
   }
@@ -32770,14 +32957,21 @@ function syncPush(journal, opts) {
     return result;
   };
   try {
-    const ownPaths = [path7.join("journal", project, handle), "log", MARKER_FILE];
-    const own = ownPaths.filter((p) => fs7.existsSync(path7.join(dir, p)));
+    const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
+    const ownPaths = [path8.join("journal", project, handle), "log", MARKER_FILE];
+    const own = ownPaths.filter((p) => fs8.existsSync(path8.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
     let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
       git3(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
     }
-    if (!syncPull(dir)) return finish({ status: "error", detail: "pull failed (offline?)" });
+    const pulled = syncPull(dir);
+    if (!pulled.ok) {
+      return finish({
+        status: "error",
+        detail: pulled.reason === "conflict" ? `rebase conflict on non-digest files \u2014 inspect the journal clone at ${dir}` : "fetch failed (offline?)"
+      });
+    }
     const validation = validateJournal(dir, { write: true, adopt: opts?.adopt });
     if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
     if (validation.bootstrapped) {
@@ -32785,13 +32979,20 @@ function syncPush(journal, opts) {
       git3(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
       dirty = true;
     }
+    const digestDates = changedLogDates(dir, head0, journal);
+    const changedDigests = regenerateDigests(journal, digestDates);
+    if (changedDigests.length > 0) {
+      git3(dir, ["add", "--", path8.join("journal", project, handle)]);
+      git3(dir, ["commit", "-q", "-m", "journal: digests"]);
+      dirty = true;
+    }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
     if (!dirty && ahead === "0") {
-      fs7.writeFileSync(marker, "");
+      fs8.writeFileSync(marker, "");
       return finish({ status: "clean" });
     }
     git3(dir, ["push", "-q", "-u", "origin", "main"]);
-    fs7.writeFileSync(marker, "");
+    fs8.writeFileSync(marker, "");
     return finish({ status: "pushed" });
   } catch (err) {
     return finish({
@@ -32812,7 +33013,7 @@ function openJournal(options) {
   const handle = resolveHandle(config2);
   const writerId = options?.writerId ?? defaultWriterId();
   const agentId = options?.agentId ?? null;
-  const logDir = path7.join(dir, "journal", project, handle, "log");
+  const logDir = path8.join(dir, "journal", project, handle, "log");
   return {
     dir,
     project,
@@ -32822,7 +33023,7 @@ function openJournal(options) {
     agentId,
     append(type, data) {
       try {
-        fs7.mkdirSync(logDir, { recursive: true });
+        fs8.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const event = {
           v: JOURNAL_VERSION,
@@ -32831,8 +33032,8 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs7.appendFileSync(
-          path7.join(logDir, `${day}.${writerId}.ndjson`),
+        fs8.appendFileSync(
+          path8.join(logDir, `${day}.${writerId}.ndjson`),
           `${JSON.stringify(event)}
 `,
           { mode: 384 }
@@ -32845,14 +33046,14 @@ function openJournal(options) {
 function readEventsFromDir(logDir, into) {
   let files = [];
   try {
-    files = fs7.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
+    files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
     return;
   }
   for (const file2 of files) {
     let body;
     try {
-      body = fs7.readFileSync(path7.join(logDir, file2), "utf8");
+      body = fs8.readFileSync(path8.join(logDir, file2), "utf8");
     } catch {
       continue;
     }
@@ -32868,13 +33069,13 @@ function readEventsFromDir(logDir, into) {
 }
 function readEvents(dir, project, handle) {
   const events = [];
-  readEventsFromDir(path7.join(dir, "log", handle), events);
-  readEventsFromDir(path7.join(dir, "journal", project, handle, "log"), events);
+  readEventsFromDir(path8.join(dir, "log", handle), events);
+  readEventsFromDir(path8.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
 function listProjects(dir) {
   try {
-    return fs7.readdirSync(path7.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs8.readdirSync(path8.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -33502,6 +33703,26 @@ function buildServer(store, agentId, config2) {
   );
   if (agentId === "foreman") {
     server.registerTool(
+      "agent_bus_digest_note",
+      {
+        title: "Add a prose note to today's journal digest (foreman only)",
+        description: "Record a short narrative note (2\u20135 lines) into the durable journal's daily digest \u2014 the end-of-day wrap-up a human reads when browsing the journal repo. Renders under 'Notes' in journal/<project>/<handle>/<date>.md on the next sync. No-op guidance: requires remote journaling (config remote.url); notes are plaintext in the journal repo.",
+        inputSchema: { text: external_exports3.string().min(1).max(2e3) },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+      },
+      async (input) => {
+        store.touch(agentId);
+        if (!cfg.remote.url?.trim()) {
+          return {
+            ...asToolResult({ ok: false, error: "remote journaling is not configured (remote.url)" }),
+            isError: true
+          };
+        }
+        store.journal("digest.note", { text: input.text, at: Date.now() });
+        return asToolResult({ ok: true, rendersOn: "next journal sync" });
+      }
+    );
+    server.registerTool(
       "agent_bus_gh_poll",
       {
         title: "Poll GitHub for other engineers' PRs (foreman only)",
@@ -33694,8 +33915,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs9.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs9.realpathSync(fileURLToPath(import.meta.url))).href;
+    const entry = pathToFileURL(fs10.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs10.realpathSync(fileURLToPath(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
@@ -33711,8 +33932,8 @@ if (invokedDirectly) {
 // src/cli.ts
 init_provision();
 init_store();
-import * as fs11 from "node:fs";
-import * as path11 from "node:path";
+import * as fs12 from "node:fs";
+import * as path12 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -33784,12 +34005,13 @@ function requireRemote() {
   if (!j) {
     fail('no remote journal configured \u2014 set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/roundhouse-state.git"}}');
   }
-  if (!fs11.existsSync(path11.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs12.existsSync(path12.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
   const { dir, project, handle } = requireRemote();
-  if (!syncPull(dir)) fail("could not pull the journal remote (offline? empty repo is fine, a failed fetch is not)");
+  const pulled = syncPull(dir);
+  if (!pulled.ok) fail(`could not pull the journal remote (${pulled.reason ?? "unknown"}; an empty repo is fine, a failed fetch is not)`);
   const shape = validateJournal(dir);
   if (!shape.ok) fail(shape.reason ?? "journal repo failed validation");
   const events = readEvents(dir, project, handle);
@@ -33819,6 +34041,20 @@ function cmdSync(argv) {
   if (res.status === "invalid") fail(res.detail ?? "journal repo failed validation");
   out2(`\u2714 journal ${res.status} (handle "${handle}")`);
 }
+function cmdDigest(argv) {
+  const j = requireRemote();
+  syncPull(j.dir);
+  const i = argv.indexOf("--date");
+  const date5 = i !== -1 ? argv[i + 1] : void 0;
+  if (date5 && !/^\d{4}-\d{2}-\d{2}$/.test(date5)) fail("usage: roundhouse digest [--date YYYY-MM-DD]");
+  const changed = regenerateDigests(j, date5 ? /* @__PURE__ */ new Set([date5]) : void 0);
+  if (changed.length === 0) {
+    out2("digests already up to date");
+    return;
+  }
+  for (const f of changed) out2(`\u2714 ${f}`);
+  out2("(committed + pushed on the next sync \u2014 or run: roundhouse sync)");
+}
 function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ foremanBasename: cfg.foreman.basename });
@@ -33841,6 +34077,8 @@ async function main2() {
         return cmdRestore();
       case "sync":
         return cmdSync(rest);
+      case "digest":
+        return cmdDigest(rest);
       case "serve":
       case "dashboard": {
         const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
@@ -33862,6 +34100,7 @@ async function main2() {
         out2("  roundhouse restore             rebuild local bus state from the remote journal (remote.url)");
         out2("  roundhouse sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out2("                                non-empty repo as a journal \u2014 explicit by design)");
+        out2("  roundhouse digest [--date D]  re-render journal digests (normally automatic on sync)");
         out2("  roundhouse serve               live dashboard \u2192 http://localhost:4319");
         out2("  roundhouse paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);

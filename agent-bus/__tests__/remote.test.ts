@@ -180,7 +180,7 @@ describe("git sync + machine-move restore", () => {
     // machine 2: fresh journal dir wired to the same remote, pull, replay
     const dir2 = path.join(root, "machine2-journal");
     expect(ensureRepo(dir2, remote)).toBe(true);
-    expect(syncPull(dir2)).toBe(true);
+    expect(syncPull(dir2).ok).toBe(true);
     const events = readEvents(dir2, j1.project, "michael");
     expect(events.length).toBeGreaterThanOrEqual(12);
 
@@ -214,7 +214,7 @@ describe("git sync + machine-move restore", () => {
     expect(syncPush({ dir: dir2, project: j1.project, handle: "casey" }, { force: true }).status).toBe("pushed");
 
     // michael pulls and sees both namespaces intact (casey via the legacy tree)
-    expect(syncPull(j1.dir)).toBe(true);
+    expect(syncPull(j1.dir).ok).toBe(true);
     expect(readEvents(j1.dir, j1.project, "michael")).toHaveLength(1);
     expect(readEvents(j1.dir, j1.project, "casey")).toHaveLength(1);
   });
@@ -292,14 +292,14 @@ describe("same-handle multi-writer", () => {
     expect(syncPush(a, { force: true }).status).toBe("pushed");
 
     const b = journalAt("michael", remote, { home: "homeB", writerId: "studio" });
-    expect(syncPull(b.dir)).toBe(true);
+    expect(syncPull(b.dir).ok).toBe(true);
     b.append("task.update", { id: 1, state: "returned", result: "done", at: 2000 });
     expect(syncPush(b, { force: true }).status).toBe("pushed");
 
     // machine A keeps writing the same day — no shared file, no rebase conflict
     a.append("message", { id: 1, from: "x", to: "y", body: "z", at: 3000 });
     expect(syncPush(a, { force: true }).status).toBe("pushed");
-    expect(syncPull(a.dir)).toBe(true);
+    expect(syncPull(a.dir).ok).toBe(true);
 
     const events = readEvents(a.dir, a.project, "michael");
     expect(events.map((e) => e.type)).toEqual(["task.create", "task.update", "message"]); // ts order
@@ -313,7 +313,7 @@ describe("same-handle multi-writer", () => {
     b.append("message", { id: 2, from: "x", to: "y", body: "from b", at: 2 });
     expect(syncPush(a, { force: true }).status).toBe("pushed");
     expect(syncPush(b, { force: true }).status).toBe("pushed"); // rebases unrelated history
-    expect(syncPull(a.dir)).toBe(true);
+    expect(syncPull(a.dir).ok).toBe(true);
     expect(readEvents(a.dir, a.project, "michael")).toHaveLength(2);
   });
 });

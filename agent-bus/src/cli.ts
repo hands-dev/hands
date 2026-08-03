@@ -26,6 +26,7 @@ import {
   removeWorker,
   scaleWorkers,
 } from "./provision.js";
+import { regenerateDigests } from "./digest.js";
 import {
   listProjects,
   openJournal,
@@ -121,7 +122,8 @@ function requireRemote() {
 /** Pull the remote journal and materialize this project+handle's events into the local bus. */
 function cmdRestore(): void {
   const { dir, project, handle } = requireRemote();
-  if (!syncPull(dir)) fail("could not pull the journal remote (offline? empty repo is fine, a failed fetch is not)");
+  const pulled = syncPull(dir);
+  if (!pulled.ok) fail(`could not pull the journal remote (${pulled.reason ?? "unknown"}; an empty repo is fine, a failed fetch is not)`);
   const shape = validateJournal(dir); // read mode: layout-version gate only
   if (!shape.ok) fail(shape.reason ?? "journal repo failed validation");
   const events = readEvents(dir, project, handle);
@@ -154,6 +156,22 @@ function cmdSync(argv: string[]): void {
   out(`✔ journal ${res.status} (handle "${handle}")`);
 }
 
+/** Manually (re)render digests — normally automatic on every sync. */
+function cmdDigest(argv: string[]): void {
+  const j = requireRemote();
+  syncPull(j.dir); // best-effort — render from the freshest merged view we have
+  const i = argv.indexOf("--date");
+  const date = i !== -1 ? argv[i + 1] : undefined;
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("usage: roundhouse digest [--date YYYY-MM-DD]");
+  const changed = regenerateDigests(j, date ? new Set([date]) : undefined);
+  if (changed.length === 0) {
+    out("digests already up to date");
+    return;
+  }
+  for (const f of changed) out(`✔ ${f}`);
+  out("(committed + pushed on the next sync — or run: roundhouse sync)");
+}
+
 function cmdPaths(): void {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ foremanBasename: cfg.foreman.basename });
@@ -177,6 +195,8 @@ async function main(): Promise<void> {
         return cmdRestore();
       case "sync":
         return cmdSync(rest);
+      case "digest":
+        return cmdDigest(rest);
       case "serve":
       case "dashboard": {
         const { serve } = await import("./serve.js");
@@ -197,6 +217,7 @@ async function main(): Promise<void> {
         out("  roundhouse restore             rebuild local bus state from the remote journal (remote.url)");
         out("  roundhouse sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out("                                non-empty repo as a journal — explicit by design)");
+        out("  roundhouse digest [--date D]  re-render journal digests (normally automatic on sync)");
         out("  roundhouse serve               live dashboard → http://localhost:4319");
         out("  roundhouse paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);

@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { type AgentBusConfig, loadConfig } from "./config.js";
+import { regenerateDigests } from "./digest.js";
 import { coordinationDir, repoInfo } from "./paths.js";
 import { writePriorities } from "./priorities.js";
 import type { Store } from "./store.js";
@@ -211,20 +212,51 @@ export function ensureRepo(dir: string, url: string): boolean {
   }
 }
 
-/** Fetch + integrate origin/main (rebase keeps our unpushed appends on top). */
-export function syncPull(dir: string): boolean {
+export interface PullResult {
+  ok: boolean;
+  reason?: "offline" | "conflict";
+}
+
+/**
+ * Fetch + integrate origin/main (rebase keeps our unpushed appends on top).
+ *
+ * Digest .md files are the one legitimately multi-writer path (same handle,
+ * two machines, each rendering from a different pre-merge event set), so a
+ * rebase conflict confined to digest .md files under `journal/` is auto-resolved — either
+ * side's content is fine because the caller regenerates digests from the
+ * MERGED events right after the pull, and the deterministic renderer makes
+ * both machines converge on identical bytes. Any non-digest conflict still
+ * aborts (per-writer NDJSON paths should never conflict; if they do,
+ * something is genuinely wrong).
+ */
+export function syncPull(dir: string): PullResult {
   // fetch all refs — asking for `main` explicitly fails on a still-empty remote
-  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return false;
-  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return true; // empty remote
+  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return { ok: false, reason: "offline" };
+  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return { ok: true }; // empty remote
   if (tryGit(dir, ["rev-parse", "--verify", "HEAD"]) === null) {
     // no local commits yet — just adopt the remote
-    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null;
+    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null
+      ? { ok: true }
+      : { ok: false, reason: "conflict" };
   }
-  if (tryGit(dir, ["rebase", "-q", "origin/main"]) === null) {
-    tryGit(dir, ["rebase", "--abort"]);
-    return false;
+  if (tryGit(dir, ["rebase", "-q", "origin/main"]) !== null) return { ok: true };
+
+  // bounded: one conflicted replayed commit resolved per iteration
+  for (let round = 0; round < 10; round++) {
+    const conflictedRaw = tryGit(dir, ["diff", "--name-only", "--diff-filter=U"]);
+    const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
+    const digestOnly =
+      conflicted.length > 0 &&
+      conflicted.every((f) => f.startsWith("journal/") && f.endsWith(".md"));
+    if (!digestOnly) break;
+    if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["-c", "core.editor=true", "rebase", "--continue"]) !== null) {
+      return { ok: true };
+    }
   }
-  return true;
+  tryGit(dir, ["rebase", "--abort"]);
+  return { ok: false, reason: "conflict" };
 }
 
 export interface SyncResult {
@@ -351,6 +383,36 @@ export function readSyncStatus(dir: string): SyncStatus | null {
 }
 
 /**
+ * Dates whose log files changed between `head0` and HEAD for this
+ * project/handle (own appends were committed before the pull, so the range
+ * covers both sides of the merge). Returns undefined (= regenerate all dates)
+ * when the range is unknowable — fresh repo, or head0 unreachable after an
+ * unrelated-history rebase.
+ */
+function changedLogDates(
+  dir: string,
+  head0: string | null,
+  journal: JournalRef,
+): Set<string> | undefined {
+  if (!head0) return undefined;
+  const diff = tryGit(dir, [
+    "diff",
+    "--name-only",
+    `${head0}..HEAD`,
+    "--",
+    path.join("journal", journal.project, journal.handle, "log"),
+    path.join("log", journal.handle),
+  ]);
+  if (diff === null) return undefined;
+  const dates = new Set<string>();
+  for (const line of diff.split("\n")) {
+    const m = path.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
+    if (m) dates.add(m[1]!);
+  }
+  return dates;
+}
+
+/**
  * Commit + push any journal appends. Debounced via a marker file so the
  * per-turn Stop hook costs nothing most turns. All failures are soft — the
  * commits stay local and the next sync catches up. Order matters: local
@@ -378,6 +440,8 @@ export function syncPush(
     return result;
   };
   try {
+    // remembered so the post-pull digest pass knows which dates changed
+    const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
     // stage only the paths this writer owns — and only ones that exist (a
     // bare `git add` on a missing pathspec is a fatal). Legacy `log/` stays in
     // the list so any pre-upgrade v1 appends left in the worktree still ship.
@@ -388,12 +452,33 @@ export function syncPush(
     if (dirty) {
       git(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
     }
-    if (!syncPull(dir)) return finish({ status: "error", detail: "pull failed (offline?)" });
+    const pulled = syncPull(dir);
+    if (!pulled.ok) {
+      return finish({
+        status: "error",
+        detail:
+          pulled.reason === "conflict"
+            ? `rebase conflict on non-digest files — inspect the journal clone at ${dir}`
+            : "fetch failed (offline?)",
+      });
+    }
     const validation = validateJournal(dir, { write: true, adopt: opts?.adopt });
     if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
     if (validation.bootstrapped) {
       git(dir, ["add", "--", MARKER_FILE]);
       git(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
+      dirty = true;
+    }
+    // Digests regenerate AFTER the pull, from the merged event set — the
+    // deterministic renderer converges same-handle machines on identical
+    // bytes. Dates to re-render = every date whose log files changed since
+    // head0 (own appends + anything the pull brought in, including late
+    // events for past days); unknown range → all dates.
+    const digestDates = changedLogDates(dir, head0, journal);
+    const changedDigests = regenerateDigests(journal, digestDates);
+    if (changedDigests.length > 0) {
+      git(dir, ["add", "--", path.join("journal", project, handle)]);
+      git(dir, ["commit", "-q", "-m", "journal: digests"]);
       dirty = true;
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
