@@ -8,6 +8,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
+import { fmtTokens } from "@/lib/format";
 import { ago } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { SnapshotTask } from "../../src/snapshot.js";
@@ -34,7 +35,7 @@ function stateBadge(task: SnapshotTask) {
   return <Badge variant="outline">{label}</Badge>;
 }
 
-function Chit({ task, now }: { task: SnapshotTask; now: number }) {
+function Chit({ task, now, cost }: { task: SnapshotTask; now: number; cost?: number }) {
   const settled = task.state === "done" || task.state === "cancelled";
   return (
     <div className={cn("flex items-center gap-2 py-1.5", settled && "opacity-50")}>
@@ -45,6 +46,14 @@ function Chit({ task, now }: { task: SnapshotTask; now: number }) {
       >
         {task.title}
       </span>
+      {cost !== undefined && cost > 0 ? (
+        <span
+          className="shrink-0 text-xs text-muted-foreground tabular-nums"
+          title="≈ output tokens spent by the assignee over this ticket's working interval"
+        >
+          ~{fmtTokens(cost)}
+        </span>
+      ) : null}
       {task.assignee ? (
         <span className="shrink-0 text-xs text-muted-foreground">{task.assignee}</span>
       ) : null}
@@ -57,7 +66,15 @@ function Chit({ task, now }: { task: SnapshotTask; now: number }) {
   );
 }
 
-export function TicketRail({ tasks, now }: { tasks: SnapshotTask[]; now: number }) {
+export function TicketRail({
+  tasks,
+  taskCosts,
+  now,
+}: {
+  tasks: SnapshotTask[];
+  taskCosts: Record<number, number>;
+  now: number;
+}) {
   const byDish = new Map<string, SnapshotTask[]>();
   for (const t of tasks) {
     const key = t.dish ?? "";
@@ -88,7 +105,7 @@ export function TicketRail({ tasks, now }: { tasks: SnapshotTask[]; now: number 
                 {dish || "Unattached"}
               </div>
               {list.map((t) => (
-                <Chit key={t.id} task={t} now={now} />
+                <Chit key={t.id} task={t} now={now} cost={taskCosts[t.id]} />
               ))}
             </div>
           ))

@@ -97,7 +97,11 @@ export function App() {
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]">
             <div className="space-y-4">
               <div id="rail">
-                <TicketRail tasks={[...activeTasks, ...settledTasks]} now={snapshot.now} />
+                <TicketRail
+                  tasks={[...activeTasks, ...settledTasks]}
+                  taskCosts={snapshot.taskCosts}
+                  now={snapshot.now}
+                />
               </div>
               <div id="line">
                 <StationsGrid

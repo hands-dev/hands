@@ -17,6 +17,8 @@ export type DashboardPayload = Snapshot & {
   kitchens: OtherKitchen[];
   /** per-pane token burn from Claude Code transcripts (null until first sample) */
   tokens: TokenSeries | null;
+  /** approximate output-token cost per rail ticket (assignee's spend over the working interval) */
+  taskCosts: Record<number, number>;
 };
 
 export interface ServeHandle {
@@ -102,10 +104,22 @@ export function serve(opts?: {
   const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : undefined);
   let tokens: TokenSeries | null = null;
 
+  let taskCosts: Record<number, number> = {};
+
   const refreshTokens = (): void => {
     try {
       const peers = store.listPeers().map((p) => ({ id: p.id, cwd: p.cwd ?? null }));
       tokens = sampler.sample(peers);
+      // Ticket cost ≈ the assignee pane's output tokens over the ticket's
+      // working interval — an approximation by construction (whatever else
+      // the pane did in that window rides along).
+      const costs: Record<number, number> = {};
+      const now = Date.now();
+      for (const t of store.listTasks({ limit: 40 })) {
+        if (!t.assignee || t.started_at == null) continue;
+        costs[t.id] = sampler.usageBetween(t.assignee, t.started_at, t.finished_at ?? now).out;
+      }
+      taskCosts = costs;
     } catch {
       // keep the previous sample
     }
@@ -124,8 +138,12 @@ export function serve(opts?: {
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(tokens?.totals24h ?? null),
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens, taskCosts }),
+      key:
+        snapshotKey(snapshot) +
+        JSON.stringify(kitchens) +
+        JSON.stringify(tokens?.totals24h ?? null) +
+        JSON.stringify(taskCosts),
     };
   };
 

@@ -37,12 +37,22 @@ export interface TokenTotals {
   cacheRead: number;
 }
 
+export interface SubagentCall {
+  /** "agentType: description" from the sibling meta.json (or the file stem) */
+  label: string;
+  out: number;
+  /** last message timestamp in the call */
+  ts: number;
+}
+
 export interface TokenSeries {
   bucketMs: number;
   windowMs: number;
   /** dense buckets (zeros filled), oldest → newest, per agent id */
   perAgent: Record<string, TokenBucket[]>;
   totals24h: Record<string, TokenTotals>;
+  /** recent sub-agent calls per pane (each subagents/*.jsonl file = one call) */
+  subagents: Record<string, SubagentCall[]>;
 }
 
 export const TOKEN_BUCKET_MS = 15 * 60_000;
@@ -60,6 +70,8 @@ interface MsgUsage {
   out: number;
   inTok: number;
   cacheRead: number;
+  /** set when the message came from a subagents/*.jsonl file (one call per file) */
+  callFile?: string;
 }
 
 export class TokenSampler {
@@ -100,6 +112,36 @@ export class TokenSampler {
           // unreadable — skip, retry next tick
         }
       }
+      // Sub-agent transcripts live per SESSION under <session>/subagents/ —
+      // one file per Agent-tool call. Their spend is real pane spend (fold
+      // into the same buckets), tagged per file for the per-call view.
+      let sessionDirs: string[] = [];
+      try {
+        sessionDirs = fs
+          .readdirSync(dir, { withFileTypes: true })
+          .filter((e) => e.isDirectory())
+          .map((e) => path.join(dir, e.name, "subagents"));
+      } catch {
+        sessionDirs = [];
+      }
+      for (const subDir of sessionDirs) {
+        let subNames: string[] = [];
+        try {
+          subNames = fs.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+        } catch {
+          continue;
+        }
+        for (const name of subNames) {
+          const file = path.join(subDir, name);
+          try {
+            const stat = fs.statSync(file);
+            if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
+            this.readAppended(file, stat.size, byMsg, file);
+          } catch {
+            // unreadable — skip
+          }
+        }
+      }
       for (const [id, m] of byMsg) {
         if (now - m.ts > TOKEN_WINDOW_MS + TOKEN_BUCKET_MS) byMsg.delete(id);
       }
@@ -107,7 +149,12 @@ export class TokenSampler {
     return this.series(now, agents);
   }
 
-  private readAppended(file: string, size: number, byMsg: Map<string, MsgUsage>): void {
+  private readAppended(
+    file: string,
+    size: number,
+    byMsg: Map<string, MsgUsage>,
+    callFile?: string,
+  ): void {
     let state = this.files.get(file);
     let dropFirstLine = false;
     if (!state) {
@@ -171,11 +218,50 @@ export class TokenSampler {
           out: usage.output_tokens ?? 0,
           inTok: usage.input_tokens ?? 0,
           cacheRead: usage.cache_read_input_tokens ?? 0,
+          ...(callFile ? { callFile } : {}),
         });
       } catch {
         // torn/corrupt line — lose one message, never the sample
       }
     }
+  }
+
+  /**
+   * A pane's summed usage over [from, to] — the per-ticket cost primitive
+   * (main-session AND sub-agent messages: work spawned for a ticket is that
+   * ticket's spend). An approximation by construction: whatever else the pane
+   * did in the interval rides along.
+   */
+  usageBetween(agentId: string, from: number, to: number): TokenTotals {
+    const totals: TokenTotals = { out: 0, in: 0, cacheRead: 0 };
+    const byMsg = this.messages.get(agentId);
+    if (!byMsg) return totals;
+    for (const m of byMsg.values()) {
+      if (m.ts < from || m.ts > to) continue;
+      totals.out += m.out;
+      totals.in += m.inTok;
+      totals.cacheRead += m.cacheRead;
+    }
+    return totals;
+  }
+
+  private readonly metaLabels = new Map<string, string>();
+
+  private callLabel(callFile: string): string {
+    const cached = this.metaLabels.get(callFile);
+    if (cached) return cached;
+    let label = path.basename(callFile, ".jsonl");
+    try {
+      const meta = JSON.parse(
+        fs.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8"),
+      ) as { agentType?: string; description?: string };
+      if (meta.description) label = meta.agentType ? `${meta.agentType}: ${meta.description}` : meta.description;
+      else if (meta.agentType) label = meta.agentType;
+    } catch {
+      // no meta — the file stem will do
+    }
+    this.metaLabels.set(callFile, label);
+    return label;
   }
 
   private series(now: number, agents: ReadonlyArray<{ id: string }>): TokenSeries {
@@ -184,6 +270,7 @@ export class TokenSampler {
     const firstBucket = lastBucket - (bucketCount - 1) * TOKEN_BUCKET_MS;
     const perAgent: Record<string, TokenBucket[]> = {};
     const totals24h: Record<string, TokenTotals> = {};
+    const subagents: Record<string, SubagentCall[]> = {};
     for (const agent of agents) {
       const byMsg = this.messages.get(agent.id);
       const buckets: TokenBucket[] = Array.from({ length: bucketCount }, (_, i) => ({
@@ -193,6 +280,7 @@ export class TokenSampler {
         cacheRead: 0,
       }));
       const totals: TokenTotals = { out: 0, in: 0, cacheRead: 0 };
+      const byCall = new Map<string, SubagentCall>();
       if (byMsg) {
         for (const m of byMsg.values()) {
           const idx = Math.floor((m.ts - firstBucket) / TOKEN_BUCKET_MS);
@@ -204,11 +292,22 @@ export class TokenSampler {
           totals.out += m.out;
           totals.in += m.inTok;
           totals.cacheRead += m.cacheRead;
+          if (m.callFile) {
+            const call = byCall.get(m.callFile) ?? {
+              label: this.callLabel(m.callFile),
+              out: 0,
+              ts: 0,
+            };
+            call.out += m.out;
+            call.ts = Math.max(call.ts, m.ts);
+            byCall.set(m.callFile, call);
+          }
         }
       }
       perAgent[agent.id] = buckets;
       totals24h[agent.id] = totals;
+      subagents[agent.id] = [...byCall.values()].sort((a, b) => b.ts - a.ts).slice(0, 8);
     }
-    return { bucketMs: TOKEN_BUCKET_MS, windowMs: TOKEN_WINDOW_MS, perAgent, totals24h };
+    return { bucketMs: TOKEN_BUCKET_MS, windowMs: TOKEN_WINDOW_MS, perAgent, totals24h, subagents };
   }
 }
