@@ -103,6 +103,7 @@ export function App() {
                 <StationsGrid
                   agents={snapshot.agents}
                   collisions={snapshot.collisions}
+                  tokens={snapshot.tokens}
                   now={snapshot.now}
                 />
               </div>
