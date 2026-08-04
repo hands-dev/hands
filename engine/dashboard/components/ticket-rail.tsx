@@ -1,6 +1,13 @@
 import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
-import { chip, Panel } from "@/components/panel";
 import { ago } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { SnapshotTask } from "../../src/snapshot.js";
@@ -16,51 +23,34 @@ const STATE_LABEL: Record<string, string> = {
 
 function stateBadge(task: SnapshotTask) {
   const label = STATE_LABEL[task.state] ?? task.state;
-  if (task.state === "returned")
-    return <Badge className={cn(chip, "bg-heat text-heat-foreground")}>{label}</Badge>;
-  if (task.state === "in_progress")
-    return (
-      <Badge variant="secondary" className={cn(chip, "bg-ok/15 text-ok")}>
-        {label}
-      </Badge>
-    );
+  if (task.state === "returned") return <Badge>{label}</Badge>;
+  if (task.state === "in_progress") return <Badge variant="secondary">{label}</Badge>;
   if (task.state === "done" || task.state === "cancelled")
     return (
-      <Badge variant="outline" className={cn(chip, "text-muted-foreground")}>
+      <Badge variant="outline" className="text-muted-foreground">
         {label}
       </Badge>
     );
-  return (
-    <Badge variant="secondary" className={chip}>
-      {label}
-    </Badge>
-  );
+  return <Badge variant="outline">{label}</Badge>;
 }
 
 function Chit({ task, now }: { task: SnapshotTask; now: number }) {
   const settled = task.state === "done" || task.state === "cancelled";
   return (
-    <div className={cn("flex items-baseline gap-2 py-1.5", settled && "opacity-45")}>
-      <span className="shrink-0 font-mono text-[11px] text-muted-foreground">#{task.id}</span>
+    <div className={cn("flex items-center gap-2 py-1.5", settled && "opacity-50")}>
+      <span className="w-7 shrink-0 text-xs text-muted-foreground tabular-nums">#{task.id}</span>
       <span
-        className={cn(
-          "min-w-0 flex-1 truncate text-[13px]",
-          task.state === "cancelled" && "line-through",
-        )}
+        className={cn("min-w-0 flex-1 truncate", task.state === "cancelled" && "line-through")}
         title={task.result ? `${task.title}\n\n${task.result}` : task.title}
       >
         {task.title}
       </span>
       {task.assignee ? (
-        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{task.assignee}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{task.assignee}</span>
       ) : null}
-      {task.priority ? (
-        <Badge variant="outline" className={cn(chip, "text-muted-foreground")}>
-          {task.priority}
-        </Badge>
-      ) : null}
+      {task.priority ? <Badge variant="outline">{task.priority}</Badge> : null}
       {stateBadge(task)}
-      <span className="shrink-0 font-mono text-[10.5px] text-muted-foreground/70">
+      <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">
         {ago(now, task.at)}
       </span>
     </div>
@@ -79,22 +69,31 @@ export function TicketRail({ tasks, now }: { tasks: SnapshotTask[]; now: number 
   const live = tasks.filter((t) => t.state !== "done" && t.state !== "cancelled").length;
 
   return (
-    <Panel title="The rail" action={`${live} live`}>
-      {tasks.length === 0 ? (
-        <p className="py-2 text-[13px] text-muted-foreground">Nothing on the rail.</p>
-      ) : (
-        dishes.map(([dish, list], i) => (
-          <div key={dish || "·unattached"}>
-            {i > 0 ? <Separator className="my-1" /> : null}
-            <div className="pt-1 font-mono text-[11px] tracking-wide text-heat">
-              {dish || "unattached"}
+    <Card>
+      <CardHeader>
+        <CardTitle>The rail</CardTitle>
+        <CardDescription>Tickets in flight, grouped by dish</CardDescription>
+        <CardAction>
+          <Badge variant="secondary">{live} live</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="text-sm">
+        {tasks.length === 0 ? (
+          <p className="text-muted-foreground">Nothing on the rail.</p>
+        ) : (
+          dishes.map(([dish, list], i) => (
+            <div key={dish || "·unattached"}>
+              {i > 0 ? <Separator className="my-2" /> : null}
+              <div className="text-xs font-medium text-muted-foreground">
+                {dish || "Unattached"}
+              </div>
+              {list.map((t) => (
+                <Chit key={t.id} task={t} now={now} />
+              ))}
             </div>
-            {list.map((t) => (
-              <Chit key={t.id} task={t} now={now} />
-            ))}
-          </div>
-        ))
-      )}
-    </Panel>
+          ))
+        )}
+      </CardContent>
+    </Card>
   );
 }
