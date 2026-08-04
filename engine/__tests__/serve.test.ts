@@ -1,9 +1,12 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IDLE_THRESHOLD_MS } from "../src/board.js";
+import { DEFAULT_CONFIG, resetConfigCache } from "../src/config.js";
+import { openJournal, syncPush } from "../src/remote.js";
 import { buildSnapshot } from "../src/snapshot.js";
 import { serve, type ServeHandle, snapshotKey } from "../src/serve.js";
 import { Store } from "../src/store.js";
@@ -140,6 +143,62 @@ describe("serve", () => {
     handle = null;
     stream.close();
   });
+});
+
+describe("other kitchens (books multiplayer)", () => {
+  it("surfaces another handle's books activity over SSE, refreshed on the books tick", async () => {
+    // a shared bare books remote
+    const remote = path.join(home, "books.git");
+    fs.mkdirSync(remote);
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+
+    // casey's kitchen appends + pushes from its own clone
+    const casey = openJournal({
+      env: { YES_CHEF_HOME: path.join(home, "casey-home") },
+      cwd: process.cwd(),
+      config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "casey", project: "proj" } },
+      agentId: "expo",
+    })!;
+    casey.append("task.create", { id: 1, by: "expo", title: "casey's ticket", at: Date.now() });
+    expect(syncPush(casey, { force: true }).status).toBe("pushed");
+
+    // our serve reads the same books via user-level config (michael's handle)
+    const userClaude = path.join(home, "user", ".claude");
+    fs.mkdirSync(userClaude, { recursive: true });
+    fs.writeFileSync(
+      path.join(userClaude, "yes-chef.config.json"),
+      JSON.stringify({ remote: { url: remote, handle: "michael", project: "proj" } }),
+    );
+    resetConfigCache();
+    const serveEnv = { YES_CHEF_HOME: home, YES_CHEF_TEST_HOME: path.join(home, "user") };
+    handle = await serve({ port: 0, env: serveEnv, tickMs: 25, booksTickMs: 100 });
+
+    const stream = sse(`${handle.url}api/events`);
+    // kitchens arrive on the first refresh after connect (initial frame may be empty)
+    let kitchens: Array<{ handle: string; updates: Array<{ summary: string }> }> = [];
+    for (let i = 0; i < 10 && !kitchens.some((k) => k.handle === "casey"); i++) {
+      const frame = JSON.parse(await stream.next()) as { kitchens: typeof kitchens };
+      kitchens = frame.kitchens;
+    }
+    const caseyKitchen = kitchens.find((k) => k.handle === "casey");
+    expect(caseyKitchen).toBeDefined();
+    expect(caseyKitchen!.updates.map((u) => u.summary)).toContain("ticket #1 fired: casey's ticket");
+
+    // a NEW casey push shows up via the periodic pull, no reconnect
+    casey.append("task.update", { id: 1, state: "returned", result: "done", at: Date.now() });
+    expect(syncPush(casey, { force: true }).status).toBe("pushed");
+    let seen = false;
+    for (let i = 0; i < 40 && !seen; i++) {
+      const frame = JSON.parse(await stream.next(3000)) as { kitchens: typeof kitchens };
+      seen = frame.kitchens.some((k) =>
+        k.updates.some((u) => u.summary === "ticket #1 → returned"),
+      );
+    }
+    expect(seen).toBe(true);
+
+    stream.close();
+    resetConfigCache();
+  }, 20_000);
 });
 
 describe("snapshotKey (SSE change detection)", () => {
