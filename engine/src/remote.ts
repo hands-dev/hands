@@ -16,14 +16,16 @@ import type { Store } from "./store.js";
  * organized for BROWSING — project, then contributor, then date — with the
  * machine log nested underneath:
  *
- *   journal/<project>/<handle>/<date>.md                   digest
- *   journal/<project>/<handle>/log/<date>.<writer>.ndjson  event log
+ *   journal/<project>/<handle>/<date>.md          digest
+ *   journal/<project>/<handle>/log/<date>.ndjson  event log
  *
- * `project` is a PORTABLE key (origin owner--repo, or config remote.project) —
- * deliberately not the coordination slug, which hashes the machine-local path.
- * `writer` = sanitized hostname, so two machines on one handle never contend
- * on a file. Pushes ride the Stop-hook publish cadence (debounced,
- * best-effort, offline-tolerant). Restore = pull + replay (`yes-chef restore`).
+ * `project` is a PORTABLE key (the origin repo name, or config
+ * remote.project) — deliberately not the coordination slug, which hashes the
+ * machine-local path. One handle = one writer at a time: two machines on the
+ * same handle share the day's log file, so concurrent same-day writes can
+ * conflict (accepted — sync surfaces it; sequential pull-then-append is
+ * clean). Pushes ride the Stop-hook publish cadence (debounced, best-effort,
+ * offline-tolerant). Restore = pull + replay (`yes-chef restore`).
  *
  * Multiplayer is the same mechanism pointed at a shared repo: each fleet
  * appends ONLY under its own project/handle namespace, so writers never touch
@@ -87,8 +89,6 @@ export interface JournalRef {
 
 export interface RemoteJournal extends JournalRef {
   url: string;
-  /** per-machine log-file suffix (sanitized hostname unless overridden) */
-  writerId: string;
   /** emitting agent stamped onto every event (expo | station-<n>) */
   agentId: string | null;
   /** append one event to today's log file (best-effort, synchronous) */
@@ -109,12 +109,12 @@ export function sanitizeSegment(raw: string, fallback = "unnamed"): string {
 }
 
 /**
- * Derive the portable project key from a git origin URL: last two path
- * segments as `owner--repo`, lowercased (GitHub owner/repo are
- * case-insensitive — mixed-case origins must not split one project in two).
- * Handles scp (`git@host:owner/repo.git`) and URL forms. Returns null when
- * unparseable. GitLab subgroups collapse to `sub--repo` — set
- * `remote.project` explicitly if that collides.
+ * Derive the portable project key from a git origin URL: the repo name
+ * (last path segment), lowercased (GitHub names are case-insensitive —
+ * mixed-case origins must not split one project in two). Handles scp
+ * (`git@host:owner/repo.git`) and URL forms. Returns null when unparseable.
+ * Two same-named repos from different owners collide — set `remote.project`
+ * explicitly to disambiguate.
  */
 export function projectFromOrigin(originUrl: string): string | null {
   let p = originUrl.trim().replace(/\.git\/?$/, "");
@@ -129,9 +129,8 @@ export function projectFromOrigin(originUrl: string): string | null {
     }
   }
   const segments = p.split("/").filter(Boolean);
-  if (segments.length === 0) return null;
-  const tail = segments.slice(-2).map((seg) => sanitizeSegment(seg));
-  return tail.join("--");
+  const last = segments[segments.length - 1];
+  return last ? sanitizeSegment(last) : null;
 }
 
 const projectCache = new Map<string, string>();
@@ -160,14 +159,21 @@ export function resetProjectCache(): void {
   projectCache.clear();
 }
 
-/** Sanitized per-machine writer id — keeps same-handle clones on separate files. */
-export function defaultWriterId(): string {
+/**
+ * The GitHub username via the gh CLI (setup-time helper for handle defaults —
+ * a network call, so never used on the runtime journal path). Null when gh is
+ * missing or unauthenticated.
+ */
+export function githubUsername(): string | null {
   try {
-    const host = os.hostname().split(".")[0] ?? "";
-    const clean = host.toLowerCase().replace(/[^a-z0-9-]/g, "");
-    return clean || "writer";
+    const out = execFileSync("gh", ["api", "user", "-q", ".login"], {
+      encoding: "utf8",
+      timeout: 5000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    return out || null;
   } catch {
-    return "writer";
+    return null;
   }
 }
 
@@ -224,8 +230,8 @@ export interface PullResult {
  * side's content is fine because the caller regenerates digests from the
  * MERGED events right after the pull, and the deterministic renderer makes
  * both machines converge on identical bytes. Any non-digest conflict still
- * aborts (per-writer NDJSON paths should never conflict; if they do,
- * something is genuinely wrong).
+ * aborts — including two machines appending the same handle's day log
+ * concurrently (accepted: one handle = one writer at a time).
  */
 export function syncPull(dir: string): PullResult {
   // fetch all refs — asking for `main` explicitly fails on a still-empty remote
@@ -501,8 +507,6 @@ export function openJournal(options?: {
   config?: YesChefConfig;
   /** emitting agent id, stamped onto every event (expo | station-<n>) */
   agentId?: string;
-  /** override the per-machine file suffix (tests simulate two machines) */
-  writerId?: string;
 }): RemoteJournal | null {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
@@ -513,7 +517,6 @@ export function openJournal(options?: {
   ensureRepo(dir, url); // best-effort — appends work even if git wiring failed
   const project = resolveProject(config, cwd);
   const handle = resolveHandle(config);
-  const writerId = options?.writerId ?? defaultWriterId();
   const agentId = options?.agentId ?? null;
   const logDir = path.join(dir, "journal", project, handle, "log");
   return {
@@ -521,7 +524,6 @@ export function openJournal(options?: {
     project,
     handle,
     url,
-    writerId,
     agentId,
     append(type, data) {
       try {
@@ -534,11 +536,9 @@ export function openJournal(options?: {
           ...(agentId ? { agent: agentId } : {}),
           data,
         };
-        fs.appendFileSync(
-          path.join(logDir, `${day}.${writerId}.ndjson`),
-          `${JSON.stringify(event)}\n`,
-          { mode: 0o600 },
-        );
+        fs.appendFileSync(path.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}\n`, {
+          mode: 0o600,
+        });
       } catch {
         // best-effort — never fail the bus action being journaled
       }
@@ -574,9 +574,8 @@ function readEventsFromDir(logDir: string, into: JournalEvent[]): void {
 
 /**
  * Read one (project, handle)'s events in causal order. Files sort by date
- * name; per-writer suffixes mean several files per day, so events are
- * re-sorted by `ts` (stable — same-ts events keep their file order), which
- * keeps update-after-insert correct across machines.
+ * name; events are re-sorted by `ts` (stable — same-ts events keep their
+ * file order), which keeps update-after-insert correct across days.
  */
 export function readEvents(dir: string, project: string, handle: string): JournalEvent[] {
   const events: JournalEvent[] = [];

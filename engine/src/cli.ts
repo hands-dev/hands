@@ -30,6 +30,7 @@ import {
 } from "./provision.js";
 import { regenerateDigests } from "./digest.js";
 import {
+  githubUsername,
   listProjects,
   openJournal,
   readEvents,
@@ -147,7 +148,7 @@ function cmdBooks(argv: string[]): void {
   cfg.remote = {
     ...remote,
     url,
-    handle: handleArg ?? remote.handle ?? os.userInfo().username,
+    handle: handleArg ?? remote.handle ?? githubUsername() ?? os.userInfo().username,
   };
   fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
   out(`✔ books attached: ${url} (handle "${String((cfg.remote as Record<string, unknown>).handle)}")`);
