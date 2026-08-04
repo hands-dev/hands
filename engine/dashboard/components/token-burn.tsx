@@ -16,9 +16,8 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { fmtClock, fmtTokens } from "@/lib/format";
+import { orderedSeriesIds, SERIES_PALETTE } from "@/lib/series";
 import type { TokenSeries } from "../../src/tokens.js";
-
-const PALETTE = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
 
 /**
  * Output tokens per 15-min bucket, one line per pane (expo + stations), 24h.
@@ -41,15 +40,13 @@ export function TokenBurn({ tokens }: { tokens: TokenSeries | null }) {
     );
   }
 
-  const ids = Object.keys(tokens.perAgent).sort((a, b) =>
-    a === "expo" ? -1 : b === "expo" ? 1 : a.localeCompare(b, undefined, { numeric: true }),
-  );
-  const shown = ids.slice(0, PALETTE.length);
-  const folded = ids.slice(PALETTE.length);
+  const ids = orderedSeriesIds(Object.keys(tokens.perAgent));
+  const shown = ids.slice(0, SERIES_PALETTE.length);
+  const folded = ids.slice(SERIES_PALETTE.length);
 
   const config: ChartConfig = {};
   shown.forEach((id, i) => {
-    config[id] = { label: id, color: PALETTE[i] };
+    config[id] = { label: id, color: SERIES_PALETTE[i] };
   });
   if (folded.length > 0) config.other = { label: `other (${folded.length})`, color: "var(--muted-foreground)" };
 

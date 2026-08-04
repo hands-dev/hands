@@ -8,9 +8,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Sparkline } from "@/components/sparkline";
+import { fmtTokens } from "@/lib/format";
+import { orderedSeriesIds, seriesColor } from "@/lib/series";
 import { ago } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { Collision, SnapshotAgent } from "../../src/snapshot.js";
+import type { TokenSeries } from "../../src/tokens.js";
 
 function StateDot({ state }: { state: SnapshotAgent["state"] }) {
   return (
@@ -25,7 +29,19 @@ function StateDot({ state }: { state: SnapshotAgent["state"] }) {
   );
 }
 
-function StationCell({ agent, now }: { agent: SnapshotAgent; now: number }) {
+function StationCell({
+  agent,
+  now,
+  tokens,
+  seriesIds,
+}: {
+  agent: SnapshotAgent;
+  now: number;
+  tokens: TokenSeries | null;
+  seriesIds: string[];
+}) {
+  const buckets = tokens?.perAgent[agent.id];
+  const total = tokens?.totals24h[agent.id]?.out ?? 0;
   return (
     <div className={cn("rounded-lg border p-3", agent.state === "offline" && "opacity-50")}>
       <div className="flex items-center gap-2">
@@ -49,6 +65,15 @@ function StationCell({ agent, now }: { agent: SnapshotAgent; now: number }) {
           {ago(now, agent.lastActive ?? agent.lastSeen)}
         </span>
       </div>
+      {buckets ? (
+        <div className="mt-2">
+          <Sparkline
+            points={buckets.map((b) => b.out)}
+            stroke={seriesColor(seriesIds, agent.id)}
+            title={`${agent.id} — ${fmtTokens(total)} output tokens in 24h`}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -56,18 +81,21 @@ function StationCell({ agent, now }: { agent: SnapshotAgent; now: number }) {
 export function StationsGrid({
   agents,
   collisions,
+  tokens,
   now,
 }: {
   agents: SnapshotAgent[];
   collisions: Collision[];
+  tokens: TokenSeries | null;
   now: number;
 }) {
   const onDuty = agents.filter((a) => a.online).length;
+  const seriesIds = orderedSeriesIds(Object.keys(tokens?.perAgent ?? {}));
   return (
     <Card>
       <CardHeader>
         <CardTitle>The line</CardTitle>
-        <CardDescription>Stations, their focus, and wake spend</CardDescription>
+        <CardDescription>Stations, their focus, wake spend, and token burn</CardDescription>
         <CardAction>
           <Badge variant="secondary">
             {onDuty}/{agents.length} on duty
@@ -80,7 +108,9 @@ export function StationsGrid({
             No stations yet — <span className="font-mono text-xs">hands station add -n 2</span>
           </p>
         ) : (
-          agents.map((a) => <StationCell key={a.id} agent={a} now={now} />)
+          agents.map((a) => (
+            <StationCell key={a.id} agent={a} now={now} tokens={tokens} seriesIds={seriesIds} />
+          ))
         )}
         {collisions.length > 0 ? (
           <Alert variant="destructive" className="md:col-span-2">
