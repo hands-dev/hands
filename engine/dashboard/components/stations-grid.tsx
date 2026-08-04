@@ -21,7 +21,7 @@ function StateDot({ state }: { state: SnapshotAgent["state"] }) {
     <span
       className={cn(
         "inline-block size-2 rounded-full",
-        state === "active" && "bg-emerald-500",
+        state === "active" && "bg-heard",
         state === "idle" && "bg-amber-500",
         state === "offline" && "bg-muted-foreground/30",
       )}
