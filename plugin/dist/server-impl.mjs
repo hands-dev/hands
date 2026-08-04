@@ -32852,7 +32852,7 @@ function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
   const header = `
 
 ## Your craft: ${craft}
-The craft is portable \u2014 if the expo reassigns yours mid-session you'll get a waking message; re-read your files via hands_paths (they always resolve from your CURRENT craft).`;
+The craft is portable \u2014 if the expo reassigns yours mid-session you'll get a waking message; re-read your files via hands_paths (they always resolve from your CURRENT craft). If the book's \`last held\` stamp is not today, READ IN before cooking: what shipped in your covered area since then (your station skill's read-in step).`;
   if (!skill && !book) {
     return `${header}
 No book or skill written for this craft yet \u2014 you are founding it.`;
@@ -33641,6 +33641,8 @@ function pathsReport(agentId, cfg, focus) {
       skillFile: files?.skill ?? null
     } : {},
     journalProject: enabled ? resolveProject(cfg) : null,
+    /** the books clone — digest pages under journal/<project>/<handle>/<date>.md (read-in source) */
+    booksDir: enabled ? journalDir() : null,
     journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : enabled ? "never-synced" : "disabled"
   };
 }

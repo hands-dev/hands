@@ -83,9 +83,11 @@ describe("craftContext (instruction injection) + hot-swap", () => {
     const before = pathsReport("station-1", cfg, store.getFocus("station-1")) as {
       book: string | null;
       craft: string | null;
+      booksDir: string | null;
     };
     expect(before.craft).toBe("saucier");
     expect(before.book).toContain(path.join("crafts", "saucier.md"));
+    expect(before.booksDir).toBeNull(); // books not configured in this env
 
     store.setFocus("station-1", "poissonnier"); // the swap — same seat, new craft
     const after = pathsReport("station-1", cfg, store.getFocus("station-1")) as {

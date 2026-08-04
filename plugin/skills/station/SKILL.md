@@ -99,18 +99,43 @@ the contributor's namespace and digests never render them.
 - **The craft skill** (`skillFile`) — the craft's operating MANUAL: procedures you've settled on,
   checks you always run, the shape of a good `result` for this kind of ticket. Same rules.
 
+**Book header convention** (line 2 of every book — the read-in step depends on it):
+
+```
+> covers: app.py order routes, menu validation · last held: 2026-08-04 by station-1
+```
+
+`covers` = the paths/domains this craft owns; `last held` = updated EVERY time you distill.
+
 **When to write:** on a fully idle wake, and ALWAYS before scheduling a `/compact` (that's the
-moment in-context expertise would otherwise die). Never mid-ticket.
+moment in-context expertise would otherwise die). Never mid-ticket. Every write refreshes the
+`last held` stamp — it's how the next holder knows where to catch up from.
+
+**Read in (catch up before cooking).** Whenever you take up a craft whose `last held` is not
+today — a swap, a reboot, a machine move — the kitchen moved while the craft was dormant. Before
+the first ticket:
+
+1. **What shipped in your area:** `git log --oneline --since "<last held>" -- <covers paths>` —
+   the definitive delta for your beat. Skim the diffs that matter.
+2. **What the kitchen did:** if the books are configured (`booksDir` from `hands_paths`), skim
+   the digest pages since that date — `journal/<project>/*/<date>.md`, your handle's and other
+   kitchens' — for tickets and notes touching your area.
+3. **Fold what changed into the book** (and stamp `last held`) — the read-in isn't done until
+   the book is current again.
+
+Keep it proportional: a day's gap is a skim, not an audit; a month's gap deserves real reading.
 
 **Craft swap protocol** — the expo may reassign your craft at any moment (a waking message like
 *"you're the poissonnier now"*):
 
 1. **Distill FIRST.** Write your outgoing craft's book + skill before anything else — you are
-   handing the craft off, and what's only in your context leaves with you.
+   handing the craft off, and what's only in your context leaves with you. Stamp `last held`.
 2. **Adopt.** Call `hands_paths` (it now points at the new craft), read the new book + skill, and
    work from them — trust the previous holder's distillation before re-deriving.
-3. **Confirm** to the expo in one line. A brand-new craft name means you're founding it — start
-   its book with what you learn on the first ticket.
+3. **Read in.** If the new craft's `last held` isn't today, run the read-in above — the craft
+   must be current on its area before it cooks.
+4. **Confirm** to the expo in one line. A brand-new craft name means you're founding it — start
+   its book (with the header convention) from what you learn on the first ticket.
 
 No craft assigned? Work tickets generically, or `hands_ask` the expo for one.
 
