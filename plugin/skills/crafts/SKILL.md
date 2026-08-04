@@ -76,9 +76,13 @@ On approval, found each craft as a **charter stub only** — identity, never kno
 
 ```markdown
 # ordering-api
-> covers: app.py order routes, menu validation · founded 2026-08-04 by /hands:crafts survey
+> covers: app.py order routes, menu validation · founded: 2026-08-04
 (Charter only — the first station to hold this craft writes the real book.)
 ```
+
+The `> covers:` line is load-bearing: it's what the expo's casting reads and what the read-in
+step's `git log -- <paths>` runs over — make it real paths/domains, not prose. The first holder
+adds `· last held:` when it first distills (the station skill's header convention).
 
 Write it to `<craftsDir>/<slug>.md`, nothing else. The book's actual contents are the holding
 station's to write — pre-filling "knowledge" you guessed from a survey would seed the exact
