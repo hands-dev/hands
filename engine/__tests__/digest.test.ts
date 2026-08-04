@@ -10,7 +10,7 @@ import { type JournalEvent, openJournal, syncPull, syncPush } from "../src/remot
 let root: string;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "roundhouse-digest-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-digest-"));
 });
 
 afterEach(() => {
