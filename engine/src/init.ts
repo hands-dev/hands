@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { CONFIG_BASENAME } from "./config.js";
 import { repoInfo } from "./paths.js";
+import { githubUsername } from "./remote.js";
 
 /**
  * `yes-chef init` — per-repo setup, run from inside the target repo. The
@@ -82,7 +83,11 @@ export async function runInit(argv: string[]): Promise<void> {
         };
         if (journalUrl.trim()) {
           const handle =
-            flags.handle ?? (await ask("Books handle (your fleet's namespace)?", os.userInfo().username));
+            flags.handle ??
+            (await ask(
+              "Books handle (your fleet's namespace)?",
+              githubUsername() ?? os.userInfo().username,
+            ));
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
         fs.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}\n`);

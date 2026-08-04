@@ -32379,9 +32379,8 @@ function projectFromOrigin(originUrl) {
     }
   }
   const segments = p.split("/").filter(Boolean);
-  if (segments.length === 0) return null;
-  const tail = segments.slice(-2).map((seg) => sanitizeSegment(seg));
-  return tail.join("--");
+  const last = segments[segments.length - 1];
+  return last ? sanitizeSegment(last) : null;
 }
 var projectCache = /* @__PURE__ */ new Map();
 function resolveProject(config2, cwd = process.cwd()) {
@@ -32396,15 +32395,6 @@ function resolveProject(config2, cwd = process.cwd()) {
   if (!project) project = sanitizeSegment(path8.basename(root));
   projectCache.set(cwd, project);
   return project;
-}
-function defaultWriterId() {
-  try {
-    const host = os4.hostname().split(".")[0] ?? "";
-    const clean = host.toLowerCase().replace(/[^a-z0-9-]/g, "");
-    return clean || "writer";
-  } catch {
-    return "writer";
-  }
 }
 function resolveHandle(config2) {
   const h = config2.remote.handle?.trim();
@@ -32618,7 +32608,6 @@ function openJournal(options) {
   ensureRepo(dir, url2);
   const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
-  const writerId = options?.writerId ?? defaultWriterId();
   const agentId = options?.agentId ?? null;
   const logDir = path8.join(dir, "journal", project, handle, "log");
   return {
@@ -32626,7 +32615,6 @@ function openJournal(options) {
     project,
     handle,
     url: url2,
-    writerId,
     agentId,
     append(type, data) {
       try {
@@ -32639,12 +32627,10 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs8.appendFileSync(
-          path8.join(logDir, `${day}.${writerId}.ndjson`),
-          `${JSON.stringify(event)}
-`,
-          { mode: 384 }
-        );
+        fs8.appendFileSync(path8.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+`, {
+          mode: 384
+        });
       } catch {
       }
     }

@@ -26,7 +26,8 @@ owns the format.
      doesn't exist yet, create it first (`gh repo create <name> --private`) with their go-ahead.
      Skipping is fine — attach later with `yes-chef books <url>`.
    - If a books url was given, also confirm the **handle** (their contributor namespace in the
-     books — default their OS username / first name, lowercase).
+     books — the CLI defaults it to their GitHub username via `gh`, falling back to the OS
+     username).
 3. **Run the CLI** (Bash — quote everything):
 
    ```

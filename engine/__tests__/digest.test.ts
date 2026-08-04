@@ -89,12 +89,11 @@ describe("renderDigest", () => {
 });
 
 describe("regenerateDigests", () => {
-  function journalWith(events: JournalEvent[], remote: string, home: string, writerId: string) {
+  function journalWith(events: JournalEvent[], remote: string, home: string) {
     const j = openJournal({
       env: { YES_CHEF_HOME: path.join(root, home) },
       cwd: root,
       config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "michael", project: "proj" } },
-      writerId,
     })!;
     const logDir = path.join(j.dir, "journal", "proj", "michael", "log");
     fs.mkdirSync(logDir, { recursive: true });
@@ -105,7 +104,7 @@ describe("regenerateDigests", () => {
     }
     for (const [day, evs] of byDay) {
       fs.appendFileSync(
-        path.join(logDir, `${day}.${writerId}.ndjson`),
+        path.join(logDir, `${day}.ndjson`),
         evs.map((e) => JSON.stringify(e)).join("\n") + "\n",
       );
     }
@@ -121,7 +120,7 @@ describe("regenerateDigests", () => {
 
   it("writes digest + README, skips unchanged, respects newer stamps", () => {
     const remote = bareRemote("origin.git");
-    const j = journalWith(SAMPLE, remote, "homeA", "macbook");
+    const j = journalWith(SAMPLE, remote, "homeA");
     const changed = regenerateDigests(j);
     expect(changed).toContain(path.join("journal", "proj", "michael", `${DAY}.md`));
     expect(changed).toContain(path.join("journal", "proj", "michael", "README.md"));
@@ -136,16 +135,25 @@ describe("regenerateDigests", () => {
     expect(readme).toContain(`[${DAY}](./${DAY}.md)`);
   });
 
-  it("two machines, one handle: digests conflict, auto-resolve, and converge (no ping-pong)", () => {
+  it("two machines, one handle, different days: digest-layer conflicts auto-resolve and converge", () => {
     const remote = bareRemote("origin.git");
-    const a = journalWith(SAMPLE.slice(0, 5), remote, "homeA", "macbook");
-    const b = journalWith(SAMPLE.slice(5), remote, "homeB", "studio");
+    const yesterday = "2026-08-02";
+    const tsY = Date.parse(`${yesterday}T12:00:00Z`);
+    const a = journalWith(SAMPLE, remote, "homeA");
+    const late: JournalEvent = {
+      v: 1,
+      ts: tsY,
+      type: "task.create",
+      agent: "expo",
+      data: { id: 9, by: "expo", title: "yesterday's ticket", at: tsY },
+    };
+    const b = journalWith([late], remote, "homeB"); // different day → different log file
 
-    expect(syncPush(a, { force: true }).status).toBe("pushed"); // A: events + digest
+    expect(syncPush(a, { force: true }).status).toBe("pushed"); // A: events + digest + README
 
-    // B renders + COMMITS its digest before ever pulling — the genuine
-    // concurrent-edit case (offline machine). Its <DAY>.md must conflict with
-    // A's on rebase and auto-resolve.
+    // B renders + COMMITS its digest layer before ever pulling — the genuine
+    // concurrent-edit case (offline machine). Its README.md must conflict
+    // with A's on rebase and auto-resolve; the log files never collide.
     regenerateDigests(b);
     execFileSync("git", ["-C", b.dir, "add", "-A", "--", "journal"], { stdio: "ignore" });
     execFileSync("git", ["-C", b.dir, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "offline digest"], { stdio: "ignore" });
@@ -155,24 +163,25 @@ describe("regenerateDigests", () => {
     expect(syncPush(a, { force: true }).status).toBe("clean");
     expect(syncPush(b, { force: true }).status).toBe("clean");
 
-    const fileA = fs.readFileSync(path.join(a.dir, "journal", "proj", "michael", `${DAY}.md`), "utf8");
-    const fileB = fs.readFileSync(path.join(b.dir, "journal", "proj", "michael", `${DAY}.md`), "utf8");
-    expect(fileA).toBe(fileB);
-    // the converged digest reflects BOTH machines' events
-    expect(fileA).toContain("ticket #1"); // fired line
-    expect(fileA).toContain("Good day: plan landed");
+    const dirOf = (j: { dir: string }) => path.join(j.dir, "journal", "proj", "michael");
+    expect(fs.readFileSync(path.join(dirOf(a), "README.md"), "utf8")).toBe(
+      fs.readFileSync(path.join(dirOf(b), "README.md"), "utf8"),
+    );
+    // both days present on both machines
+    expect(fs.readFileSync(path.join(dirOf(a), `${yesterday}.md`), "utf8")).toContain("yesterday's ticket");
+    expect(fs.readFileSync(path.join(dirOf(b), `${DAY}.md`), "utf8")).toContain("Good day: plan landed");
   });
 
   it("regenerates a past date when its events arrive late", () => {
     const remote = bareRemote("origin.git");
     const yesterday = "2026-08-02";
     const tsY = Date.parse(`${yesterday}T12:00:00Z`);
-    const a = journalWith(SAMPLE, remote, "homeA", "macbook");
+    const a = journalWith(SAMPLE, remote, "homeA");
     expect(syncPush(a, { force: true }).status).toBe("pushed");
 
     // machine B pushes an event dated YESTERDAY
     const late: JournalEvent = { v: 1, ts: tsY, type: "task.create", agent: "expo", data: { id: 9, by: "expo", title: "late-arriving", at: tsY } };
-    const b = journalWith([late], remote, "homeB", "studio");
+    const b = journalWith([late], remote, "homeB");
     expect(syncPull(b.dir).ok).toBe(true);
     expect(syncPush(b, { force: true }).status).toBe("pushed");
 

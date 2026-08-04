@@ -71,7 +71,7 @@ append-only event log rendered into browsable daily digest pages (repo → contr
 yes-chef.json                                           layout marker
 journal/<project>/<handle>/<date>.md                    the day's page — the primary artifact
 journal/<project>/<handle>/README.md                    per-contributor index
-journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
+journal/<project>/<handle>/log/<date>.ndjson             the day's event log
 ```
 
 ```jsonc
@@ -84,9 +84,11 @@ journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
   specials, message *counts*. Message **bodies never render** — they stay in the NDJSON layer.
   Regenerated automatically on every sync, including past days when events arrive late;
   `yes-chef digest [--date]` re-renders manually.
-- **One books repo serves every project and contributor.** `project` derives from the code repo's
-  origin (`owner--repo`); writers only touch their own namespace, so sync needs no merge logic.
-  Digest conflicts (same handle, two machines) auto-resolve and re-render from the merged events.
+- **One books repo serves every project and contributor.** `project` is the code repo's name
+  (from its origin; `remote.project` disambiguates same-named repos); the handle defaults to your
+  GitHub username. Writers only touch their own namespace, so sync needs no merge logic. Digest
+  conflicts auto-resolve and re-render from the merged events; one handle = one machine writing at
+  a time (concurrent same-day appends on a shared handle conflict loudly rather than merge).
 - Pushes ride the turn-end hook (debounced ~1/min, offline-tolerant, never fails a bus action).
 - `yes-chef restore` rebuilds the whole coordination state — tickets, questions, specials, focus,
   history — on a restart or a new machine. **If it's not on the books, it didn't happen; you also

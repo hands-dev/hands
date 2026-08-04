@@ -33,12 +33,11 @@ afterEach(() => {
 });
 
 /** A journal wired straight to this test's sandbox (no config file needed). */
-function journalAt(handle: string, url: string, opts?: { home?: string; writerId?: string }) {
+function journalAt(handle: string, url: string, opts?: { home?: string }) {
   const j = openJournal({
     env: { YES_CHEF_HOME: path.join(root, opts?.home ?? "unused-coord") },
     cwd: root,
     config: { ...DEFAULT_CONFIG, remote: { url, handle, project: null } },
-    writerId: opts?.writerId,
   });
   if (!j) throw new Error("journal did not open");
   return j;
@@ -285,45 +284,53 @@ describe("journal repo shape contract", () => {
   });
 });
 
-describe("same-handle multi-writer", () => {
-  it("two machines on one handle append to distinct files and merge cleanly", () => {
+describe("same-handle multi-machine", () => {
+  it("two machines on one handle share the day file cleanly when they pull before appending", () => {
     const remote = bareRemote("origin.git");
-    const a = journalAt("michael", remote, { home: "homeA", writerId: "macbook" });
+    const a = journalAt("michael", remote, { home: "homeA" });
     a.append("task.create", { id: 1, by: "expo", title: "t", state: "assigned", at: 1000 });
     expect(syncPush(a, { force: true }).status).toBe("pushed");
 
-    const b = journalAt("michael", remote, { home: "homeB", writerId: "studio" });
+    const b = journalAt("michael", remote, { home: "homeB" });
     expect(syncPull(b.dir).ok).toBe(true);
     b.append("task.update", { id: 1, state: "returned", result: "done", at: 2000 });
     expect(syncPush(b, { force: true }).status).toBe("pushed");
 
-    // machine A keeps writing the same day — no shared file, no rebase conflict
-    a.append("message", { id: 1, from: "x", to: "y", body: "z", at: 3000 });
-    expect(syncPush(a, { force: true }).status).toBe("pushed");
     expect(syncPull(a.dir).ok).toBe(true);
-
     const events = readEvents(a.dir, a.project, "michael");
-    expect(events.map((e) => e.type)).toEqual(["task.create", "task.update", "message"]); // ts order
+    expect(events.map((e) => e.type)).toEqual(["task.create", "task.update"]); // ts order
   });
 
-  it("survives both sides initializing independently (unrelated root commits)", () => {
+  it("concurrent same-day writes on one handle conflict loudly (one handle = one writer at a time)", () => {
     const remote = bareRemote("origin.git");
-    const a = journalAt("michael", remote, { home: "homeA", writerId: "macbook" });
-    const b = journalAt("michael", remote, { home: "homeB", writerId: "studio" });
+    const a = journalAt("michael", remote, { home: "homeA" });
+    const b = journalAt("michael", remote, { home: "homeB" });
+    a.append("message", { id: 1, from: "x", to: "y", body: "from a", at: 1 });
+    b.append("message", { id: 2, from: "x", to: "y", body: "from b", at: 2 });
+    expect(syncPush(a, { force: true }).status).toBe("pushed");
+    // b diverged on the SAME day file with unrelated history — surfaced, never silently merged
+    expect(syncPush(b, { force: true }).status).toBe("error");
+  });
+
+  it("different handles never contend regardless of timing", () => {
+    const remote = bareRemote("origin.git");
+    const a = journalAt("michael", remote, { home: "homeA" });
+    const b = journalAt("casey", remote, { home: "homeB" });
     a.append("message", { id: 1, from: "x", to: "y", body: "from a", at: 1 });
     b.append("message", { id: 2, from: "x", to: "y", body: "from b", at: 2 });
     expect(syncPush(a, { force: true }).status).toBe("pushed");
     expect(syncPush(b, { force: true }).status).toBe("pushed"); // rebases unrelated history
     expect(syncPull(a.dir).ok).toBe(true);
-    expect(readEvents(a.dir, a.project, "michael")).toHaveLength(2);
+    expect(readEvents(a.dir, a.project, "michael")).toHaveLength(1);
+    expect(readEvents(a.dir, a.project, "casey")).toHaveLength(1);
   });
 });
 
 describe("journal v2: project identity", () => {
-  it("derives owner--repo from scp and https origins, case-insensitively", () => {
-    expect(projectFromOrigin("git@github.com:heymichaelp/Roundhouse.git")).toBe("heymichaelp--roundhouse");
-    expect(projectFromOrigin("https://github.com/HeyMichaelP/roundhouse")).toBe("heymichaelp--roundhouse");
-    expect(projectFromOrigin("https://gitlab.com/group/sub/repo.git")).toBe("sub--repo");
+  it("derives the repo name from scp and https origins, case-insensitively", () => {
+    expect(projectFromOrigin("git@github.com:heymichaelp/Roundhouse.git")).toBe("roundhouse");
+    expect(projectFromOrigin("https://github.com/HeyMichaelP/roundhouse")).toBe("roundhouse");
+    expect(projectFromOrigin("https://gitlab.com/group/sub/repo.git")).toBe("repo");
     expect(projectFromOrigin("")).toBeNull();
   });
 
@@ -342,7 +349,6 @@ describe("journal v2: project identity", () => {
       cwd: root,
       config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "Michael P", project: "My/Proj" } },
       agentId: "station-2",
-      writerId: "macbook",
     })!;
     expect(j.project).toBe("my-proj");
     expect(j.handle).toBe("michael-p");
@@ -350,7 +356,7 @@ describe("journal v2: project identity", () => {
     const logDir = path.join(j.dir, "journal", "my-proj", "michael-p", "log");
     const files = fs.readdirSync(logDir);
     expect(files).toHaveLength(1);
-    expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}\.macbook\.ndjson$/);
+    expect(files[0]).toMatch(/^\d{4}-\d{2}-\d{2}\.ndjson$/);
     const ev = JSON.parse(fs.readFileSync(path.join(logDir, files[0]!), "utf8").trim()) as JournalEvent;
     expect(ev.agent).toBe("station-2");
     expect(syncPush(j, { force: true }).status).toBe("pushed");
