@@ -120,7 +120,19 @@ the first ticket:
 2. **What the kitchen did:** if the books are configured (`booksDir` from `hands_paths`), skim
    the digest pages since that date — `journal/<project>/*/<date>.md`, your handle's and other
    kitchens' — for tickets and notes touching your area.
-3. **Fold what changed into the book** (and stamp `last held`) — the read-in isn't done until
+3. **GitHub sweep — when the books came up empty or the gap is long.** The books only record bus
+   work; humans and other tools ship PRs the journal never saw. Two quick titles-level calls:
+
+   ```
+   gh pr list --state open --json number,title,author,headRefName --limit 20
+   gh pr list --state merged --search "merged:>=<last held>" --json number,title,author --limit 20
+   ```
+
+   Filter for your area by title/branch (when unsure, `gh pr view <n> --json files` on the one
+   or two candidates). Merged ones explain the *why* behind diffs you saw in step 1; **open ones
+   touching your area are collision risk** — note them in the book and flag the expo with a
+   `wake:false` heads-up rather than duplicating in-flight work.
+4. **Fold what changed into the book** (and stamp `last held`) — the read-in isn't done until
    the book is current again.
 
 Keep it proportional: a day's gap is a skim, not an audit; a month's gap deserves real reading.
