@@ -8217,6 +8217,595 @@ var init_priorities = __esm({
   }
 });
 
+// src/digest.ts
+import * as fs7 from "node:fs";
+import * as path7 from "node:path";
+function dayOf(ts) {
+  return new Date(ts).toISOString().slice(0, 10);
+}
+function hhmm(ts) {
+  return new Date(ts).toISOString().slice(11, 16);
+}
+function oneLine(text) {
+  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
+  const points = Array.from(flat);
+  return points.length <= RESULT_MAX ? flat : `${points.slice(0, RESULT_MAX - 1).join("")}\u2026`;
+}
+function agentRank(agent) {
+  if (agent === "expo") return [0, 0, agent];
+  const station = agent.match(/^station-(\d+)$/);
+  if (station) return [1, Number.parseInt(station[1], 10), agent];
+  if (agent === "unattributed") return [3, 0, agent];
+  return [2, 0, agent];
+}
+function compareAgents(a, b) {
+  const [ga, na, sa] = agentRank(a);
+  const [gb, nb, sb] = agentRank(b);
+  return ga - gb || na - nb || sa.localeCompare(sb);
+}
+function describe3(event) {
+  const d = event.data;
+  const t = hhmm(event.ts);
+  switch (event.type) {
+    case "task.create": {
+      const dish = d.dish ? ` (${oneLine(d.dish)})` : "";
+      return `- ${t} ticket #${d.id}${dish} fired: **${oneLine(d.title)}**${d.assignee ? ` \u2192 ${d.assignee}` : " (unassigned)"}`;
+    }
+    case "task.update": {
+      const result = d.result ? ` \u2014 ${oneLine(d.result)}` : "";
+      const verb = d.state === "cancelled" ? "86'd" : d.state === "in_progress" ? "picked up" : String(d.state);
+      return `- ${t} ticket #${d.id} ${verb}${result}`;
+    }
+    case "question.ask":
+      return `- ${t} question #${d.id} asked: ${oneLine(d.question)}`;
+    case "question.escalate":
+      return `- ${t} question #${d.id} escalated${d.recommendation ? ` (rec: ${oneLine(d.recommendation)})` : ""}`;
+    case "question.answer":
+      return `- ${t} question #${d.id} answered by ${d.by}: ${oneLine(d.answer)}`;
+    case "question.outcome":
+      return `- ${t} question #${d.id} outcome: ${d.outcome}${d.note ? ` \u2014 ${oneLine(d.note)}` : ""}`;
+    case "todo.create":
+      return `- ${t} todo #${d.id} added: ${oneLine(d.title)}`;
+    case "todo.update":
+      return `- ${t} todo #${d.id} \u2192 ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
+    case "focus.set":
+      return `- ${t} focus \u2192 ${oneLine(d.focus) || "(cleared)"}`;
+    case "priorities.set": {
+      const items = Array.isArray(d.items) ? d.items : [];
+      const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
+      return `- ${t} specials set (${items.length}): ${list}`;
+    }
+    default:
+      return null;
+  }
+}
+function renderDigest(events, opts) {
+  const day = events.filter((e) => dayOf(e.ts) === opts.date);
+  const focusAsOf = /* @__PURE__ */ new Map();
+  for (const e of events) {
+    if (e.type !== "focus.set" || dayOf(e.ts) > opts.date) continue;
+    const station = String(e.data.station ?? "");
+    const focus = e.data.focus;
+    if (!station) continue;
+    if (typeof focus === "string" && focus.trim()) focusAsOf.set(station, focus.trim());
+    else focusAsOf.delete(station);
+  }
+  const byAgent = /* @__PURE__ */ new Map();
+  const notes = [];
+  let messages = 0;
+  const messagesByAgent = /* @__PURE__ */ new Map();
+  for (const event of day) {
+    const agent = event.agent ?? "unattributed";
+    if (event.type === "digest.note") {
+      notes.push(event);
+      continue;
+    }
+    if (event.type === "message") {
+      messages++;
+      messagesByAgent.set(agent, (messagesByAgent.get(agent) ?? 0) + 1);
+      continue;
+    }
+    if (event.type === "cursor") continue;
+    const owner = event.type === "focus.set" ? String(event.data.station ?? agent) : agent;
+    const bucket = byAgent.get(owner);
+    if (bucket) bucket.push(event);
+    else byAgent.set(owner, [event]);
+  }
+  const lines = [STAMP, `# ${opts.date} \xB7 ${opts.handle} \xB7 ${opts.project}`, ""];
+  if (notes.length > 0) {
+    lines.push("## Notes");
+    for (const note of notes) lines.push(`- ${hhmm(note.ts)} ${oneLine(note.data.text)}`);
+    lines.push("");
+  }
+  const agents = [.../* @__PURE__ */ new Set([...byAgent.keys(), ...messagesByAgent.keys()])].sort(compareAgents);
+  let itemized = 0;
+  for (const agent of agents) {
+    const items = (byAgent.get(agent) ?? []).map(describe3).filter((line) => line !== null);
+    const sent = messagesByAgent.get(agent) ?? 0;
+    if (items.length === 0 && sent === 0) continue;
+    const label = focusAsOf.get(agent);
+    lines.push(label ? `## ${agent} \xB7 ${label}` : `## ${agent}`);
+    lines.push(...items);
+    if (sent > 0) lines.push(`- messages sent: ${sent}`);
+    lines.push("");
+    itemized += items.length;
+  }
+  if (agents.length === 0 && notes.length === 0) {
+    lines.push("_no activity_", "");
+  }
+  const summary = `${itemized} item${itemized === 1 ? "" : "s"} \xB7 ${messages} message${messages === 1 ? "" : "s"}${notes.length > 0 ? ` \xB7 ${notes.length} note${notes.length === 1 ? "" : "s"}` : ""}`;
+  return { date: opts.date, body: `${lines.join("\n")}
+`, summary };
+}
+function renderIndex(days, opts) {
+  const lines = [STAMP, `# ${opts.handle} \xB7 ${opts.project}`, ""];
+  const sorted = [...days].sort((a, b) => b.date.localeCompare(a.date));
+  for (const day of sorted) {
+    lines.push(`- [${day.date}](./${day.date}.md) \u2014 ${day.summary}`);
+  }
+  if (sorted.length === 0) lines.push("_no digests yet_");
+  return `${lines.join("\n")}
+`;
+}
+function writeIfOwn(file2, content) {
+  let existing = null;
+  try {
+    existing = fs7.readFileSync(file2, "utf8");
+  } catch {
+  }
+  if (existing !== null) {
+    if (existing === content) return false;
+    const stamped = existing.match(STAMP_RE);
+    if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
+  }
+  fs7.writeFileSync(file2, content);
+  return true;
+}
+function regenerateDigests(journal, dates) {
+  const events = readEvents(journal.dir, journal.project, journal.handle);
+  if (events.length === 0) return [];
+  const handleDir = path7.join(journal.dir, "journal", journal.project, journal.handle);
+  fs7.mkdirSync(handleDir, { recursive: true });
+  const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
+  const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
+  const changed = [];
+  const index = [];
+  for (const date5 of allDates) {
+    const digest = renderDigest(events, { project: journal.project, handle: journal.handle, date: date5 });
+    index.push({ date: date5, summary: digest.summary });
+    if (!target.includes(date5)) continue;
+    const file2 = path7.join(handleDir, `${date5}.md`);
+    if (writeIfOwn(file2, digest.body)) {
+      changed.push(path7.join("journal", journal.project, journal.handle, `${date5}.md`));
+    }
+  }
+  const readme = renderIndex(index, { project: journal.project, handle: journal.handle });
+  if (writeIfOwn(path7.join(handleDir, "README.md"), readme)) {
+    changed.push(path7.join("journal", journal.project, journal.handle, "README.md"));
+  }
+  return changed;
+}
+var DIGEST_VERSION, STAMP_PREFIX, STAMP, STAMP_RE, RESULT_MAX;
+var init_digest = __esm({
+  "src/digest.ts"() {
+    "use strict";
+    init_remote();
+    DIGEST_VERSION = 1;
+    STAMP_PREFIX = "<!-- yes-chef digest v";
+    STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
+    STAMP_RE = /^<!-- yes-chef digest v(\d+) -->/;
+    RESULT_MAX = 120;
+  }
+});
+
+// src/remote.ts
+import { execFileSync as execFileSync4 } from "node:child_process";
+import * as fs8 from "node:fs";
+import * as os4 from "node:os";
+import * as path8 from "node:path";
+function git3(cwd, args) {
+  return execFileSync4("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: GIT_TIMEOUT_MS
+  }).trim();
+}
+function tryGit(cwd, args) {
+  try {
+    return git3(cwd, args);
+  } catch {
+    return null;
+  }
+}
+function sanitizeSegment(raw, fallback = "unnamed") {
+  const clean = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^\.+/, "");
+  return clean || fallback;
+}
+function projectFromOrigin(originUrl) {
+  let p = originUrl.trim().replace(/\.git\/?$/, "");
+  if (!p) return null;
+  const scp = p.match(/^[^@/]+@[^:/]+:(.+)$/);
+  if (scp) p = scp[1];
+  else {
+    try {
+      p = new URL(p).pathname;
+    } catch {
+    }
+  }
+  const segments = p.split("/").filter(Boolean);
+  const last = segments[segments.length - 1];
+  return last ? sanitizeSegment(last) : null;
+}
+function resolveProject(config2, cwd = process.cwd()) {
+  const override = config2.remote.project?.trim();
+  if (override) return sanitizeSegment(override);
+  const cached2 = projectCache.get(cwd);
+  if (cached2 !== void 0) return cached2;
+  let project = null;
+  const root = repoInfo(cwd)?.repoRoot ?? cwd;
+  const origin = tryGit(root, ["remote", "get-url", "origin"]);
+  if (origin) project = projectFromOrigin(origin);
+  if (!project) project = sanitizeSegment(path8.basename(root));
+  projectCache.set(cwd, project);
+  return project;
+}
+function resolveHandle(config2) {
+  const h = config2.remote.handle?.trim();
+  if (h) return sanitizeSegment(h, "local");
+  try {
+    return sanitizeSegment(os4.userInfo().username, "local");
+  } catch {
+    return "local";
+  }
+}
+function journalDir(env = process.env, cwd = process.cwd()) {
+  return path8.join(coordinationDir(env, cwd), "remote");
+}
+function ensureRepo(dir, url2) {
+  try {
+    fs8.mkdirSync(dir, { recursive: true, mode: 448 });
+    if (!fs8.existsSync(path8.join(dir, ".git"))) {
+      git3(dir, ["init", "-q", "-b", "main"]);
+      git3(dir, ["config", "user.name", "yes-chef"]);
+      git3(dir, ["config", "user.email", "yes-chef@localhost"]);
+    }
+    if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
+      git3(dir, ["remote", "add", "origin", url2]);
+    } else {
+      git3(dir, ["remote", "set-url", "origin", url2]);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+function syncPull(dir) {
+  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return { ok: false, reason: "offline" };
+  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return { ok: true };
+  if (tryGit(dir, ["rev-parse", "--verify", "HEAD"]) === null) {
+    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null ? { ok: true } : { ok: false, reason: "conflict" };
+  }
+  if (tryGit(dir, ["rebase", "-q", "origin/main"]) !== null) return { ok: true };
+  for (let round = 0; round < 10; round++) {
+    const conflictedRaw = tryGit(dir, ["diff", "--name-only", "--diff-filter=U"]);
+    const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
+    const digestOnly = conflicted.length > 0 && conflicted.every((f) => f.startsWith("journal/") && f.endsWith(".md"));
+    if (!digestOnly) break;
+    if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["-c", "core.editor=true", "rebase", "--continue"]) !== null) {
+      return { ok: true };
+    }
+  }
+  tryGit(dir, ["rebase", "--abort"]);
+  return { ok: false, reason: "conflict" };
+}
+function readMarker(dir) {
+  const file2 = path8.join(dir, MARKER_FILE);
+  let raw;
+  try {
+    raw = fs8.readFileSync(file2, "utf8");
+  } catch {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.journal === "number" ? { journal: parsed.journal } : "malformed";
+  } catch {
+    return "malformed";
+  }
+}
+function validateJournal(dir, opts) {
+  const marker = readMarker(dir);
+  if (marker === "malformed") {
+    return { ok: false, reason: `${MARKER_FILE} is malformed \u2014 fix or delete it in the journal repo` };
+  }
+  if (marker) {
+    if (marker.journal > JOURNAL_LAYOUT) {
+      return {
+        ok: false,
+        reason: `journal layout v${marker.journal} was written by a newer yes-chef \u2014 update the plugin`
+      };
+    }
+    if (marker.journal < JOURNAL_LAYOUT) {
+      return {
+        ok: false,
+        reason: `journal layout v${marker.journal} is no longer supported \u2014 start a fresh journal repo`
+      };
+    }
+    return { ok: true };
+  }
+  if (!opts?.write) return { ok: true };
+  let entries = [];
+  try {
+    entries = fs8.readdirSync(dir).filter((e) => e !== ".git");
+  } catch {
+    return { ok: false, reason: `journal dir unreadable: ${dir}` };
+  }
+  const foreign = entries.filter((e) => !OWNED_ROOT.has(e));
+  if (foreign.length > 0 && !opts.adopt) {
+    return {
+      ok: false,
+      needsAdopt: true,
+      reason: "the configured remote.url is not an yes-chef journal (no yes-chef.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `yes-chef sync --adopt` once to initialize the journal structure alongside the existing content."
+    };
+  }
+  fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+`);
+  return { ok: true, bootstrapped: true };
+}
+function debounceMarkerPath(dir) {
+  return path8.join(dir, ".git", "yes-chef-last-push");
+}
+function syncStatusPath(dir) {
+  return path8.join(dir, ".git", "yes-chef-sync-status");
+}
+function writeSyncStatus(dir, result, now) {
+  try {
+    fs8.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
+`);
+  } catch {
+  }
+}
+function readSyncStatus(dir) {
+  try {
+    return JSON.parse(fs8.readFileSync(syncStatusPath(dir), "utf8"));
+  } catch {
+    return null;
+  }
+}
+function changedLogDates(dir, head0, journal) {
+  if (!head0) return void 0;
+  const diff = tryGit(dir, [
+    "diff",
+    "--name-only",
+    `${head0}..HEAD`,
+    "--",
+    path8.join("journal", journal.project, journal.handle, "log")
+  ]);
+  if (diff === null) return void 0;
+  const dates = /* @__PURE__ */ new Set();
+  for (const line of diff.split("\n")) {
+    const m = path8.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
+    if (m) dates.add(m[1]);
+  }
+  return dates;
+}
+function syncPush(journal, opts) {
+  const { dir, project, handle } = journal;
+  const now = opts?.now ?? Date.now();
+  const marker = debounceMarkerPath(dir);
+  if (!opts?.force) {
+    try {
+      if (now - fs8.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
+    } catch {
+    }
+  }
+  const finish = (result) => {
+    writeSyncStatus(dir, result, now);
+    return result;
+  };
+  try {
+    const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
+    const ownPaths = [path8.join("journal", project, handle), MARKER_FILE];
+    const own = ownPaths.filter((p) => fs8.existsSync(path8.join(dir, p)));
+    if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
+    let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
+    if (dirty) {
+      git3(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
+    }
+    const pulled = syncPull(dir);
+    if (!pulled.ok) {
+      return finish({
+        status: "error",
+        detail: pulled.reason === "conflict" ? `rebase conflict on non-digest files \u2014 inspect the journal clone at ${dir}` : "fetch failed (offline?)"
+      });
+    }
+    const validation = validateJournal(dir, { write: true, adopt: opts?.adopt });
+    if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
+    if (validation.bootstrapped) {
+      git3(dir, ["add", "--", MARKER_FILE]);
+      git3(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
+      dirty = true;
+    }
+    const digestDates = changedLogDates(dir, head0, journal);
+    const changedDigests = regenerateDigests(journal, digestDates);
+    if (changedDigests.length > 0) {
+      git3(dir, ["add", "--", path8.join("journal", project, handle)]);
+      git3(dir, ["commit", "-q", "-m", "journal: digests"]);
+      dirty = true;
+    }
+    const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
+    if (!dirty && ahead === "0") {
+      fs8.writeFileSync(marker, "");
+      return finish({ status: "clean" });
+    }
+    git3(dir, ["push", "-q", "-u", "origin", "main"]);
+    fs8.writeFileSync(marker, "");
+    return finish({ status: "pushed" });
+  } catch (err) {
+    return finish({
+      status: "error",
+      detail: err instanceof Error ? err.message.split("\n")[0] : String(err)
+    });
+  }
+}
+function openJournal(options) {
+  const env = options?.env ?? process.env;
+  const cwd = options?.cwd ?? process.cwd();
+  const config2 = options?.config ?? loadConfig({ cwd, env });
+  const url2 = config2.remote.url?.trim();
+  if (!url2) return null;
+  const dir = journalDir(env, cwd);
+  ensureRepo(dir, url2);
+  const project = resolveProject(config2, cwd);
+  const handle = resolveHandle(config2);
+  const agentId = options?.agentId ?? null;
+  const logDir = path8.join(dir, "journal", project, handle, "log");
+  return {
+    dir,
+    project,
+    handle,
+    url: url2,
+    agentId,
+    append(type, data) {
+      try {
+        fs8.mkdirSync(logDir, { recursive: true });
+        const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+        const event = {
+          v: JOURNAL_VERSION,
+          ts: Date.now(),
+          type,
+          ...agentId ? { agent: agentId } : {},
+          data
+        };
+        fs8.appendFileSync(path8.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+`, {
+          mode: 384
+        });
+      } catch {
+      }
+    }
+  };
+}
+function readEventsFromDir(logDir, into, onlyFile) {
+  let files = [];
+  try {
+    files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
+  } catch {
+    return;
+  }
+  if (onlyFile) files = files.filter((f) => f === onlyFile);
+  for (const file2 of files) {
+    let body;
+    try {
+      body = fs8.readFileSync(path8.join(logDir, file2), "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of body.split("\n")) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed && typeof parsed.type === "string" && parsed.data) into.push(parsed);
+      } catch {
+      }
+    }
+  }
+}
+function readEvents(dir, project, handle) {
+  const events = [];
+  readEventsFromDir(path8.join(dir, "journal", project, handle, "log"), events);
+  return events.sort((a, b) => a.ts - b.ts);
+}
+function clip(text, max = 120) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const points = Array.from(flat);
+  return points.length <= max ? flat : `${points.slice(0, max - 1).join("")}\u2026`;
+}
+function summarizeEvent(e) {
+  const d = e.data;
+  const s = (v) => typeof v === "string" ? v : "";
+  switch (e.type) {
+    case "task.create":
+      return clip(`ticket #${d.id} fired${s(d.title) ? `: ${s(d.title)}` : ""}`);
+    case "task.update":
+      return clip(`ticket #${d.id} \u2192 ${s(d.state)}`);
+    case "question.ask":
+      return clip(`asked: ${s(d.question)}`);
+    case "question.answer":
+      return `question #${d.id} answered`;
+    case "question.escalate":
+      return `question #${d.id} escalated`;
+    case "priorities.set":
+      return `specials set (${Array.isArray(d.items) ? d.items.length : 0})`;
+    case "digest.note":
+      return clip(`note: ${s(d.text)}`);
+    case "focus.set":
+      return clip(`${s(d.station)} focus \u2192 ${s(d.focus) || "cleared"}`);
+    case "journal.add":
+      return clip(`${s(d.kind) || "entry"}: ${s(d.text) || s(d.ref)}`);
+    case "todo.create":
+      return clip(`todo for the chef: ${s(d.title)}`);
+    case "todo.update":
+      return `todo #${d.id} \u2192 ${s(d.state)}`;
+    default:
+      return null;
+  }
+}
+function readOtherKitchens(dir, project, ownHandle, opts) {
+  const days = opts?.days ?? 2;
+  const limit = opts?.limitPerHandle ?? 15;
+  let handles = [];
+  try {
+    handles = fs8.readdirSync(path8.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+  } catch {
+    return [];
+  }
+  const kitchens = [];
+  for (const handle of handles) {
+    const logDir = path8.join(dir, "journal", project, handle, "log");
+    let files = [];
+    try {
+      files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
+    } catch {
+    }
+    const events = [];
+    for (const file2 of files) readEventsFromDir(logDir, events, file2);
+    events.sort((a, b) => a.ts - b.ts);
+    const updates = [];
+    for (const e of events) {
+      const summary = summarizeEvent(e);
+      if (summary) updates.push({ ts: e.ts, type: e.type, agent: e.agent ?? null, summary });
+    }
+    const recent = updates.slice(-limit).reverse();
+    kitchens.push({
+      handle,
+      lastTs: events.length > 0 ? events[events.length - 1]?.ts ?? null : null,
+      updates: recent
+    });
+  }
+  return kitchens;
+}
+var JOURNAL_VERSION, JOURNAL_LAYOUT, MARKER_FILE, PUSH_DEBOUNCE_MS, GIT_TIMEOUT_MS, projectCache, OWNED_ROOT;
+var init_remote = __esm({
+  "src/remote.ts"() {
+    "use strict";
+    init_config();
+    init_digest();
+    init_paths();
+    init_priorities();
+    JOURNAL_VERSION = 1;
+    JOURNAL_LAYOUT = 2;
+    MARKER_FILE = "yes-chef.json";
+    PUSH_DEBOUNCE_MS = 6e4;
+    GIT_TIMEOUT_MS = 2e4;
+    projectCache = /* @__PURE__ */ new Map();
+    OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal"]);
+  }
+});
+
 // src/provision.ts
 var provision_exports = {};
 __export(provision_exports, {
@@ -8623,16 +9212,31 @@ function serve(opts) {
   const host = opts?.host ?? "127.0.0.1";
   const port = opts?.port ?? Number(env.YES_CHEF_PORT ?? 4319);
   const tickMs = opts?.tickMs ?? 1e3;
+  const booksTickMs = opts?.booksTickMs ?? 6e4;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
   const store = new Store({ env });
   const db = dbPath(env);
   const principal = loadConfig({ env }).principal.name;
+  const journal = openJournal({ env });
+  let kitchens = [];
+  const refreshKitchens = () => {
+    if (!journal) return;
+    try {
+      syncPull(journal.dir);
+      kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
+    } catch {
+    }
+  };
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
-    return { json: JSON.stringify({ ...snapshot, db, principal }), key: snapshotKey(snapshot) };
+    return {
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens)
+    };
   };
   const clients = /* @__PURE__ */ new Set();
   let timer = null;
+  let booksTimer = null;
   let lastKey = "";
   let ticks = 0;
   const tick = () => {
@@ -8698,11 +9302,21 @@ function serve(opts) {
       }
       clients.add(res);
       if (!timer) timer = setInterval(tick, tickMs);
+      if (journal && !booksTimer) {
+        refreshKitchens();
+        booksTimer = setInterval(refreshKitchens, booksTickMs);
+      }
       req.on("close", () => {
         clients.delete(res);
-        if (clients.size === 0 && timer) {
-          clearInterval(timer);
-          timer = null;
+        if (clients.size === 0) {
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+          if (booksTimer) {
+            clearInterval(booksTimer);
+            booksTimer = null;
+          }
         }
       });
       return;
@@ -8735,6 +9349,10 @@ function serve(opts) {
             clearInterval(timer);
             timer = null;
           }
+          if (booksTimer) {
+            clearInterval(booksTimer);
+            booksTimer = null;
+          }
           for (const res of clients) res.end();
           clients.clear();
           server.close();
@@ -8750,6 +9368,7 @@ var init_serve = __esm({
     "use strict";
     init_config();
     init_paths();
+    init_remote();
     init_snapshot();
     init_store();
     ASSETS = {
@@ -32159,514 +32778,8 @@ function runPublish(store, opts) {
   return { agentId: opts.agentId, branch, fileCount: files.length, commitsJournaled, memoriesJournaled };
 }
 
-// src/remote.ts
-init_config();
-import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs8 from "node:fs";
-import * as os4 from "node:os";
-import * as path8 from "node:path";
-
-// src/digest.ts
-import * as fs7 from "node:fs";
-import * as path7 from "node:path";
-var DIGEST_VERSION = 1;
-var STAMP_PREFIX = "<!-- yes-chef digest v";
-var STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
-var STAMP_RE = /^<!-- yes-chef digest v(\d+) -->/;
-var RESULT_MAX = 120;
-function dayOf(ts) {
-  return new Date(ts).toISOString().slice(0, 10);
-}
-function hhmm(ts) {
-  return new Date(ts).toISOString().slice(11, 16);
-}
-function oneLine(text) {
-  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
-  const points = Array.from(flat);
-  return points.length <= RESULT_MAX ? flat : `${points.slice(0, RESULT_MAX - 1).join("")}\u2026`;
-}
-function agentRank(agent) {
-  if (agent === "expo") return [0, 0, agent];
-  const station = agent.match(/^station-(\d+)$/);
-  if (station) return [1, Number.parseInt(station[1], 10), agent];
-  if (agent === "unattributed") return [3, 0, agent];
-  return [2, 0, agent];
-}
-function compareAgents(a, b) {
-  const [ga, na, sa] = agentRank(a);
-  const [gb, nb, sb] = agentRank(b);
-  return ga - gb || na - nb || sa.localeCompare(sb);
-}
-function describe3(event) {
-  const d = event.data;
-  const t = hhmm(event.ts);
-  switch (event.type) {
-    case "task.create": {
-      const dish = d.dish ? ` (${oneLine(d.dish)})` : "";
-      return `- ${t} ticket #${d.id}${dish} fired: **${oneLine(d.title)}**${d.assignee ? ` \u2192 ${d.assignee}` : " (unassigned)"}`;
-    }
-    case "task.update": {
-      const result = d.result ? ` \u2014 ${oneLine(d.result)}` : "";
-      const verb = d.state === "cancelled" ? "86'd" : d.state === "in_progress" ? "picked up" : String(d.state);
-      return `- ${t} ticket #${d.id} ${verb}${result}`;
-    }
-    case "question.ask":
-      return `- ${t} question #${d.id} asked: ${oneLine(d.question)}`;
-    case "question.escalate":
-      return `- ${t} question #${d.id} escalated${d.recommendation ? ` (rec: ${oneLine(d.recommendation)})` : ""}`;
-    case "question.answer":
-      return `- ${t} question #${d.id} answered by ${d.by}: ${oneLine(d.answer)}`;
-    case "question.outcome":
-      return `- ${t} question #${d.id} outcome: ${d.outcome}${d.note ? ` \u2014 ${oneLine(d.note)}` : ""}`;
-    case "todo.create":
-      return `- ${t} todo #${d.id} added: ${oneLine(d.title)}`;
-    case "todo.update":
-      return `- ${t} todo #${d.id} \u2192 ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
-    case "focus.set":
-      return `- ${t} focus \u2192 ${oneLine(d.focus) || "(cleared)"}`;
-    case "priorities.set": {
-      const items = Array.isArray(d.items) ? d.items : [];
-      const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
-      return `- ${t} specials set (${items.length}): ${list}`;
-    }
-    default:
-      return null;
-  }
-}
-function renderDigest(events, opts) {
-  const day = events.filter((e) => dayOf(e.ts) === opts.date);
-  const focusAsOf = /* @__PURE__ */ new Map();
-  for (const e of events) {
-    if (e.type !== "focus.set" || dayOf(e.ts) > opts.date) continue;
-    const station = String(e.data.station ?? "");
-    const focus = e.data.focus;
-    if (!station) continue;
-    if (typeof focus === "string" && focus.trim()) focusAsOf.set(station, focus.trim());
-    else focusAsOf.delete(station);
-  }
-  const byAgent = /* @__PURE__ */ new Map();
-  const notes = [];
-  let messages = 0;
-  const messagesByAgent = /* @__PURE__ */ new Map();
-  for (const event of day) {
-    const agent = event.agent ?? "unattributed";
-    if (event.type === "digest.note") {
-      notes.push(event);
-      continue;
-    }
-    if (event.type === "message") {
-      messages++;
-      messagesByAgent.set(agent, (messagesByAgent.get(agent) ?? 0) + 1);
-      continue;
-    }
-    if (event.type === "cursor") continue;
-    const owner = event.type === "focus.set" ? String(event.data.station ?? agent) : agent;
-    const bucket = byAgent.get(owner);
-    if (bucket) bucket.push(event);
-    else byAgent.set(owner, [event]);
-  }
-  const lines = [STAMP, `# ${opts.date} \xB7 ${opts.handle} \xB7 ${opts.project}`, ""];
-  if (notes.length > 0) {
-    lines.push("## Notes");
-    for (const note of notes) lines.push(`- ${hhmm(note.ts)} ${oneLine(note.data.text)}`);
-    lines.push("");
-  }
-  const agents = [.../* @__PURE__ */ new Set([...byAgent.keys(), ...messagesByAgent.keys()])].sort(compareAgents);
-  let itemized = 0;
-  for (const agent of agents) {
-    const items = (byAgent.get(agent) ?? []).map(describe3).filter((line) => line !== null);
-    const sent = messagesByAgent.get(agent) ?? 0;
-    if (items.length === 0 && sent === 0) continue;
-    const label = focusAsOf.get(agent);
-    lines.push(label ? `## ${agent} \xB7 ${label}` : `## ${agent}`);
-    lines.push(...items);
-    if (sent > 0) lines.push(`- messages sent: ${sent}`);
-    lines.push("");
-    itemized += items.length;
-  }
-  if (agents.length === 0 && notes.length === 0) {
-    lines.push("_no activity_", "");
-  }
-  const summary = `${itemized} item${itemized === 1 ? "" : "s"} \xB7 ${messages} message${messages === 1 ? "" : "s"}${notes.length > 0 ? ` \xB7 ${notes.length} note${notes.length === 1 ? "" : "s"}` : ""}`;
-  return { date: opts.date, body: `${lines.join("\n")}
-`, summary };
-}
-function renderIndex(days, opts) {
-  const lines = [STAMP, `# ${opts.handle} \xB7 ${opts.project}`, ""];
-  const sorted = [...days].sort((a, b) => b.date.localeCompare(a.date));
-  for (const day of sorted) {
-    lines.push(`- [${day.date}](./${day.date}.md) \u2014 ${day.summary}`);
-  }
-  if (sorted.length === 0) lines.push("_no digests yet_");
-  return `${lines.join("\n")}
-`;
-}
-function writeIfOwn(file2, content) {
-  let existing = null;
-  try {
-    existing = fs7.readFileSync(file2, "utf8");
-  } catch {
-  }
-  if (existing !== null) {
-    if (existing === content) return false;
-    const stamped = existing.match(STAMP_RE);
-    if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
-  }
-  fs7.writeFileSync(file2, content);
-  return true;
-}
-function regenerateDigests(journal, dates) {
-  const events = readEvents(journal.dir, journal.project, journal.handle);
-  if (events.length === 0) return [];
-  const handleDir = path7.join(journal.dir, "journal", journal.project, journal.handle);
-  fs7.mkdirSync(handleDir, { recursive: true });
-  const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
-  const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
-  const changed = [];
-  const index = [];
-  for (const date5 of allDates) {
-    const digest = renderDigest(events, { project: journal.project, handle: journal.handle, date: date5 });
-    index.push({ date: date5, summary: digest.summary });
-    if (!target.includes(date5)) continue;
-    const file2 = path7.join(handleDir, `${date5}.md`);
-    if (writeIfOwn(file2, digest.body)) {
-      changed.push(path7.join("journal", journal.project, journal.handle, `${date5}.md`));
-    }
-  }
-  const readme = renderIndex(index, { project: journal.project, handle: journal.handle });
-  if (writeIfOwn(path7.join(handleDir, "README.md"), readme)) {
-    changed.push(path7.join("journal", journal.project, journal.handle, "README.md"));
-  }
-  return changed;
-}
-
-// src/remote.ts
-init_paths();
-init_priorities();
-var JOURNAL_VERSION = 1;
-var JOURNAL_LAYOUT = 2;
-var MARKER_FILE = "yes-chef.json";
-var PUSH_DEBOUNCE_MS = 6e4;
-var GIT_TIMEOUT_MS = 2e4;
-function git3(cwd, args) {
-  return execFileSync4("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: GIT_TIMEOUT_MS
-  }).trim();
-}
-function tryGit(cwd, args) {
-  try {
-    return git3(cwd, args);
-  } catch {
-    return null;
-  }
-}
-function sanitizeSegment(raw, fallback = "unnamed") {
-  const clean = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^\.+/, "");
-  return clean || fallback;
-}
-function projectFromOrigin(originUrl) {
-  let p = originUrl.trim().replace(/\.git\/?$/, "");
-  if (!p) return null;
-  const scp = p.match(/^[^@/]+@[^:/]+:(.+)$/);
-  if (scp) p = scp[1];
-  else {
-    try {
-      p = new URL(p).pathname;
-    } catch {
-    }
-  }
-  const segments = p.split("/").filter(Boolean);
-  const last = segments[segments.length - 1];
-  return last ? sanitizeSegment(last) : null;
-}
-var projectCache = /* @__PURE__ */ new Map();
-function resolveProject(config2, cwd = process.cwd()) {
-  const override = config2.remote.project?.trim();
-  if (override) return sanitizeSegment(override);
-  const cached2 = projectCache.get(cwd);
-  if (cached2 !== void 0) return cached2;
-  let project = null;
-  const root = repoInfo(cwd)?.repoRoot ?? cwd;
-  const origin = tryGit(root, ["remote", "get-url", "origin"]);
-  if (origin) project = projectFromOrigin(origin);
-  if (!project) project = sanitizeSegment(path8.basename(root));
-  projectCache.set(cwd, project);
-  return project;
-}
-function resolveHandle(config2) {
-  const h = config2.remote.handle?.trim();
-  if (h) return sanitizeSegment(h, "local");
-  try {
-    return sanitizeSegment(os4.userInfo().username, "local");
-  } catch {
-    return "local";
-  }
-}
-function journalDir(env = process.env, cwd = process.cwd()) {
-  return path8.join(coordinationDir(env, cwd), "remote");
-}
-function ensureRepo(dir, url2) {
-  try {
-    fs8.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs8.existsSync(path8.join(dir, ".git"))) {
-      git3(dir, ["init", "-q", "-b", "main"]);
-      git3(dir, ["config", "user.name", "yes-chef"]);
-      git3(dir, ["config", "user.email", "yes-chef@localhost"]);
-    }
-    if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
-      git3(dir, ["remote", "add", "origin", url2]);
-    } else {
-      git3(dir, ["remote", "set-url", "origin", url2]);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-function syncPull(dir) {
-  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return { ok: false, reason: "offline" };
-  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return { ok: true };
-  if (tryGit(dir, ["rev-parse", "--verify", "HEAD"]) === null) {
-    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null ? { ok: true } : { ok: false, reason: "conflict" };
-  }
-  if (tryGit(dir, ["rebase", "-q", "origin/main"]) !== null) return { ok: true };
-  for (let round = 0; round < 10; round++) {
-    const conflictedRaw = tryGit(dir, ["diff", "--name-only", "--diff-filter=U"]);
-    const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
-    const digestOnly = conflicted.length > 0 && conflicted.every((f) => f.startsWith("journal/") && f.endsWith(".md"));
-    if (!digestOnly) break;
-    if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
-    if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
-    if (tryGit(dir, ["-c", "core.editor=true", "rebase", "--continue"]) !== null) {
-      return { ok: true };
-    }
-  }
-  tryGit(dir, ["rebase", "--abort"]);
-  return { ok: false, reason: "conflict" };
-}
-var OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal"]);
-function readMarker(dir) {
-  const file2 = path8.join(dir, MARKER_FILE);
-  let raw;
-  try {
-    raw = fs8.readFileSync(file2, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed?.journal === "number" ? { journal: parsed.journal } : "malformed";
-  } catch {
-    return "malformed";
-  }
-}
-function validateJournal(dir, opts) {
-  const marker = readMarker(dir);
-  if (marker === "malformed") {
-    return { ok: false, reason: `${MARKER_FILE} is malformed \u2014 fix or delete it in the journal repo` };
-  }
-  if (marker) {
-    if (marker.journal > JOURNAL_LAYOUT) {
-      return {
-        ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer yes-chef \u2014 update the plugin`
-      };
-    }
-    if (marker.journal < JOURNAL_LAYOUT) {
-      return {
-        ok: false,
-        reason: `journal layout v${marker.journal} is no longer supported \u2014 start a fresh journal repo`
-      };
-    }
-    return { ok: true };
-  }
-  if (!opts?.write) return { ok: true };
-  let entries = [];
-  try {
-    entries = fs8.readdirSync(dir).filter((e) => e !== ".git");
-  } catch {
-    return { ok: false, reason: `journal dir unreadable: ${dir}` };
-  }
-  const foreign = entries.filter((e) => !OWNED_ROOT.has(e));
-  if (foreign.length > 0 && !opts.adopt) {
-    return {
-      ok: false,
-      needsAdopt: true,
-      reason: "the configured remote.url is not an yes-chef journal (no yes-chef.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `yes-chef sync --adopt` once to initialize the journal structure alongside the existing content."
-    };
-  }
-  fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
-`);
-  return { ok: true, bootstrapped: true };
-}
-function debounceMarkerPath(dir) {
-  return path8.join(dir, ".git", "yes-chef-last-push");
-}
-function syncStatusPath(dir) {
-  return path8.join(dir, ".git", "yes-chef-sync-status");
-}
-function writeSyncStatus(dir, result, now) {
-  try {
-    fs8.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
-`);
-  } catch {
-  }
-}
-function readSyncStatus(dir) {
-  try {
-    return JSON.parse(fs8.readFileSync(syncStatusPath(dir), "utf8"));
-  } catch {
-    return null;
-  }
-}
-function changedLogDates(dir, head0, journal) {
-  if (!head0) return void 0;
-  const diff = tryGit(dir, [
-    "diff",
-    "--name-only",
-    `${head0}..HEAD`,
-    "--",
-    path8.join("journal", journal.project, journal.handle, "log")
-  ]);
-  if (diff === null) return void 0;
-  const dates = /* @__PURE__ */ new Set();
-  for (const line of diff.split("\n")) {
-    const m = path8.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
-    if (m) dates.add(m[1]);
-  }
-  return dates;
-}
-function syncPush(journal, opts) {
-  const { dir, project, handle } = journal;
-  const now = opts?.now ?? Date.now();
-  const marker = debounceMarkerPath(dir);
-  if (!opts?.force) {
-    try {
-      if (now - fs8.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
-    } catch {
-    }
-  }
-  const finish = (result) => {
-    writeSyncStatus(dir, result, now);
-    return result;
-  };
-  try {
-    const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
-    const ownPaths = [path8.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs8.existsSync(path8.join(dir, p)));
-    if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
-    let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
-    if (dirty) {
-      git3(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
-    }
-    const pulled = syncPull(dir);
-    if (!pulled.ok) {
-      return finish({
-        status: "error",
-        detail: pulled.reason === "conflict" ? `rebase conflict on non-digest files \u2014 inspect the journal clone at ${dir}` : "fetch failed (offline?)"
-      });
-    }
-    const validation = validateJournal(dir, { write: true, adopt: opts?.adopt });
-    if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
-    if (validation.bootstrapped) {
-      git3(dir, ["add", "--", MARKER_FILE]);
-      git3(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
-      dirty = true;
-    }
-    const digestDates = changedLogDates(dir, head0, journal);
-    const changedDigests = regenerateDigests(journal, digestDates);
-    if (changedDigests.length > 0) {
-      git3(dir, ["add", "--", path8.join("journal", project, handle)]);
-      git3(dir, ["commit", "-q", "-m", "journal: digests"]);
-      dirty = true;
-    }
-    const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
-    if (!dirty && ahead === "0") {
-      fs8.writeFileSync(marker, "");
-      return finish({ status: "clean" });
-    }
-    git3(dir, ["push", "-q", "-u", "origin", "main"]);
-    fs8.writeFileSync(marker, "");
-    return finish({ status: "pushed" });
-  } catch (err) {
-    return finish({
-      status: "error",
-      detail: err instanceof Error ? err.message.split("\n")[0] : String(err)
-    });
-  }
-}
-function openJournal(options) {
-  const env = options?.env ?? process.env;
-  const cwd = options?.cwd ?? process.cwd();
-  const config2 = options?.config ?? loadConfig({ cwd, env });
-  const url2 = config2.remote.url?.trim();
-  if (!url2) return null;
-  const dir = journalDir(env, cwd);
-  ensureRepo(dir, url2);
-  const project = resolveProject(config2, cwd);
-  const handle = resolveHandle(config2);
-  const agentId = options?.agentId ?? null;
-  const logDir = path8.join(dir, "journal", project, handle, "log");
-  return {
-    dir,
-    project,
-    handle,
-    url: url2,
-    agentId,
-    append(type, data) {
-      try {
-        fs8.mkdirSync(logDir, { recursive: true });
-        const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const event = {
-          v: JOURNAL_VERSION,
-          ts: Date.now(),
-          type,
-          ...agentId ? { agent: agentId } : {},
-          data
-        };
-        fs8.appendFileSync(path8.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
-`, {
-          mode: 384
-        });
-      } catch {
-      }
-    }
-  };
-}
-function readEventsFromDir(logDir, into) {
-  let files = [];
-  try {
-    files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
-  } catch {
-    return;
-  }
-  for (const file2 of files) {
-    let body;
-    try {
-      body = fs8.readFileSync(path8.join(logDir, file2), "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of body.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed && typeof parsed.type === "string" && parsed.data) into.push(parsed);
-      } catch {
-      }
-    }
-  }
-}
-function readEvents(dir, project, handle) {
-  const events = [];
-  readEventsFromDir(path8.join(dir, "journal", project, handle, "log"), events);
-  return events.sort((a, b) => a.ts - b.ts);
-}
-
 // src/server.ts
+init_remote();
 init_store();
 var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;

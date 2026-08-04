@@ -8701,13 +8701,14 @@ function openJournal(options) {
     }
   };
 }
-function readEventsFromDir(logDir, into) {
+function readEventsFromDir(logDir, into, onlyFile) {
   let files = [];
   try {
     files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
     return;
   }
+  if (onlyFile) files = files.filter((f) => f === onlyFile);
   for (const file2 of files) {
     let body;
     try {
@@ -8729,6 +8730,75 @@ function readEvents(dir, project, handle) {
   const events = [];
   readEventsFromDir(path8.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
+}
+function clip(text, max = 120) {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const points = Array.from(flat);
+  return points.length <= max ? flat : `${points.slice(0, max - 1).join("")}\u2026`;
+}
+function summarizeEvent(e) {
+  const d = e.data;
+  const s = (v) => typeof v === "string" ? v : "";
+  switch (e.type) {
+    case "task.create":
+      return clip(`ticket #${d.id} fired${s(d.title) ? `: ${s(d.title)}` : ""}`);
+    case "task.update":
+      return clip(`ticket #${d.id} \u2192 ${s(d.state)}`);
+    case "question.ask":
+      return clip(`asked: ${s(d.question)}`);
+    case "question.answer":
+      return `question #${d.id} answered`;
+    case "question.escalate":
+      return `question #${d.id} escalated`;
+    case "priorities.set":
+      return `specials set (${Array.isArray(d.items) ? d.items.length : 0})`;
+    case "digest.note":
+      return clip(`note: ${s(d.text)}`);
+    case "focus.set":
+      return clip(`${s(d.station)} focus \u2192 ${s(d.focus) || "cleared"}`);
+    case "journal.add":
+      return clip(`${s(d.kind) || "entry"}: ${s(d.text) || s(d.ref)}`);
+    case "todo.create":
+      return clip(`todo for the chef: ${s(d.title)}`);
+    case "todo.update":
+      return `todo #${d.id} \u2192 ${s(d.state)}`;
+    default:
+      return null;
+  }
+}
+function readOtherKitchens(dir, project, ownHandle, opts) {
+  const days = opts?.days ?? 2;
+  const limit = opts?.limitPerHandle ?? 15;
+  let handles = [];
+  try {
+    handles = fs8.readdirSync(path8.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+  } catch {
+    return [];
+  }
+  const kitchens = [];
+  for (const handle of handles) {
+    const logDir = path8.join(dir, "journal", project, handle, "log");
+    let files = [];
+    try {
+      files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
+    } catch {
+    }
+    const events = [];
+    for (const file2 of files) readEventsFromDir(logDir, events, file2);
+    events.sort((a, b) => a.ts - b.ts);
+    const updates = [];
+    for (const e of events) {
+      const summary = summarizeEvent(e);
+      if (summary) updates.push({ ts: e.ts, type: e.type, agent: e.agent ?? null, summary });
+    }
+    const recent = updates.slice(-limit).reverse();
+    kitchens.push({
+      handle,
+      lastTs: events.length > 0 ? events[events.length - 1]?.ts ?? null : null,
+      updates: recent
+    });
+  }
+  return kitchens;
 }
 function listProjects(dir) {
   try {
@@ -9185,16 +9255,31 @@ function serve(opts) {
   const host = opts?.host ?? "127.0.0.1";
   const port = opts?.port ?? Number(env.YES_CHEF_PORT ?? 4319);
   const tickMs = opts?.tickMs ?? 1e3;
+  const booksTickMs = opts?.booksTickMs ?? 6e4;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
   const store = new Store({ env });
   const db = dbPath(env);
   const principal = loadConfig({ env }).principal.name;
+  const journal = openJournal({ env });
+  let kitchens = [];
+  const refreshKitchens = () => {
+    if (!journal) return;
+    try {
+      syncPull(journal.dir);
+      kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
+    } catch {
+    }
+  };
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
-    return { json: JSON.stringify({ ...snapshot, db, principal }), key: snapshotKey(snapshot) };
+    return {
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens)
+    };
   };
   const clients = /* @__PURE__ */ new Set();
   let timer = null;
+  let booksTimer = null;
   let lastKey = "";
   let ticks = 0;
   const tick = () => {
@@ -9260,11 +9345,21 @@ function serve(opts) {
       }
       clients.add(res);
       if (!timer) timer = setInterval(tick, tickMs);
+      if (journal && !booksTimer) {
+        refreshKitchens();
+        booksTimer = setInterval(refreshKitchens, booksTickMs);
+      }
       req.on("close", () => {
         clients.delete(res);
-        if (clients.size === 0 && timer) {
-          clearInterval(timer);
-          timer = null;
+        if (clients.size === 0) {
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+          if (booksTimer) {
+            clearInterval(booksTimer);
+            booksTimer = null;
+          }
         }
       });
       return;
@@ -9297,6 +9392,10 @@ function serve(opts) {
             clearInterval(timer);
             timer = null;
           }
+          if (booksTimer) {
+            clearInterval(booksTimer);
+            booksTimer = null;
+          }
           for (const res of clients) res.end();
           clients.clear();
           server.close();
@@ -9312,6 +9411,7 @@ var init_serve = __esm({
     "use strict";
     init_config();
     init_paths();
+    init_remote();
     init_snapshot();
     init_store();
     ASSETS = {

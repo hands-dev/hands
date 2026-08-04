@@ -1,4 +1,5 @@
 import { JournalFeed } from "@/components/journal-feed";
+import { OtherKitchens } from "@/components/kitchens";
 import { NeedsYou, OpenQuestions } from "@/components/questions-lane";
 import { Specials } from "@/components/specials";
 import { StationsGrid } from "@/components/stations-grid";
@@ -62,6 +63,7 @@ export function App() {
           <OpenQuestions questions={open} now={snapshot.now} />
           <Todos todos={snapshot.todos} principal={snapshot.principal} now={snapshot.now} />
           <JournalFeed journal={snapshot.journal} now={snapshot.now} />
+          <OtherKitchens kitchens={snapshot.kitchens} now={snapshot.now} />
         </div>
       </main>
     </div>

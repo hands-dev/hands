@@ -4,11 +4,17 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { dbPath } from "./paths.js";
+import { openJournal, type OtherKitchen, readOtherKitchens, syncPull } from "./remote.js";
 import { buildSnapshot, type Snapshot } from "./snapshot.js";
 import { Store } from "./store.js";
 
 /** The one wire shape — served by /api/state and pushed on /api/events. */
-export type DashboardPayload = Snapshot & { db: string; principal: string };
+export type DashboardPayload = Snapshot & {
+  db: string;
+  principal: string;
+  /** other handles' recent books activity (empty when the books are off) */
+  kitchens: OtherKitchen[];
+};
 
 export interface ServeHandle {
   port: number;
@@ -67,6 +73,8 @@ export function serve(opts?: {
   env?: NodeJS.ProcessEnv;
   /** SSE change-poll interval (test hook) */
   tickMs?: number;
+  /** books pull-and-reread interval (test hook) */
+  booksTickMs?: number;
   /** where dashboard.js/.css live (test hook) */
   assetsDir?: string;
 }): Promise<ServeHandle> {
@@ -74,18 +82,37 @@ export function serve(opts?: {
   const host = opts?.host ?? "127.0.0.1";
   const port = opts?.port ?? Number(env.YES_CHEF_PORT ?? 4319);
   const tickMs = opts?.tickMs ?? 1000;
+  const booksTickMs = opts?.booksTickMs ?? 60_000;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
   const store = new Store({ env });
   const db = dbPath(env);
   const principal = loadConfig({ env }).principal.name;
+  // Multiplayer read: other handles in the books. The viewer never appends —
+  // it only pulls (best-effort, on the slow tick) and reads the clone.
+  const journal = openJournal({ env });
+  let kitchens: OtherKitchen[] = [];
+
+  const refreshKitchens = (): void => {
+    if (!journal) return;
+    try {
+      syncPull(journal.dir); // best-effort — offline or a concurrent sync just means stale
+      kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
+    } catch {
+      // keep the previous read
+    }
+  };
 
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
-    return { json: JSON.stringify({ ...snapshot, db, principal }), key: snapshotKey(snapshot) };
+    return {
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens),
+    };
   };
 
   const clients = new Set<ServerResponse>();
   let timer: NodeJS.Timeout | null = null;
+  let booksTimer: NodeJS.Timeout | null = null;
   let lastKey = "";
   let ticks = 0;
 
@@ -149,11 +176,21 @@ export function serve(opts?: {
       }
       clients.add(res);
       if (!timer) timer = setInterval(tick, tickMs);
+      if (journal && !booksTimer) {
+        refreshKitchens(); // first viewer gets a fresh multiplayer read
+        booksTimer = setInterval(refreshKitchens, booksTickMs);
+      }
       req.on("close", () => {
         clients.delete(res);
-        if (clients.size === 0 && timer) {
-          clearInterval(timer);
-          timer = null;
+        if (clients.size === 0) {
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+          if (booksTimer) {
+            clearInterval(booksTimer);
+            booksTimer = null;
+          }
         }
       });
       return;
@@ -190,6 +227,10 @@ export function serve(opts?: {
           if (timer) {
             clearInterval(timer);
             timer = null;
+          }
+          if (booksTimer) {
+            clearInterval(booksTimer);
+            booksTimer = null;
           }
           for (const res of clients) res.end();
           clients.clear();

@@ -546,13 +546,14 @@ export function openJournal(options?: {
   };
 }
 
-function readEventsFromDir(logDir: string, into: JournalEvent[]): void {
+function readEventsFromDir(logDir: string, into: JournalEvent[], onlyFile?: string): void {
   let files: string[] = [];
   try {
     files = fs.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
     return;
   }
+  if (onlyFile) files = files.filter((f) => f === onlyFile);
   for (const file of files) {
     let body: string;
     try {
@@ -581,6 +582,117 @@ export function readEvents(dir: string, project: string, handle: string): Journa
   const events: JournalEvent[] = [];
   readEventsFromDir(path.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
+}
+
+export interface KitchenUpdate {
+  ts: number;
+  type: string;
+  agent: string | null;
+  summary: string;
+}
+
+export interface OtherKitchen {
+  handle: string;
+  lastTs: number | null;
+  updates: KitchenUpdate[];
+}
+
+/** Code-point-safe truncation for update summaries. */
+function clip(text: string, max = 120): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  const points = Array.from(flat);
+  return points.length <= max ? flat : `${points.slice(0, max - 1).join("")}…`;
+}
+
+/**
+ * One line per event for the other-kitchens feed. Message BODIES never
+ * render (same rule as digests — they stay in the NDJSON layer); bookkeeping
+ * events return null and are skipped.
+ */
+function summarizeEvent(e: JournalEvent): string | null {
+  const d = e.data as Record<string, unknown>;
+  const s = (v: unknown): string => (typeof v === "string" ? v : "");
+  switch (e.type) {
+    case "task.create":
+      return clip(`ticket #${d.id} fired${s(d.title) ? `: ${s(d.title)}` : ""}`);
+    case "task.update":
+      return clip(`ticket #${d.id} → ${s(d.state)}`);
+    case "question.ask":
+      return clip(`asked: ${s(d.question)}`);
+    case "question.answer":
+      return `question #${d.id} answered`;
+    case "question.escalate":
+      return `question #${d.id} escalated`;
+    case "priorities.set":
+      return `specials set (${Array.isArray(d.items) ? d.items.length : 0})`;
+    case "digest.note":
+      return clip(`note: ${s(d.text)}`);
+    case "focus.set":
+      return clip(`${s(d.station)} focus → ${s(d.focus) || "cleared"}`);
+    case "journal.add":
+      return clip(`${s(d.kind) || "entry"}: ${s(d.text) || s(d.ref)}`);
+    case "todo.create":
+      return clip(`todo for the chef: ${s(d.title)}`);
+    case "todo.update":
+      return `todo #${d.id} → ${s(d.state)}`;
+    default:
+      return null; // messages, cursors, unknown bookkeeping — not feed material
+  }
+}
+
+/**
+ * Recent activity from every OTHER handle in this project's books — the
+ * multiplayer read. Scans only the last `days` day-files per handle, so cost
+ * stays flat as history grows. Purely local (reads the clone); pair with a
+ * periodic syncPull for liveness.
+ */
+export function readOtherKitchens(
+  dir: string,
+  project: string,
+  ownHandle: string,
+  opts?: { days?: number; limitPerHandle?: number },
+): OtherKitchen[] {
+  const days = opts?.days ?? 2;
+  const limit = opts?.limitPerHandle ?? 15;
+  let handles: string[] = [];
+  try {
+    handles = fs
+      .readdirSync(path.join(dir, "journal", project), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== ownHandle)
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+  const kitchens: OtherKitchen[] = [];
+  for (const handle of handles) {
+    const logDir = path.join(dir, "journal", project, handle, "log");
+    let files: string[] = [];
+    try {
+      files = fs
+        .readdirSync(logDir)
+        .filter((f) => f.endsWith(".ndjson"))
+        .sort()
+        .slice(-days);
+    } catch {
+      // handle dir without a log tree — still list it, empty
+    }
+    const events: JournalEvent[] = [];
+    for (const file of files) readEventsFromDir(logDir, events, file);
+    events.sort((a, b) => a.ts - b.ts);
+    const updates: KitchenUpdate[] = [];
+    for (const e of events) {
+      const summary = summarizeEvent(e);
+      if (summary) updates.push({ ts: e.ts, type: e.type, agent: e.agent ?? null, summary });
+    }
+    const recent = updates.slice(-limit).reverse(); // newest first
+    kitchens.push({
+      handle,
+      lastTs: events.length > 0 ? (events[events.length - 1]?.ts ?? null) : null,
+      updates: recent,
+    });
+  }
+  return kitchens;
 }
 
 /** Project dirs present in the journal (the restore-miss hint). */
