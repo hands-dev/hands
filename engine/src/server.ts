@@ -27,7 +27,14 @@ import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
-import { journalDir, openJournal, readSyncStatus, resolveProject, syncPush } from "./remote.js";
+import {
+  journalDir,
+  openJournal,
+  readSyncStatus,
+  resolveProject,
+  stationFiles,
+  syncPush,
+} from "./remote.js";
 import { type MessageRow, Store } from "./store.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
@@ -53,6 +60,38 @@ function presentMessage(row: MessageRow) {
     thread: row.thread_id ?? undefined,
     createdAt: new Date(row.created_at).toISOString(),
   };
+}
+
+/**
+ * A station's self-managed context, injected into its MCP instructions at
+ * connect — this is what makes a rebooted (or machine-moved, when the books
+ * carry the files) station come up already knowing its beat. Capped per file
+ * so a neglected book can't blow up the context.
+ */
+export function stationContext(
+  agentId: string,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  if (!isStation(agentId)) return "";
+  const files = stationFiles(agentId, env, cwd);
+  const read = (file: string, cap = 6000): string | null => {
+    try {
+      const body = fs.readFileSync(file, "utf8").trim();
+      if (!body) return null;
+      const points = Array.from(body);
+      return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
+    } catch {
+      return null;
+    }
+  };
+  const skill = read(files.skill);
+  const book = read(files.book);
+  if (!skill && !book) return "";
+  return (
+    (skill ? `\n\n## Your station skill (self-maintained — ${files.skill})\n${skill}` : "") +
+    (book ? `\n\n## Your prep book (self-maintained — ${files.book})\n${book}` : "")
+  );
 }
 
 export function buildServer(store: Store, agentId: string, config?: YesChefConfig): McpServer {
@@ -102,7 +141,14 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
             "to-do list: yc_todo_add concrete things only they can do (idempotent via dedupKey), " +
             "and yc_todo_update state='done' with a doneSignal when a strong signal (merged PR, " +
             "commit, memory write, answered escalation) shows they finished one."
-          : ""),
+          : "") +
+        (isStation(agentId)
+          ? " Keep your station files current (paths in yc_paths): your PREP BOOK (distilled beat " +
+            "knowledge — rewrite, don't append; ≤150 lines) and your STATION SKILL (your own " +
+            "operating manual). Update them on idle wakes and before any /compact — they are how " +
+            "your expertise survives reboots and machine moves."
+          : "") +
+        stationContext(agentId),
     },
   );
 
@@ -1002,6 +1048,11 @@ export function pathsReport(agentId: string, cfg: YesChefConfig) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
+    /** every station's self-managed files live here; per-agent paths for stations */
+    stationsDir: stationFiles(agentId).dir,
+    ...(isStation(agentId)
+      ? { book: stationFiles(agentId).book, skillFile: stationFiles(agentId).skill }
+      : {}),
     journalProject: enabled ? resolveProject(cfg) : null,
     journalSync: journal
       ? { ...journal, at: new Date(journal.at).toISOString() }

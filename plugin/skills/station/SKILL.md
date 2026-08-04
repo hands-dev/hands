@@ -30,7 +30,10 @@ chatty behavior is visible.
 ## First invocation — find your identity, then arm the Monitor (once)
 
 1. **Resolve your id + notify path** with the `yc_paths` tool — the bus is scoped per repo,
-   so never guess paths. Note `agentId` (your `station-<n>`), `notify`, and `coordinationDir`.
+   so never guess paths. Note `agentId` (your `station-<n>`), `notify`, `coordinationDir`, and
+   your self-managed files: `book` (your prep book) and `skillFile` (your station skill). Their
+   current contents were already injected into your server instructions — that's your restored
+   expertise; trust it before re-deriving anything.
 2. **Don't double-arm.** Check whether the tail is already running — substitute your id:
 
    ```
@@ -80,6 +83,25 @@ chatty behavior is visible.
    (empty inbox, no in-flight ticket), run the compaction check below when picking the next
    heartbeat prompt.
 
+## Your book & your craft (self-maintained, durable)
+
+Two files are yours alone — how your expertise survives reboots, compaction, and (when the books
+are configured) machine moves. Both are injected into your instructions at session start, and the
+books sync ships them under the contributor's namespace; digests never render them.
+
+- **The prep book** (`book` from `yc_paths`) — distilled beat KNOWLEDGE: what you've learned about
+  your focus area — key files and their quirks, decisions and why, gotchas, domain facts. It is a
+  distillation, not a log: **rewrite it, don't append**; keep it ≤150 lines. If it was truncated
+  in your instructions, trimming it is due.
+- **Your station skill** (`skillFile`) — your own operating MANUAL: how you work this beat —
+  procedures you've settled on, checks you always run, the shape of a good `result` for your kind
+  of ticket. Same rules: curated, tight.
+
+**When to write:** on a fully idle wake, and ALWAYS before scheduling a `/compact` (that's the
+moment in-context expertise would otherwise die). Never mid-ticket. Update `yc_focus` when your
+beat shifts, and reflect the shift in the book. A retired station's files stay behind for whoever
+takes the beat next.
+
 ## Wake signal, heartbeat & compaction
 
 - The **Monitor is the primary wake signal** — sub-second from inbound to drain.
@@ -95,11 +117,12 @@ chatty behavior is visible.
   find "$m" -mmin +60 | grep -q . && echo DUE  # DUE only when >60 min old (plain checks never reset it)
   ```
 
-  If **DUE**: `touch` the marker, then end the turn by scheduling the next wakeup with prompt
-  **`/compact`** instead of `/loop /yc:station`. The wakeup-prompt channel is the only way the loop
-  can trigger a built-in slash command; the persistent Monitor stays armed across the compaction,
-  and the skill instructions survive in the summary, so the loop continues seamlessly. Otherwise
-  re-arm the normal `/loop /yc:station` heartbeat.
+  If **DUE**: first update your prep book + station skill (the section above — this is the write
+  moment that matters most), `touch` the marker, then end the turn by scheduling the next wakeup
+  with prompt **`/compact`** instead of `/loop /yc:station`. The wakeup-prompt channel is the only
+  way the loop can trigger a built-in slash command; the persistent Monitor stays armed across the
+  compaction, and your book + skill are re-injected at reconnect, so the loop continues seamlessly.
+  Otherwise re-arm the normal `/loop /yc:station` heartbeat.
 
 ## Guardrails
 

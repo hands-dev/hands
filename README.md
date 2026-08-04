@@ -72,6 +72,8 @@ yes-chef.json                                           layout marker
 journal/<project>/<handle>/<date>.md                    the day's page — the primary artifact
 journal/<project>/<handle>/README.md                    per-contributor index
 journal/<project>/<handle>/log/<date>.ndjson             the day's event log
+journal/<project>/<handle>/stations/<id>.md              a station's prep book (self-managed)
+journal/<project>/<handle>/stations/<id>.skill.md        a station's own SKILL (self-managed)
 ```
 
 ```jsonc
@@ -96,9 +98,15 @@ journal/<project>/<handle>/log/<date>.ndjson             the day's event log
 - **Shape is validated, never assumed:** empty repos self-initialize; a repo with other content is
   refused until an explicit `yes-chef sync --adopt`; a layout newer or older than this build fails
   loudly.
+- **Stations mature on their own.** Each station self-curates a **prep book** (distilled beat
+  knowledge) and its own **station skill** (its operating manual) under the contributor's
+  namespace. The server injects both at connect, so a rebooted — or machine-moved — station comes
+  up already knowing its beat. Digests never render them: the shared narrative stays the expo's;
+  each kitchen's line matures under its own handle.
 - **Open books = multiplayer.** Two people pointing at one books repo each write their own pages
   and read each other's — the whole cross-kitchen story is "every kitchen keeps its book; skim the
-  other kitchens' pages." (A dashboard lane for that is the natural next phase.)
+  other kitchens' pages." The dashboard's **Other kitchens** panel shows the rest of the books
+  live.
 - **Plaintext.** Private repo only; never put secrets on the bus.
 
 ## Configuration
