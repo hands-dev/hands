@@ -144,18 +144,35 @@ switch a pane's model yourself.
 
 **The station path:**
 
-1. **Pick a seat, assign the craft.** Stations are furniture; the **craft** — the named, portable
-   specialization holding the prep book + craft skill — is what you actually deploy (a craft is
-   what a chef de partie carries: the saucier brings their craft to whatever station needs them).
-   The roster lives in `craftsDir` (from `hands_paths`) — skim it before assigning: an existing
-   name restores its whole book and history onto whatever seat you give it; a new name founds a
-   fresh craft. Assign with `hands_focus({ station, focus: "saucier" })` — prefer an idle seat,
-   prefer the seat already holding that craft.
+1. **Cast the craft, then pick the seat.** Stations are furniture; the **craft** — the named,
+   portable specialization holding the prep book + craft skill — is what you actually deploy (a
+   craft is what a chef de partie carries: the saucier brings their craft to whatever station
+   needs them). You are the caster: for station-bound work, first ask *which craft covers this?*
+
+   **Read the roster before deciding** — one cheap Bash call over `craftsDir` (from
+   `hands_paths`): `head -n 12 <craftsDir>/*.md` — books open with their identity, so twelve
+   lines per craft tells you what each one knows. The bundled read tells you which seat holds
+   which craft. Re-read the roster when a NEW beat appears or a special changes; from memory
+   otherwise (it changes slowly).
+
+   **The casting ladder** for a ticket:
+   - A craft covers it and is **seated + idle** → fire the ticket there. Done.
+   - Covers it, seated, **busy** → queue the ticket to that seat (crafts hold seats for
+     stretches) — unless the busy work is lower-priority, then re-prioritize, don't re-cast.
+   - Covers it, **unseated** (dormant on the roster) → assign it to an idle seat with
+     `hands_focus({ station, focus })` — the seat comes up with the craft's whole book, which
+     usually pays for the swap on the first ticket.
+   - **No craft covers it** → found a new craft ONLY for a durable beat that will recur; a
+     one-off ticket rides the nearest adjacent craft without renaming it. Keep the roster tight —
+     "ordering API" and "orders backend" should be one craft, not two half-books.
+
    **Hot-swap:** need fish instead of sauce? `hands_focus` the new craft onto the seat, then send
    a waking message ("you're the poissonnier now — swap crafts") — the station distills its
    outgoing book first, then adopts the new one via `hands_paths`. Swapping two stations is two
-   focus sets + two wakes. Guardrail: **one craft on one active seat at a time** — two seats
-   writing one book is the two-machines-one-handle mistake.
+   focus sets + two wakes. A swap costs a wake plus distill+adopt (~a turn) — worth it when the
+   ticket sits squarely in a dormant craft's book, waste if you churn crafts per ticket.
+   Guardrail: **one craft on one active seat at a time** — two seats writing one book is the
+   two-machines-one-handle mistake.
 2. **Fire the ticket:** `hands_delegate({ to, title, body, priority, dish })` — always cite the
    special it serves, and the **dish** (the external deliverable — Linear/PR ref) when one
    exists. For a fresh special the first ticket is almost always **a plan**: *"Plan: get <X>
@@ -180,10 +197,12 @@ find "$m" -mmin +15 | grep -q . && echo DUE || echo skip
 
 **skip** → move on. **DUE** → `touch "$m"`, then compare the bundled read's `stateHash` against
 `$C/expo.last-util-hash`: **UNCHANGED** → say "utilization: unchanged", move on. **CHANGED** →
-store the new hash and judge: idle capacity while a higher special is starved → fire it a ticket
-(reversible — just do it). A station off-specials while #1 is thin → `wake:false` heads-up +
-escalate with a recommendation. `collisions` (two stations in the same files) → stagger or refocus
-one before they trample each other. Well-balanced → say so. Always surface a one-line read:
+store the new hash and judge: idle capacity while a higher special is starved → before firing
+generic work, check the roster for a **dormant craft** that covers the starved special and cast
+it onto the idle seat (restored expertise beats a cold start). A station off-specials while #1 is
+thin → `wake:false` heads-up + escalate with a recommendation. `collisions` (two stations in the
+same files) → stagger or refocus one before they trample each other. Well-balanced → say so.
+Always surface a one-line read:
 *"5/6 on duty — P1×3, P2×1, P3 unstaffed; pulled station-2 onto P1."*
 
 **Scale the line (if enabled):** when config `stations.allowScaling` exposes `hands_station_add` /
