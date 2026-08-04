@@ -107,7 +107,35 @@ export function TokenBurn({ tokens }: { tokens: TokenSeries | null }) {
             ))}
           </LineChart>
         </ChartContainer>
+        <SubagentCalls tokens={tokens} />
       </CardContent>
     </Card>
+  );
+}
+
+/** Recent Agent-tool calls per pane — each is real spend inside that pane's line. */
+function SubagentCalls({ tokens }: { tokens: TokenSeries }) {
+  const rows = Object.entries(tokens.subagents ?? {})
+    .flatMap(([pane, calls]) => calls.map((c) => ({ pane, ...c })))
+    .sort((a, b) => b.ts - a.ts)
+    .slice(0, 8);
+  if (rows.length === 0) return null;
+  return (
+    <div className="mt-4 border-t pt-3">
+      <div className="text-xs font-medium text-muted-foreground">Recent sub-agent calls</div>
+      <div className="mt-1.5 text-sm">
+        {rows.map((r) => (
+          <div key={`${r.pane}·${r.ts}·${r.label}`} className="flex items-center gap-2 py-1">
+            <span className="shrink-0 text-xs text-muted-foreground">{r.pane}</span>
+            <span className="min-w-0 flex-1 truncate" title={r.label}>
+              {r.label}
+            </span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              ~{fmtTokens(r.out)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

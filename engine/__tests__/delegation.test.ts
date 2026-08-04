@@ -34,11 +34,14 @@ describe("delegation lifecycle", () => {
 
     store.updateTaskState({ id, state: "in_progress", now: 2000 });
     expect(store.getTask(id)!.state).toBe("in_progress");
+    expect(store.getTask(id)!.started_at).toBe(2000); // cost-interval start stamped once
 
     store.updateTaskState({ id, state: "returned", result: "here is the plan", now: 3000 });
     const returned = store.getTask(id)!;
     expect(returned.state).toBe("returned");
     expect(returned.result).toBe("here is the plan");
+    expect(returned.started_at).toBe(2000); // first transition wins
+    expect(returned.finished_at).toBe(3000); // cost-interval end stamped
 
     // expo (creator) sees the return in its board delta
     expect(buildBoard(store, { agentId: "expo", since: 2500, advance: false, now: 3500 }).text).toContain(

@@ -126,6 +126,41 @@ describe("TokenSampler", () => {
     expect(s2.totals24h["station-1"]!.out).toBe(0); // in a live file but outside the 24h window
   });
 
+  it("folds sub-agent call files into the pane series and aggregates per call", () => {
+    const ts = NOW - 10 * 60_000;
+    seedTranscript("/w/expo", "s1", usageLine({ id: "main1", ts, out: 100 }));
+    const subDir = path.join(root, encodeProjectDir("/w/expo"), "s1", "subagents");
+    fs.mkdirSync(subDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(subDir, "agent-abc.jsonl"),
+      usageLine({ id: "sub1", ts, out: 40 }) + usageLine({ id: "sub2", ts: ts + 60_000, out: 25 }),
+    );
+    fs.writeFileSync(
+      path.join(subDir, "agent-abc.meta.json"),
+      JSON.stringify({ agentType: "Explore", description: "map the seams" }),
+    );
+    const series = sampler().sample([{ id: "expo", cwd: "/w/expo" }]);
+    expect(series.totals24h.expo!.out).toBe(165); // main + both sub messages
+    expect(series.subagents.expo).toEqual([
+      { label: "Explore: map the seams", out: 65, ts: ts + 60_000 },
+    ]);
+  });
+
+  it("usageBetween sums only the interval (the per-ticket cost primitive)", () => {
+    const t0 = NOW - 60 * 60_000;
+    seedTranscript(
+      "/w/s1",
+      "s1",
+      usageLine({ id: "before", ts: t0 - 10 * 60_000, out: 999 }) +
+        usageLine({ id: "during1", ts: t0 + 5 * 60_000, out: 10 }) +
+        usageLine({ id: "during2", ts: t0 + 20 * 60_000, out: 15 }) +
+        usageLine({ id: "after", ts: t0 + 50 * 60_000, out: 777 }),
+    );
+    const s = sampler();
+    s.sample([{ id: "station-1", cwd: "/w/s1" }]);
+    expect(s.usageBetween("station-1", t0, t0 + 30 * 60_000).out).toBe(25);
+  });
+
   it("survives torn and non-assistant lines", () => {
     seedTranscript(
       "/w/expo",

@@ -84,6 +84,10 @@ export interface TaskRow {
   thread_id: string | null;
   created_at: number;
   updated_at: number;
+  /** first in_progress transition (token-cost interval start) */
+  started_at: number | null;
+  /** first returned/done/cancelled transition (token-cost interval end) */
+  finished_at: number | null;
 }
 
 export interface TodoRow {
@@ -338,6 +342,8 @@ export class Store {
     this.ensureColumn("agents", "activity", "TEXT");
     this.ensureColumn("agents", "state", "TEXT");
     this.ensureColumn("agents", "last_active", "INTEGER");
+    this.ensureColumn("tasks", "started_at", "INTEGER");
+    this.ensureColumn("tasks", "finished_at", "INTEGER");
     this.ensureColumn("agents", "focus", "TEXT");
     this.ensureColumn("tasks", "dish", "TEXT");
 
@@ -1006,6 +1012,11 @@ export class Store {
     now?: number;
   }): void {
     const now = input.now ?? Date.now();
+    // Transition stamps feed per-ticket token-cost attribution: the working
+    // interval is [started_at, finished_at ?? now] of the assignee's pane.
+    const started = input.state === "in_progress";
+    const finished =
+      input.state === "returned" || input.state === "done" || input.state === "cancelled";
     this.withRetry(() =>
       this.db
         .prepare(
@@ -1013,10 +1024,22 @@ export class Store {
            SET state = ?,
                assignee = COALESCE(?, assignee),
                result = COALESCE(?, result),
+               started_at = CASE WHEN ? AND started_at IS NULL THEN ? ELSE started_at END,
+               finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END,
                updated_at = ?
            WHERE id = ?`,
         )
-        .run(input.state, input.assignee ?? null, input.result ?? null, now, input.id),
+        .run(
+          input.state,
+          input.assignee ?? null,
+          input.result ?? null,
+          started ? 1 : 0,
+          now,
+          finished ? 1 : 0,
+          now,
+          now,
+          input.id,
+        ),
     );
     this.journal("task.update", {
       id: input.id,

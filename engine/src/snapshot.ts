@@ -88,6 +88,9 @@ export interface SnapshotTask {
   dish: string | null;
   result: string | null;
   at: number;
+  /** working-interval stamps (token-cost attribution) */
+  startedAt: number | null;
+  finishedAt: number | null;
 }
 
 export interface SnapshotTodo {
@@ -254,6 +257,8 @@ export function buildSnapshot(
     dish: t.dish,
     result: t.result,
     at: t.updated_at,
+    startedAt: t.started_at,
+    finishedAt: t.finished_at,
   }));
   const activeStates = new Set(["open", "assigned", "in_progress", "returned"]);
 

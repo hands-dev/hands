@@ -7294,6 +7294,8 @@ var init_store = __esm({
         this.ensureColumn("agents", "activity", "TEXT");
         this.ensureColumn("agents", "state", "TEXT");
         this.ensureColumn("agents", "last_active", "INTEGER");
+        this.ensureColumn("tasks", "started_at", "INTEGER");
+        this.ensureColumn("tasks", "finished_at", "INTEGER");
         this.ensureColumn("agents", "focus", "TEXT");
         this.ensureColumn("tasks", "dish", "TEXT");
         this.ensureColumn("questions", "outcome", "TEXT");
@@ -7793,15 +7795,29 @@ var init_store = __esm({
       }
       updateTaskState(input) {
         const now = input.now ?? Date.now();
+        const started = input.state === "in_progress";
+        const finished = input.state === "returned" || input.state === "done" || input.state === "cancelled";
         this.withRetry(
           () => this.db.prepare(
             `UPDATE tasks
            SET state = ?,
                assignee = COALESCE(?, assignee),
                result = COALESCE(?, result),
+               started_at = CASE WHEN ? AND started_at IS NULL THEN ? ELSE started_at END,
+               finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END,
                updated_at = ?
            WHERE id = ?`
-          ).run(input.state, input.assignee ?? null, input.result ?? null, now, input.id)
+          ).run(
+            input.state,
+            input.assignee ?? null,
+            input.result ?? null,
+            started ? 1 : 0,
+            now,
+            finished ? 1 : 0,
+            now,
+            now,
+            input.id
+          )
         );
         this.journal("task.update", {
           id: input.id,
@@ -9207,7 +9223,9 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     priority: t.priority_ref,
     dish: t.dish,
     result: t.result,
-    at: t.updated_at
+    at: t.updated_at,
+    startedAt: t.started_at,
+    finishedAt: t.finished_at
   }));
   const activeStates = /* @__PURE__ */ new Set(["open", "assigned", "in_progress", "returned"]);
   const todos = store.listTodos({ limit: 40 }).map((t) => ({
@@ -9305,13 +9323,36 @@ var init_tokens = __esm({
             } catch {
             }
           }
+          let sessionDirs = [];
+          try {
+            sessionDirs = fs10.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path11.join(dir, e.name, "subagents"));
+          } catch {
+            sessionDirs = [];
+          }
+          for (const subDir of sessionDirs) {
+            let subNames = [];
+            try {
+              subNames = fs10.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+            } catch {
+              continue;
+            }
+            for (const name of subNames) {
+              const file2 = path11.join(subDir, name);
+              try {
+                const stat = fs10.statSync(file2);
+                if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
+                this.readAppended(file2, stat.size, byMsg, file2);
+              } catch {
+              }
+            }
+          }
           for (const [id, m] of byMsg) {
             if (now - m.ts > TOKEN_WINDOW_MS + TOKEN_BUCKET_MS) byMsg.delete(id);
           }
         }
         return this.series(now, agents);
       }
-      readAppended(file2, size, byMsg) {
+      readAppended(file2, size, byMsg, callFile) {
         let state = this.files.get(file2);
         let dropFirstLine = false;
         if (!state) {
@@ -9358,11 +9399,46 @@ var init_tokens = __esm({
               ts,
               out: usage.output_tokens ?? 0,
               inTok: usage.input_tokens ?? 0,
-              cacheRead: usage.cache_read_input_tokens ?? 0
+              cacheRead: usage.cache_read_input_tokens ?? 0,
+              ...callFile ? { callFile } : {}
             });
           } catch {
           }
         }
+      }
+      /**
+       * A pane's summed usage over [from, to] — the per-ticket cost primitive
+       * (main-session AND sub-agent messages: work spawned for a ticket is that
+       * ticket's spend). An approximation by construction: whatever else the pane
+       * did in the interval rides along.
+       */
+      usageBetween(agentId, from, to) {
+        const totals = { out: 0, in: 0, cacheRead: 0 };
+        const byMsg = this.messages.get(agentId);
+        if (!byMsg) return totals;
+        for (const m of byMsg.values()) {
+          if (m.ts < from || m.ts > to) continue;
+          totals.out += m.out;
+          totals.in += m.inTok;
+          totals.cacheRead += m.cacheRead;
+        }
+        return totals;
+      }
+      metaLabels = /* @__PURE__ */ new Map();
+      callLabel(callFile) {
+        const cached2 = this.metaLabels.get(callFile);
+        if (cached2) return cached2;
+        let label = path11.basename(callFile, ".jsonl");
+        try {
+          const meta3 = JSON.parse(
+            fs10.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
+          );
+          if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
+          else if (meta3.agentType) label = meta3.agentType;
+        } catch {
+        }
+        this.metaLabels.set(callFile, label);
+        return label;
       }
       series(now, agents) {
         const bucketCount = Math.floor(TOKEN_WINDOW_MS / TOKEN_BUCKET_MS);
@@ -9370,6 +9446,7 @@ var init_tokens = __esm({
         const firstBucket = lastBucket - (bucketCount - 1) * TOKEN_BUCKET_MS;
         const perAgent = {};
         const totals24h = {};
+        const subagents = {};
         for (const agent of agents) {
           const byMsg = this.messages.get(agent.id);
           const buckets = Array.from({ length: bucketCount }, (_, i) => ({
@@ -9379,6 +9456,7 @@ var init_tokens = __esm({
             cacheRead: 0
           }));
           const totals = { out: 0, in: 0, cacheRead: 0 };
+          const byCall = /* @__PURE__ */ new Map();
           if (byMsg) {
             for (const m of byMsg.values()) {
               const idx = Math.floor((m.ts - firstBucket) / TOKEN_BUCKET_MS);
@@ -9390,12 +9468,23 @@ var init_tokens = __esm({
               totals.out += m.out;
               totals.in += m.inTok;
               totals.cacheRead += m.cacheRead;
+              if (m.callFile) {
+                const call = byCall.get(m.callFile) ?? {
+                  label: this.callLabel(m.callFile),
+                  out: 0,
+                  ts: 0
+                };
+                call.out += m.out;
+                call.ts = Math.max(call.ts, m.ts);
+                byCall.set(m.callFile, call);
+              }
             }
           }
           perAgent[agent.id] = buckets;
           totals24h[agent.id] = totals;
+          subagents[agent.id] = [...byCall.values()].sort((a, b) => b.ts - a.ts).slice(0, 8);
         }
-        return { bucketMs: TOKEN_BUCKET_MS, windowMs: TOKEN_WINDOW_MS, perAgent, totals24h };
+        return { bucketMs: TOKEN_BUCKET_MS, windowMs: TOKEN_WINDOW_MS, perAgent, totals24h, subagents };
       }
     };
   }
@@ -9439,10 +9528,18 @@ function serve(opts) {
   const tokensTickMs = opts?.tokensTickMs ?? 6e4;
   const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : void 0);
   let tokens = null;
+  let taskCosts = {};
   const refreshTokens = () => {
     try {
       const peers = store.listPeers().map((p) => ({ id: p.id, cwd: p.cwd ?? null }));
       tokens = sampler.sample(peers);
+      const costs = {};
+      const now = Date.now();
+      for (const t of store.listTasks({ limit: 40 })) {
+        if (!t.assignee || t.started_at == null) continue;
+        costs[t.id] = sampler.usageBetween(t.assignee, t.started_at, t.finished_at ?? now).out;
+      }
+      taskCosts = costs;
     } catch {
     }
   };
@@ -9457,8 +9554,8 @@ function serve(opts) {
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(tokens?.totals24h ?? null)
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens, taskCosts }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
     };
   };
   const clients = /* @__PURE__ */ new Set();
