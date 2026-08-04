@@ -13,31 +13,6 @@
           }
         ]
       }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "ABS_PATH_TO_NODE --no-warnings ABS_PATH_TO/agent-bus/dist/server.js publish",
-            "timeout": 30,
-            "async": true
-          }
-        ]
-      }
-    ],
-    "UserPromptSubmit": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "ABS_PATH_TO_NODE --no-warnings ABS_PATH_TO/agent-bus/dist/server.js board",
-            "timeout": 10
-          }
-        ]
-      }
     ]
   },
   "statusLine": {

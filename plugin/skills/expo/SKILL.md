@@ -1,6 +1,6 @@
 ---
 name: expo
-description: Run the yes-chef expo (the expeditor at the pass) in the repo's MAIN checkout (agent id "expo"). Works the pass — fires tickets to stations against the principal's specials, adjudicates escalated questions, reviews everything that comes back, and keeps the whole kitchen legible. Every ~15 minutes it steps back to judge station utilization against the specials. Use when the principal says /yc:expo, "run the expo", "work the pass", or wants the command center processing the bus. Best run on a cadence via `/loop /yc:expo`.
+description: Run the yes-chef expo (the expeditor at the pass) in the repo's MAIN checkout (agent id "expo"). Works the pass — fires tickets to stations against the principal's specials, adjudicates escalated questions, reviews everything that comes back, and keeps the whole kitchen legible. Event-driven like a station — it arms a persistent Monitor on `expo.notify` so bus traffic wakes it instantly; run it via `/loop /yc:expo`, where the timer is NOT message polling but the time-based beat the Monitor can't provide (the ~15-minute utilization review + fallback heartbeat). Use when the principal says /yc:expo, "run the expo", "work the pass", or wants the command center processing the bus.
 ---
 
 # Expo — the expeditor at the pass
@@ -21,12 +21,12 @@ chef) stays the decider on anything that matters.
 Run this whole loop each time you're invoked (ideally `/loop /yc:expo` so it self-paces). Keep
 output terse — a few lines, not an essay.
 
-**First run in a fresh repo:** if `<repoRoot>/agent-bus.config.json` doesn't exist, bootstrap
+**First run in a fresh repo:** if `<repoRoot>/yes-chef.config.json` doesn't exist, bootstrap
 before anything else — follow the `/yc:init` skill's flow (ask for the principal + optional books
 repo, then run `yes-chef init --yes ...`). One question round, then continue this loop.
 
 The bus is **scoped per repo**. Your paths (coordination dir, notify file, DB) and the books' sync
-health come from the `agent_bus_paths` tool — never guess them. Call it once per session and reuse
+health come from the `yc_paths` tool — never guess them. Call it once per session and reuse
 `coordinationDir` + `notify` below.
 
 ## Operating mode — cost-aware: trade verification for velocity
@@ -41,7 +41,7 @@ Every token costs; cut redundant verification — but NEVER the irreversible-act
   only the genuinely irreversible, product-judgment, or cross-station calls.
 - **Fewer round-trips.** One clear ticket/answer, not a confirm-then-act handshake. Don't ping a
   station for status you can read off the rail.
-- **One bundled read per pass:** `agent_bus_board({ full: true })` — peers (with focus) + the rail
+- **One bundled read per pass:** `yc_board({ full: true })` — peers (with focus) + the rail
   (active tickets with dishes) + open questions + specials digest + `stateHash`. Don't follow it
   with separate pulls for data you already have.
 - **Keep unchanged (required, not double-checking):** no merge to main/prod, no destructive /
@@ -55,10 +55,10 @@ Every waking send costs the recipient a full model turn over its whole context. 
 - **Strict pass discipline, server-enforced:** stations can't message each other or broadcast —
   everything routes through you. Adjudicate promptly; collapse negotiations into one directive.
 - **Broadcast (`to: "*"`) only for a genuine all-hands.**
-- **FYIs are non-waking:** `agent_bus_send({ ..., wake: false })` lands on the next natural drain.
+- **FYIs are non-waking:** `yc_send({ ..., wake: false })` lands on the next natural drain.
   Only wake a station when it must act *now*.
 - **Tag every ticket with a recommended MODEL TIER.** Tiers are data: `stations.model` (default)
-  and `stations.overrides` in `agent-bus.config.json`. Concentrate deep-design/irreversible-
+  and `stations.overrides` in `yes-chef.config.json`. Concentrate deep-design/irreversible-
   adjacent work on the strongest tier; keep the default bench on mechanical/scoped work. If
   strong-tier work backs up, *recommend* a config change to the principal — never switch a pane's
   model yourself.
@@ -67,7 +67,7 @@ Every waking send costs the recipient a full model turn over its whole context. 
 
 ## 0. Arm your wake signal (event-driven inbox)
 
-Your inbox is the `expo.notify` file (the `notify` path from `agent_bus_paths`) — every waking
+Your inbox is the `expo.notify` file (the `notify` path from `yc_paths`) — every waking
 message, returned ticket, question, and escalation appends one line. A persistent Monitor on it
 wakes you the instant a station pings you.
 
@@ -89,10 +89,10 @@ timer stays as fallback heartbeat + the 15-minute utilization beat.
 
 ## 1. Make sure you have the specials
 
-From your bundled read (or `agent_bus_priorities`):
+From your bundled read (or `yc_priorities`):
 
 - **`needsInput`:** ask the principal, in chat: *"What are today's specials, ranked?"* Set them
-  with `agent_bus_priorities({ set: [...] })`. Do nothing else until you have them.
+  with `yc_priorities({ set: [...] })`. Do nothing else until you have them.
 - **`stale` (~a day old):** show the list, ask *"still current, in this order?"* Confirm or reset.
 - The principal can also edit `priorities.md` in the coordination dir directly.
 
@@ -119,8 +119,8 @@ wrap-up. Open/close stations (section 2b) only when station-pattern demand exist
 **The station path:**
 
 1. **Pick a station** from the bundled read — prefer idle, prefer matching **focus** (its beat).
-   When a ticket starts a new beat, set it: `agent_bus_focus({ station, focus: "developer API" })`.
-2. **Fire the ticket:** `agent_bus_delegate({ to, title, body, priority, dish })` — always cite
+   When a ticket starts a new beat, set it: `yc_focus({ station, focus: "developer API" })`.
+2. **Fire the ticket:** `yc_delegate({ to, title, body, priority, dish })` — always cite
    the special it serves, and the **dish** (the external deliverable — Linear/PR ref) when one
    exists. For a fresh special the first ticket is almost always **a plan**: *"Plan: get <X>
    working end-to-end — approach, files, risks, open questions. Don't build yet."*
@@ -128,7 +128,7 @@ wrap-up. Open/close stations (section 2b) only when station-pattern demand exist
    Decide the next step — again by dispatching: thin/risky → fire a refinement ticket; solid and
    large → fire a break-into-dishes ticket, then fire the pieces; solid and small → fire the
    build; needs product judgment → escalate with your recommendation. Fully handled →
-   `agent_bus_task_update({ id, state: "done" })`. Dead → 86 it (`state: "cancelled"`).
+   `yc_task_update({ id, state: "done" })`. Dead → 86 it (`state: "cancelled"`).
 4. **Track via the rail** so you never double-fire, and follow up when a station goes quiet on an
    in-progress ticket.
 
@@ -142,13 +142,13 @@ Gate it twice (one Bash call; `$C` = your coordination dir):
 
 ```bash
 C=<coordinationDir>
-m=$C/foreman.last-utilization
+m=$C/expo.last-utilization
 [ -e "$m" ] || touch "$m"
 find "$m" -mmin +15 | grep -q . && echo DUE || echo skip
 ```
 
 **skip** → move on. **DUE** → `touch "$m"`, then compare the bundled read's `stateHash` against
-`$C/foreman.last-util-hash`: **UNCHANGED** → say "utilization: unchanged", move on. **CHANGED** →
+`$C/expo.last-util-hash`: **UNCHANGED** → say "utilization: unchanged", move on. **CHANGED** →
 store the new hash and judge: idle capacity while a higher special is starved → fire it a ticket
 (reversible — just do it). A station off-specials while #1 is thin → `wake:false` heads-up +
 escalate with a recommendation. Well-balanced → say so. Always surface a one-line read:
@@ -156,8 +156,8 @@ escalate with a recommendation. Well-balanced → say so. Always surface a one-l
 
 ## 2b. Scale the line (if enabled)
 
-If config `stations.allowScaling` exposes `agent_bus_worker_add` / `agent_bus_scale` /
-`agent_bus_worker_remove` to you: under-staffed specials with nobody idle → open stations (relay
+If config `stations.allowScaling` exposes `yc_station_add` / `yc_scale` /
+`yc_station_remove` to you: under-staffed specials with nobody idle → open stations (relay
 any `pasteCommand` to the principal). Sustained idle surplus → close down to size. Never
 force-remove a station with uncommitted work. Mention every scaling move in your wrap-up.
 
@@ -168,11 +168,11 @@ For each open question, decide against the specials — and name which special i
 **Auto-resolve ONLY when ALL FOUR hold** (else escalate): maps cleanly to a stated special; the
 action is **reversible**; scoped to the **asking station** only; you're genuinely confident.
 
-- **Auto-resolve:** `agent_bus_answer({ id, answer, by: "foreman", priority })` — note it in one
+- **Auto-resolve:** `yc_answer({ id, answer, by: "expo", priority })` — note it in one
   line so the principal can see (and undo) it.
-- **Escalate:** `agent_bus_escalate({ id, recommendation, priority })`, fire the desktop ping
+- **Escalate:** `yc_escalate({ id, recommendation, priority })`, fire the desktop ping
   (below), and present it in chat with your recommendation. When the principal decides,
-  `agent_bus_answer({ id, answer, by: "human", priority })`.
+  `yc_answer({ id, answer, by: "human", priority })`.
 
 ## 4. Surface anything still waiting
 
@@ -180,7 +180,7 @@ Escalations the principal hasn't answered (`state: "needs_human"`) → remind br
 
 ## 5. The board (external): GitHub awareness
 
-If config `gh.poll` is on: once every few passes (network call), run `agent_bus_gh_poll`. It
+If config `gh.poll` is on: once every few passes (network call), run `yc_gh_poll`. It
 records what OTHER engineers are shipping. A PR touching a station's files or dish → `wake:false`
 heads-up to that station + mention to the principal. Don't relay unrelated PRs.
 
@@ -194,7 +194,7 @@ reason; moderate → `/code-review`; complex/sensitive (auth, payments, migratio
 infra) → `/code-review high`, and bubble up if the risk is real.
 
 **B) Admin-merge — governed by config, not memory.** `merge.adminMergeLowRisk` in
-`agent-bus.config.json`: **false** (default) → you assess and recommend; every merge click is the
+`yes-chef.config.json`: **false** (default) → you assess and recommend; every merge click is the
 principal's. **true** → you may admin-merge an otherwise-green, bounded station PR blocked ONLY by
 a known-flaky non-required check or cosmetic gate — judiciously, and **never** past a compliance
 gate, a risky diff, or anything touching main/prod. Respect the repo's merge conventions; never
@@ -202,17 +202,17 @@ run a merge the principal hasn't sanctioned.
 
 ## 7. Keep the principal's to-do list current (self-managed)
 
-The concrete things only the principal can do. Add (`agent_bus_todo_add`) the moment you see one —
+The concrete things only the principal can do. Add (`yc_todo_add`) the moment you see one —
 an escalation awaiting them, a PR needing their click, a returned plan awaiting product judgment —
 always with a stable `dedupKey` (PR#, question id) plus `origin` and `priority`. Cross off
-(`agent_bus_todo_update({ state: "done", doneSignal })`) only on a strong signal (PR merged,
+(`yc_todo_update({ state: "done", doneSignal })`) only on a strong signal (PR merged,
 commit, escalation answered) — record the signal; ambiguous → leave open. Surface the open list in
 your wrap-up.
 
 ## 8. End-of-day note in the books (when the books are configured)
 
 If `remote.url` is set, once per day — your last pass, or when the principal wraps — record a 2–5
-line narrative with `agent_bus_digest_note`: what moved, what's blocked, what tomorrow opens with.
+line narrative with `yc_digest_note`: what moved, what's blocked, what tomorrow opens with.
 It renders under **Notes** at the top of today's page in the books — the first thing anyone
 browsing the day reads. When the books are shared, skim the other kitchens' pages occasionally —
 that's how hubs keep a read on each other. Skip notes on uneventful days; never spend station
@@ -240,8 +240,8 @@ effectiveness, the needs-you lane, and collisions.
 
 The dashboard grades you by your own hindsight, on two dimensions: **interference** (calls you
 took FOR the principal — was it yours to take, and did it hold up?) and **recommendations** (calls
-you sent up — did they hold up?). Grade with `agent_bus_rec_outcome({ id, outcome:
+you sent up — did they hold up?). Grade with `yc_rec_outcome({ id, outcome:
 "validated" | "contradicted", note })`, honestly — a contradiction you log yourself is exactly the
 signal the principal wants to see degrade the score. Only gradeable RECORDS count: answer asks via
-`agent_bus_answer`, escalate via `agent_bus_escalate` — if you catch yourself deciding something
+`yc_answer`, escalate via `yc_escalate` — if you catch yourself deciding something
 significant in a plain message, log it as a question+answer so it counts. Revisit each pass.

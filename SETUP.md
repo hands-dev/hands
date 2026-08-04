@@ -7,7 +7,7 @@
 ## Development setup
 
 ```bash
-cd agent-bus
+cd engine
 npm install
 npm run test:run        # 100+ tests
 npm run check-types
@@ -28,13 +28,9 @@ claude plugin validate .            # marketplace sanity
 
 ## Per-repo pieces (what `yes-chef init` handles)
 
-- `agent-bus.config.json` scaffold at the repo root — principal, topology, station tiers/launcher,
-  optional journal (`remote.url` + `remote.handle`). Full reference in README.
-- **Pre-plugin cleanup:** removes an old user-scope `mcpServers["agent-bus"]`, old
-  `server.js publish|board` hooks, and copied `~/.claude/skills/{foreman,worker}` so nothing
-  double-fires against the plugin's registrations.
-- **Legacy migration:** offers to move a pre-isolation `~/.claude/coordination/*` state into the
-  repo's slug-scoped bus dir.
+- `yes-chef.config.json` scaffold at the repo root — principal, topology, station tiers/launcher,
+  optional books journal (`remote.url` + `remote.handle`). Full reference in README. Attach the
+  books to an existing config later with `yes-chef books <url>`.
 
 ## Optional extras (not plugin-managed)
 
@@ -53,5 +49,5 @@ Or just answer the expo when it asks for the day's ranked priorities.
 ## Two repos side by side
 
 Nothing to do — each repo's bus auto-scopes by git common-dir. Run `yes-chef init` in each repo
-for its config; the plugin registration is machine-wide. `AGENT_BUS_HOME` pins a bus location
+for its config; the plugin registration is machine-wide. `YES_CHEF_HOME` pins a bus location
 explicitly if you ever need to.

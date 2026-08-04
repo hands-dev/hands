@@ -87,13 +87,13 @@ function repoInfo(cwd = process.cwd()) {
   return info;
 }
 function coordinationDir(env = process.env, cwd = process.cwd()) {
-  const override = env.AGENT_BUS_HOME?.trim();
+  const override = env.YES_CHEF_HOME?.trim();
   if (override) return override;
   const info = repoInfo(cwd);
   return path.join(os.homedir(), ".claude", "coordination", info?.slug ?? "_global");
 }
 function dbPath(env = process.env, cwd = process.cwd()) {
-  return path.join(coordinationDir(env, cwd), "agent-bus.db");
+  return path.join(coordinationDir(env, cwd), "yes-chef.db");
 }
 function notifyPath(agentId, env = process.env, cwd = process.cwd()) {
   return path.join(coordinationDir(env, cwd), `${agentId}.notify`);
@@ -121,22 +121,15 @@ function readJson(file2) {
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch (err) {
-    process.stderr.write(`[agent-bus] ignoring malformed config ${file2}: ${String(err)}
+    process.stderr.write(`[yes-chef] ignoring malformed config ${file2}: ${String(err)}
 `);
     return null;
   }
 }
 function merge(base, layer) {
   if (!layer) return base;
-  const expoLayer = layer.expo ?? layer.foreman;
-  const stationsLayer = layer.stations ?? {
-    model: layer.workers?.model,
-    overrides: layer.workers?.overrides,
-    launcher: layer.workers?.launcher,
-    worktreeRoot: layer.workers?.worktreeRoot,
-    baseBranch: layer.workers?.baseBranch,
-    allowScaling: layer.workers?.allowForemanScaling
-  };
+  const expoLayer = layer.expo;
+  const stationsLayer = layer.stations;
   const overrides = { ...base.stations.overrides };
   for (const [key, value] of Object.entries(stationsLayer?.overrides ?? {})) {
     if (typeof value === "string") overrides[key] = value;
@@ -165,17 +158,17 @@ function merge(base, layer) {
   };
 }
 function userConfigPath(env = process.env) {
-  const home = env.AGENT_BUS_TEST_HOME?.trim() || os2.homedir();
-  return path2.join(home, ".claude", "agent-bus.config.json");
+  const home = env.YES_CHEF_TEST_HOME?.trim() || os2.homedir();
+  return path2.join(home, ".claude", CONFIG_BASENAME);
 }
 function repoConfigPath(cwd = process.cwd()) {
   const info = repoInfo(cwd);
-  return info ? path2.join(info.repoRoot, "agent-bus.config.json") : null;
+  return info ? path2.join(info.repoRoot, CONFIG_BASENAME) : null;
 }
 function loadConfig(options) {
   const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? process.env;
-  const key = `${cwd}\0${env.AGENT_BUS_TEST_HOME ?? ""}`;
+  const key = `${cwd}\0${env.YES_CHEF_TEST_HOME ?? ""}`;
   const hit = cache.get(key);
   if (hit) return hit;
   let cfg = merge(DEFAULT_CONFIG, readJson(userConfigPath(env)));
@@ -184,7 +177,7 @@ function loadConfig(options) {
   cache.set(key, cfg);
   return cfg;
 }
-var DEFAULT_CONFIG, cache;
+var DEFAULT_CONFIG, CONFIG_BASENAME, cache;
 var init_config = __esm({
   "src/config.ts"() {
     "use strict";
@@ -205,6 +198,7 @@ var init_config = __esm({
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
+    CONFIG_BASENAME = "yes-chef.config.json";
     cache = /* @__PURE__ */ new Map();
   }
 });
@@ -215,18 +209,14 @@ function isStation(id) {
   return STATION_ID.test(id);
 }
 function isExpo(id) {
-  return id === "expo" || id === "foreman";
+  return id === "expo";
 }
 function resolveAgentRef(nameOrId) {
-  const raw = nameOrId.trim();
-  if (raw === "foreman") return "expo";
-  const legacyStation = raw.match(/^worker-(\d+)$/);
-  if (legacyStation) return `station-${legacyStation[1]}`;
-  return raw;
+  return nameOrId.trim();
 }
 function indexFromDirName(dir) {
   const base = path3.basename(dir);
-  const match = base.match(/(?:^station-|^worker-|worktree-|-wt)(\d+)$/i);
+  const match = base.match(/(?:^station-|worktree-|-wt)(\d+)$/i);
   if (!match) return null;
   const n = Number.parseInt(match[1], 10);
   return Number.isFinite(n) && n > 0 ? n : null;
@@ -248,12 +238,12 @@ function resolveAgentId(options) {
   const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? process.env;
   const argv = options?.argv ?? process.argv;
-  const fromEnv = env.AGENT_BUS_ID?.trim();
+  const fromEnv = env.YES_CHEF_ID?.trim();
   if (fromEnv) return resolveAgentRef(fromEnv);
   const fromArg = agentIdFromArgv(argv)?.trim();
   if (fromArg) return resolveAgentRef(fromArg);
   const base = path3.basename(cwd);
-  const expoBasename = env.AGENT_BUS_FOREMAN_BASENAME?.trim() || options?.foremanBasename;
+  const expoBasename = env.YES_CHEF_EXPO_BASENAME?.trim() || options?.expoBasename;
   if (expoBasename && base === expoBasename) return "expo";
   if (repoInfo(cwd)?.isMainWorktree) return "expo";
   const index = indexFromDirName(cwd);
@@ -265,7 +255,7 @@ var init_identity = __esm({
   "src/identity.ts"() {
     "use strict";
     init_paths();
-    STATION_ID = /^(?:station|worker)-(\d+)$/;
+    STATION_ID = /^station-(\d+)$/;
   }
 });
 
@@ -7229,7 +7219,7 @@ var init_store = __esm({
         context        TEXT,
         state          TEXT NOT NULL DEFAULT 'open',  -- open | needs_human | answered
         answer         TEXT,
-        resolved_by    TEXT,                          -- foreman | human
+        resolved_by    TEXT,                          -- expo | human
         priority_ref   TEXT,
         recommendation TEXT,
         created_at     INTEGER NOT NULL,
@@ -7275,7 +7265,7 @@ var init_store = __esm({
         title        TEXT NOT NULL,
         detail       TEXT,
         state        TEXT NOT NULL DEFAULT 'open',      -- open | done | dismissed
-        source       TEXT NOT NULL DEFAULT 'foreman',   -- foreman | human
+        source       TEXT NOT NULL DEFAULT 'expo',   -- expo | human
         origin_ref   TEXT,                              -- PR#, question id, priority text, \u2026
         dedup_key    TEXT,                              -- normalized identity (open-scoped)
         done_signal  TEXT,                              -- how completion was inferred (audit)
@@ -7285,7 +7275,7 @@ var init_store = __esm({
       );
 
       CREATE INDEX IF NOT EXISTS idx_todos_state ON todos (state, updated_at);
-      -- At most one OPEN todo per dedup_key, so a self-managing foreman that
+      -- At most one OPEN todo per dedup_key, so a self-managing expo that
       -- re-derives the same item every pass never spawns duplicates. Done/
       -- dismissed rows are exempt, so a recurring item can legitimately re-open.
       CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_open_dedup
@@ -7429,7 +7419,7 @@ var init_store = __esm({
       }
       /**
        * Messages addressed to `agentId` created after `sinceTs` — for the board's
-       * awareness view. Independent of the receive cursor (which is how a worker
+       * awareness view. Independent of the receive cursor (which is how a station
        * *handles* messages), so showing a message never marks it handled.
        */
       messagesForSince(agentId, sinceTs) {
@@ -7592,7 +7582,7 @@ var init_store = __esm({
           ).run(agentId, key, value)
         );
       }
-      // --- questions (worktree → foreman escalation) ---
+      // --- questions (worktree → expo escalation) ---
       askQuestion(input) {
         const now = input.now ?? Date.now();
         const id = this.withRetry(() => {
@@ -7648,9 +7638,9 @@ var init_store = __esm({
         });
       }
       /**
-       * Record the foreman's hindsight verdict on a recommendation it made (self-audit):
+       * Record the expo's hindsight verdict on a recommendation it made (self-audit):
        * `validated` (held up) or `contradicted` (a later finding overturned it). Feeds the
-       * foreman-effectiveness score. Grades the foreman's judgment, not the principal's acceptance.
+       * expo-effectiveness score. Grades the expo's judgment, not the principal's acceptance.
        */
       setQuestionOutcome(input) {
         const now = input.now ?? Date.now();
@@ -7693,7 +7683,7 @@ var init_store = __esm({
          ORDER BY updated_at ASC`
         ).all(asker, since);
       }
-      // --- github PRs (foreman's team-awareness poll) ---
+      // --- github PRs (expo's team-awareness poll) ---
       upsertGithubPr(pr) {
         const now = pr.now ?? Date.now();
         const filesJson = pr.files ? JSON.stringify(pr.files) : null;
@@ -7731,7 +7721,7 @@ var init_store = __esm({
         params.push(Math.max(1, Math.min(options?.limit ?? 100, 300)));
         return this.db.prepare(`SELECT * FROM github_prs ${where} ORDER BY updated_at DESC LIMIT ?`).all(...params);
       }
-      // --- tasks (foreman → worktree delegation lifecycle) ---
+      // --- tasks (expo → worktree delegation lifecycle) ---
       createTask(input) {
         const now = input.now ?? Date.now();
         const state = input.assignee ? "assigned" : "open";
@@ -7828,11 +7818,11 @@ var init_store = __esm({
          ORDER BY updated_at ASC`
         ).all(createdBy, since);
       }
-      // --- todos (foreman-managed personal to-do list for the principal) ---
+      // --- todos (expo-managed personal to-do list for the principal) ---
       /**
        * Add an item to the principal's to-do list. Idempotent while open: if `dedupKey`
        * is given and an open todo already carries it, the existing row is returned
-       * untouched (isNew:false) — so the self-managing foreman can re-derive the
+       * untouched (isNew:false) — so the self-managing expo can re-derive the
        * same item every pass without spawning duplicates.
        */
       createTodo(input) {
@@ -7848,7 +7838,7 @@ var init_store = __esm({
           ).run(
             input.title,
             input.detail ?? null,
-            input.source ?? "foreman",
+            input.source ?? "expo",
             input.originRef ?? null,
             input.dedupKey ?? null,
             input.priority ?? null,
@@ -7862,7 +7852,7 @@ var init_store = __esm({
             id: created.id,
             title: input.title,
             detail: input.detail ?? null,
-            source: input.source ?? "foreman",
+            source: input.source ?? "expo",
             origin: input.originRef ?? null,
             dedupKey: input.dedupKey ?? null,
             priority: input.priority ?? null,
@@ -8010,7 +8000,7 @@ var init_store = __esm({
                 f("id"),
                 f("title"),
                 f("detail"),
-                f("source") ?? "foreman",
+                f("source") ?? "expo",
                 f("origin"),
                 f("dedupKey"),
                 f("priority"),
@@ -8139,7 +8129,7 @@ function buildBoard(store, opts) {
     lines.push(`  \u2709 ${msg.from_id} \u2192 ${to}: ${subject}${msg.body}`);
   }
   if (inbox.length > MAX_MSGS) {
-    lines.push(`  \u2709 (+${inbox.length - MAX_MSGS} earlier \u2014 agent_bus_history)`);
+    lines.push(`  \u2709 (+${inbox.length - MAX_MSGS} earlier \u2014 yc_history)`);
   }
   for (const line of ghLines) lines.push(`  ${line}`);
   for (const q of answered) {
@@ -8149,7 +8139,7 @@ function buildBoard(store, opts) {
     lines.push(`  ? ${q.asker} asks: "${q.question}" \u2014 adjudicate or escalate`);
   }
   for (const t of assignedToMe) {
-    lines.push(`  \u{1F4CB} ${t.created_by} fired: "${t.title}" \u2014 start with agent_bus_task_update`);
+    lines.push(`  \u{1F4CB} ${t.created_by} fired: "${t.title}" \u2014 start with yc_task_update`);
   }
   for (const t of returnedToMe) {
     lines.push(`  \u{1F4CB} ${t.assignee ?? ""} returned: "${t.title}" \u2014 review it`);
@@ -8209,7 +8199,7 @@ function readPriorities(env = process.env) {
 function writePriorities(items, env = process.env) {
   const dir = coordinationDir(env);
   fs5.mkdirSync(dir, { recursive: true, mode: 448 });
-  const body = `# Today's priorities (ranked \u2014 the foreman adjudicates against these)
+  const body = `# Today's priorities (ranked \u2014 the expo adjudicates against these)
 
 ${items.map((it, i) => `${i + 1}. ${it}`).join("\n")}
 `;
@@ -8231,13 +8221,13 @@ var init_priorities = __esm({
 var provision_exports = {};
 __export(provision_exports, {
   ProvisionError: () => ProvisionError,
-  addWorkers: () => addWorkers,
+  addStations: () => addStations,
   launchCommand: () => launchCommand,
-  listWorkers: () => listWorkers,
-  removeWorker: () => removeWorker,
-  scaleWorkers: () => scaleWorkers,
-  workerBranch: () => workerBranch,
-  workerRoot: () => workerRoot
+  listStations: () => listStations,
+  removeStation: () => removeStation,
+  scaleStations: () => scaleStations,
+  stationBranch: () => stationBranch,
+  stationRoot: () => stationRoot
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
 import * as fs9 from "node:fs";
@@ -8256,40 +8246,36 @@ function requireRepo(cwd) {
   if (!info) throw new ProvisionError(`not inside a git repo: ${cwd}`);
   return info;
 }
-function workerRoot(cwd = process.cwd(), config2) {
+function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path9.join(os5.homedir(), ".agent-bus", "worktrees", requireRepo(cwd).slug);
+  return path9.join(os5.homedir(), ".yes-chef", "worktrees", requireRepo(cwd).slug);
 }
-function workerBranch(index) {
+function stationBranch(index) {
   return `yc/station-${index}`;
 }
-function legacyBranch(index) {
-  return `agent-bus/worker-${index}`;
-}
-function listWorkers(cwd = process.cwd(), config2) {
-  const root = workerRoot(cwd, config2);
+function listStations(cwd = process.cwd(), config2) {
+  const root = stationRoot(cwd, config2);
   let names = [];
   try {
     names = fs9.readdirSync(root);
   } catch {
     return [];
   }
-  const workers = [];
+  const stations = [];
   for (const name of names) {
-    const m = name.match(/^(?:station|worker)-(\d+)$/);
+    const m = name.match(/^station-(\d+)$/);
     if (!m) continue;
     const index = Number.parseInt(m[1], 10);
-    workers.push({
+    stations.push({
       id: `station-${index}`,
       index,
       dir: path9.join(root, name),
-      // legacy worker-<n> dirs keep their path
-      branch: workerBranch(index),
+      branch: stationBranch(index),
       present: true
     });
   }
-  return workers.sort((a, b) => a.index - b.index);
+  return stations.sort((a, b) => a.index - b.index);
 }
 function branchExists(cwd, branch) {
   try {
@@ -8299,8 +8285,8 @@ function branchExists(cwd, branch) {
     return false;
   }
 }
-function launchCommand(worker) {
-  return `cd ${shellQuote(worker.dir)} && AGENT_BUS_ID=${worker.id} claude --model ${shellQuote(worker.model)} ${shellQuote("/loop /yc:station")}`;
+function launchCommand(station) {
+  return `cd ${shellQuote(station.dir)} && YES_CHEF_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /yc:station")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
@@ -8326,7 +8312,7 @@ function launch(plan, launcher, env = process.env) {
       } else {
         execFileSync5(
           "tmux",
-          ["new-session", "-d", "-s", `agent-bus-${plan.id}`, command],
+          ["new-session", "-d", "-s", `yes-chef-${plan.id}`, command],
           { stdio: "ignore", timeout: 1e4 }
         );
       }
@@ -8351,27 +8337,27 @@ end tell`;
   }
   return { launcher: "manual", launched: false };
 }
-function addWorkers(count, opts) {
+function addStations(count, opts) {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
-  const root = workerRoot(cwd, cfg);
+  const root = stationRoot(cwd, cfg);
   fs9.mkdirSync(root, { recursive: true });
-  const taken = new Set(listWorkers(cwd, cfg).map((w) => w.index));
+  const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
     const dir = path9.join(root, id);
-    const branch = workerBranch(index);
+    const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
       git4(info.repoRoot, ["worktree", "add", dir, branch]);
     } else {
       git4(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
     }
-    const model = cfg.stations.overrides[id] ?? cfg.stations.overrides[`worker-${index}`] ?? cfg.stations.model;
+    const model = cfg.stations.overrides[id] ?? cfg.stations.model;
     const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,
@@ -8386,25 +8372,22 @@ function addWorkers(count, opts) {
   }
   return plans;
 }
-function removeWorker(id, opts) {
+function removeStation(id, opts) {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
-  const m = id.match(/^(?:station|worker)-(\d+)$/);
+  const m = id.match(/^station-(\d+)$/);
   if (!m) throw new ProvisionError(`not a station id: ${id} (expected station-<n>)`);
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
-  const root = workerRoot(cwd, cfg);
-  const candidates = [path9.join(root, `station-${index}`), path9.join(root, `worker-${index}`)];
-  const dir = candidates.find((d) => fs9.existsSync(d)) ?? candidates[0];
-  for (const alias of [`station-${index}`, `worker-${index}`]) {
-    try {
-      execFileSync5("pkill", ["-f", `tail -F -n0 .*${alias}\\.notify`], { stdio: "ignore", timeout: 5e3 });
-    } catch {
-    }
-    try {
-      execFileSync5("tmux", ["kill-session", "-t", `agent-bus-${alias}`], { stdio: "ignore", timeout: 5e3 });
-    } catch {
-    }
+  const root = stationRoot(cwd, cfg);
+  const dir = path9.join(root, `station-${index}`);
+  try {
+    execFileSync5("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
+  } catch {
+  }
+  try {
+    execFileSync5("tmux", ["kill-session", "-t", `yes-chef-station-${index}`], { stdio: "ignore", timeout: 5e3 });
+  } catch {
   }
   let removed = false;
   if (fs9.existsSync(dir)) {
@@ -8420,27 +8403,26 @@ function removeWorker(id, opts) {
     removed = true;
   }
   git4(info.repoRoot, ["worktree", "prune"]);
-  for (const branch of [workerBranch(index), legacyBranch(index)]) {
-    if (branchExists(info.repoRoot, branch)) {
-      try {
-        git4(info.repoRoot, ["branch", "-D", branch]);
-      } catch {
-      }
+  const branch = stationBranch(index);
+  if (branchExists(info.repoRoot, branch)) {
+    try {
+      git4(info.repoRoot, ["branch", "-D", branch]);
+    } catch {
     }
   }
   return { id: `station-${index}`, removed };
 }
-function scaleWorkers(target, opts) {
+function scaleStations(target, opts) {
   if (!Number.isInteger(target) || target < 0) throw new ProvisionError(`bad target: ${target}`);
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
-  const current = listWorkers(cwd, cfg);
+  const current = listStations(cwd, cfg);
   if (current.length < target) {
-    return { added: addWorkers(target - current.length, { cwd, config: cfg, env: opts?.env }), removed: [] };
+    return { added: addStations(target - current.length, { cwd, config: cfg, env: opts?.env }), removed: [] };
   }
   const removed = [];
   for (const w of current.slice(target)) {
-    removeWorker(w.id, { cwd, config: cfg, force: opts?.force });
+    removeStation(w.id, { cwd, config: cfg, force: opts?.force });
     removed.push(w.id);
   }
   return { added: [], removed };
@@ -8554,9 +8536,9 @@ function dashboardHtml(principal) {
   .prow .cnt b { color:hsl(var(--foreground)); }
   .prow.zero .lab .t { color:hsl(var(--destructive)); }
 
-  /* Workers grid \u2014 equal 2 cols; long text never stretches a track */
-  .workers { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-  @media (max-width:720px){ .workers{ grid-template-columns:1fr; } }
+  /* Stations grid \u2014 equal 2 cols; long text never stretches a track */
+  .stations { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+  @media (max-width:720px){ .stations{ grid-template-columns:1fr; } }
   .wcard { min-width:0; border:1px solid hsl(var(--border)); border-radius:var(--radius); padding:14px 16px; display:flex; flex-direction:column; gap:9px; background:hsl(var(--card)); }
   .wcard.offline { opacity:.55; }
   .wcard.collide { border-color:hsl(var(--destructive) / 0.6); }
@@ -8572,7 +8554,7 @@ function dashboardHtml(principal) {
   .wbot { display:flex; align-items:center; gap:9px; min-width:0; }
   .wbot .branch { color:hsl(var(--muted-foreground)); font-size:11.5px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 
-  /* Foreman */
+  /* Expo */
   .fore-top { display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin-bottom:14px; }
   .fore-top .score { font-size:40px; font-weight:700; line-height:1; letter-spacing:-0.02em; color:hsl(var(--muted-foreground)); }
   .fore-top .score.has { color:hsl(var(--foreground)); }
@@ -8601,7 +8583,7 @@ function dashboardHtml(principal) {
 <main>
   <div id="needs"></div>
   <div class="card"><div class="card-header"><span class="card-title">Overall utilization</span><span id="util-badge"></span></div><div class="card-content" id="util-body"></div></div>
-  <div class="card"><div class="card-header"><span class="card-title">Stations</span><span id="workers-badge"></span></div><div class="card-content" id="workers-body"></div></div>
+  <div class="card"><div class="card-header"><span class="card-title">Stations</span><span id="stations-badge"></span></div><div class="card-content" id="stations-body"></div></div>
   <div id="collstrip"></div>
   <div class="card"><div class="card-header"><span class="card-title">Expo effectiveness</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
   <div id="others"></div>
@@ -8609,7 +8591,7 @@ function dashboardHtml(principal) {
 <script>
   function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
   function age(now,t){ if(t==null) return '\u2014'; var ms=now-t; if(ms<60000) return 'now'; var m=Math.floor(ms/60000); if(m<60) return m+'m'; var h=Math.floor(m/60); return h<24? h+'h':Math.floor(h/24)+'d'; }
-  function wtNum(id){ var m=/^(?:station|worker)-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
+  function wtNum(id){ var m=/^(?:station|station)-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
   var PRINCIPAL=${JSON.stringify(principal)};
   function nmeOnly(id){ return id; }
   function dotColor(s){ return s==='active'?'hsl(var(--success))':s==='idle'?'hsl(var(--warning))':'hsl(var(--muted-foreground))'; }
@@ -8645,7 +8627,7 @@ function dashboardHtml(principal) {
     }
     return bestScore>0? best : -1;
   }
-  function workerPriority(s, w){
+  function stationPriority(s, w){
     var prios=s.priorities||[];
     var t=curTask(s.tasks,w.id);
     if(t){ return { i:prioIndex(t.priority,prios), src:'task', task:t }; }
@@ -8653,28 +8635,28 @@ function dashboardHtml(principal) {
   }
   function badge(cls, txt, style){ return '<span class="badge '+cls+'"'+(style?' style="'+style+'"':'')+'>'+txt+'</span>'; }
 
-  function renderUtil(s, workers){
+  function renderUtil(s, stations){
     var prios=s.priorities||[];
     var active=0,idle=0,off=0;
-    workers.forEach(function(w){ if(w.state==='active')active++; else if(w.state==='idle')idle++; else off++; });
+    stations.forEach(function(w){ if(w.state==='active')active++; else if(w.state==='idle')idle++; else off++; });
     var perP=prios.map(function(){return 0;}); var unassigned=0;
-    var onduty=workers.filter(function(w){return w.state!=='offline';});
-    onduty.forEach(function(w){ var wp=workerPriority(s,w); if(wp.i>=0) perP[wp.i]++; else unassigned++; });
+    var onduty=stations.filter(function(w){return w.state!=='offline';});
+    onduty.forEach(function(w){ var wp=stationPriority(s,w); if(wp.i>=0) perP[wp.i]++; else unassigned++; });
     var denom=Math.max(onduty.length,1);
-    document.getElementById('util-badge').innerHTML = badge('badge-secondary', onduty.length+'/'+workers.length+' on duty');
+    document.getElementById('util-badge').innerHTML = badge('badge-secondary', onduty.length+'/'+stations.length+' on duty');
     var rows=prios.map(function(p,i){
       var c=perP[i]; var pct=Math.round(c/denom*100);
       return '<div class="prow'+(c===0?' zero':'')+'">'+
         badge('badge-secondary','P'+(i+1),'background:'+pcolor(i)+';color:#fff')+
         '<div class="lab"><div class="t">'+esc(prioShort(p))+'</div>'+
           '<div class="progress"><i style="width:'+pct+'%;background:'+pcolor(i)+'"></i></div></div>'+
-        '<span class="cnt"><b>'+c+'</b> '+(c===1?'worker':'workers')+'</span>'+
+        '<span class="cnt"><b>'+c+'</b> '+(c===1?'station':'stations')+'</span>'+
       '</div>';
     }).join('');
     if(unassigned>0){
       rows+='<div class="prow">'+badge('badge-outline','\xB7')+
         '<div class="lab"><div class="t muted">off-priority / self-directed</div></div>'+
-        '<span class="cnt"><b>'+unassigned+'</b> '+(unassigned===1?'worker':'workers')+'</span></div>';
+        '<span class="cnt"><b>'+unassigned+'</b> '+(unassigned===1?'station':'stations')+'</span></div>';
     }
     document.getElementById('util-body').innerHTML =
       '<div class="util">'+
@@ -8687,7 +8669,7 @@ function dashboardHtml(principal) {
       '</div>';
   }
 
-  // Wake accounting: each wake is one full model turn over the worker's whole
+  // Wake accounting: each wake is one full model turn over the station's whole
   // context, so wakes/hour is the live cost dial. Amber past 6/h, red past 12/h.
   function wakeBadge(w){
     var h=w.wakesLastHour||0, d=w.wakes24h||0;
@@ -8697,10 +8679,10 @@ function dashboardHtml(principal) {
     return badge('badge-outline', h+' wakes/h \xB7 '+d+'/24h', style);
   }
 
-  function workerCell(s, w, collide){
+  function stationCell(s, w, collide){
     var prios=s.priorities||[];
     var cls='wcard'+(w.state==='offline'?' offline':'')+(collide[w.id]?' collide':'');
-    var wp=workerPriority(s,w); var t=wp.task;
+    var wp=stationPriority(s,w); var t=wp.task;
     var taskHtml = t
       ? '<div class="wtask"><span class="ar">\u25B8</span><span class="tt">'+esc(t.title)+(t.dish?' <span class="wt mono">('+esc(t.dish)+')</span>':'')+'</span></div>'
       : '<div class="wtask none"><span class="ar">\u25B8</span><span class="tt">'+(w.state==='offline'?'offline':(w.branch?'self-directed':'no task'))+'</span></div>';
@@ -8724,18 +8706,18 @@ function dashboardHtml(principal) {
     '</div>';
   }
 
-  function renderWorkers(s, workers, collide){
-    document.getElementById('workers-badge').innerHTML = badge('badge-secondary', String(workers.length));
-    var half=Math.ceil(workers.length/2);
-    var left=workers.slice(0,half), right=workers.slice(half);
+  function renderStations(s, stations, collide){
+    document.getElementById('stations-badge').innerHTML = badge('badge-secondary', String(stations.length));
+    var half=Math.ceil(stations.length/2);
+    var left=stations.slice(0,half), right=stations.slice(half);
     var order=[]; for(var i=0;i<half;i++){ order.push(left[i]); if(right[i]) order.push(right[i]); }
-    document.getElementById('workers-body').innerHTML =
-      '<div class="workers">'+order.map(function(w){return workerCell(s,w,collide);}).join('')+'</div>';
+    document.getElementById('stations-body').innerHTML =
+      '<div class="stations">'+order.map(function(w){return stationCell(s,w,collide);}).join('')+'</div>';
   }
 
-  function renderForeman(s){
+  function renderExpo(s){
     var qs=s.questions||[];
-    var recs=qs.filter(function(q){return q.recommendation || q.resolvedBy==='foreman';});
+    var recs=qs.filter(function(q){return q.recommendation || q.resolvedBy==='expo';});
     recs.sort(function(a,b){return b.at-a.at;});
     var val=0,con=0,pend=0;
     recs.forEach(function(q){ var o=q.outcome; if(o==='validated')val++; else if(o==='contradicted')con++; else pend++; });
@@ -8770,7 +8752,7 @@ function dashboardHtml(principal) {
         '</div>'+
       '</div>'+
       '<p class="card-desc" style="padding:0 0 12px">The expo grades its own calls in hindsight \u2014 did each recommendation hold up, or did a later finding overturn it? '+
-        'Score = held up \xF7 (held up + overturned), recency-weighted. It measures the foreman\\'s judgment, not whether '+esc(PRINCIPAL)+' accepted its advice.'+
+        'Score = held up \xF7 (held up + overturned), recency-weighted. It measures the expo\\'s judgment, not whether '+esc(PRINCIPAL)+' accepted its advice.'+
         (assessed?'':' Nothing judged yet \u2014 the score appears once the expo starts introspecting on how its recommendations played out.')+'</p>'+
       table;
   }
@@ -8793,13 +8775,13 @@ function dashboardHtml(principal) {
 
     var collide={}; realColl.forEach(function(c){ collide[c.a]=1; collide[c.b]=1; });
 
-    var workers=[];
-    s.agents.forEach(function(a){ if(wtNum(a.id)!=null) workers.push(a); });
-    workers.sort(function(a,b){ return wtNum(a.id)-wtNum(b.id); });
+    var stations=[];
+    s.agents.forEach(function(a){ if(wtNum(a.id)!=null) stations.push(a); });
+    stations.sort(function(a,b){ return wtNum(a.id)-wtNum(b.id); });
 
-    renderUtil(s, workers);
-    renderWorkers(s, workers, collide);
-    renderForeman(s);
+    renderUtil(s, stations);
+    renderStations(s, stations, collide);
+    renderExpo(s);
 
     document.getElementById('collstrip').innerHTML = realColl.length
       ? '<div class="alert" style="border-color:hsl(var(--destructive) / 0.5)"><div class="muted mono" style="font-size:12px">\u26A0 collisions \xB7 same file open in two panes</div>'+
@@ -8809,7 +8791,7 @@ function dashboardHtml(principal) {
         }).join('')+'</div>'
       : '';
 
-    var others=s.agents.filter(function(a){ return wtNum(a.id)==null && a.id!=='foreman' && a.online; });
+    var others=s.agents.filter(function(a){ return wtNum(a.id)==null && a.id!=='expo' && a.online; });
     document.getElementById('others').innerHTML = others.length
       ? '<div class="chips">'+others.map(function(a){
           return badge('badge-outline','<span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:9999px;background:'+dotColor(a.state)+'"></span> '+esc(nmeOnly(a.id))+' <span class="muted">'+esc(a.branch||'\u2014')+'</span>');
@@ -9000,7 +8982,7 @@ import { createServer } from "node:http";
 function serve(opts) {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
-  const port = opts?.port ?? Number(env.AGENT_BUS_PORT ?? 4319);
+  const port = opts?.port ?? Number(env.YES_CHEF_PORT ?? 4319);
   const store = new Store({ env });
   const db = dbPath(env);
   const html = dashboardHtml(loadConfig({ env }).principal.name);
@@ -9061,12 +9043,10 @@ import * as os6 from "node:os";
 import * as path11 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
-  const flags = { yes: false, migrate: null, principal: null, journalUrl: null, handle: null };
+  const flags = { yes: false, principal: null, journalUrl: null, handle: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--yes" || a === "-y") flags.yes = true;
-    else if (a === "--migrate") flags.migrate = true;
-    else if (a === "--no-migrate") flags.migrate = false;
     else if (a === "--principal") flags.principal = argv[++i] ?? null;
     else if (a.startsWith("--principal=")) flags.principal = a.slice("--principal=".length);
     else if (a === "--journal") flags.journalUrl = argv[++i] ?? null;
@@ -9080,50 +9060,8 @@ function out(line) {
   process.stdout.write(`${line}
 `);
 }
-function readJsonFile(file2) {
-  try {
-    return JSON.parse(fs11.readFileSync(file2, "utf8"));
-  } catch {
-    return {};
-  }
-}
-function writeJsonWithBackup(file2, value) {
-  fs11.mkdirSync(path11.dirname(file2), { recursive: true });
-  if (fs11.existsSync(file2)) fs11.copyFileSync(file2, `${file2}.agent-bus.bak`);
-  fs11.writeFileSync(file2, `${JSON.stringify(value, null, 2)}
-`);
-}
-function removeHooks(settings, signature) {
-  const hooks = settings.hooks;
-  if (!hooks) return 0;
-  let removed = 0;
-  for (const event of Object.keys(hooks)) {
-    const entries = hooks[event];
-    if (!Array.isArray(entries)) continue;
-    for (const entry of entries) {
-      const before = entry.hooks?.length ?? 0;
-      entry.hooks = entry.hooks?.filter((h) => !(h.command && signature.test(h.command)));
-      removed += before - (entry.hooks?.length ?? 0);
-    }
-    hooks[event] = entries.filter((e) => (e.hooks?.length ?? 0) > 0);
-    if (hooks[event].length === 0) delete hooks[event];
-  }
-  return removed;
-}
-function legacyCoordinationFiles(dir) {
-  let names = [];
-  try {
-    names = fs11.readdirSync(dir);
-  } catch {
-    return [];
-  }
-  return names.filter(
-    (n) => n === "agent-bus.db" || n.startsWith("agent-bus.db-") || n.endsWith(".notify") || n === "priorities.md" || n.startsWith("foreman.last-") || n.endsWith(".last-compact")
-  );
-}
 async function runInit(argv) {
   const flags = parseFlags(argv);
-  const home = os6.homedir();
   const interactive = process.stdin.isTTY === true && !flags.yes;
   const rl = interactive ? readline.createInterface({ input: process.stdin, output: process.stdout }) : null;
   const ask = async (q, fallback) => {
@@ -9131,100 +9069,40 @@ async function runInit(argv) {
     const answer = (await rl.question(`${q} [${fallback}] `)).trim();
     return answer || fallback;
   };
-  const confirm = async (q, fallback) => {
-    if (!rl) return fallback;
-    const answer = (await rl.question(`${q} [${fallback ? "Y/n" : "y/N"}] `)).trim().toLowerCase();
-    if (!answer) return fallback;
-    return answer.startsWith("y");
-  };
   try {
     const info = repoInfo(process.cwd());
     if (!info) {
-      out("\u26A0 not inside a git repo \u2014 skipped agent-bus.config.json (run init from your repo's main checkout)");
+      out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path11.join(info.repoRoot, "agent-bus.config.json");
+      const configPath = path11.join(info.repoRoot, CONFIG_BASENAME);
       if (fs11.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
+        out("  (to attach the books to an existing config: yes-chef books <url>)");
       } else {
-        const principal = flags.principal ?? await ask("Who is the principal (the human the foreman reports to)?", "Michael");
+        const principal = flags.principal ?? await ask("Who is the principal (the human the expo reports to)?", "Michael");
         const journalUrl = flags.journalUrl ?? await ask(
-          "Durable journal repo (a separate PRIVATE git repo; empty = journaling off)?",
+          "Books repo (a separate PRIVATE git repo for the durable journal; empty = books off)?",
           ""
         );
         const scaffold = {
           principal: { name: principal },
           topology: "strict-hub",
-          workers: {
+          stations: {
             model: "sonnet",
             overrides: {},
             launcher: "auto",
-            allowForemanScaling: true
+            allowScaling: true
           },
           merge: { adminMergeLowRisk: false },
           gh: { poll: true }
         };
         if (journalUrl.trim()) {
-          const handle = flags.handle ?? await ask("Journal handle (your fleet's namespace)?", os6.userInfo().username);
+          const handle = flags.handle ?? await ask("Books handle (your fleet's namespace)?", os6.userInfo().username);
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
         fs11.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
-      }
-    }
-    const claudeJsonPath = path11.join(home, ".claude.json");
-    const claudeJson = readJsonFile(claudeJsonPath);
-    const mcpServers = claudeJson.mcpServers;
-    const oldMcp = mcpServers?.["agent-bus"] !== void 0;
-    const settingsPath = path11.join(home, ".claude", "settings.json");
-    const settings = readJsonFile(settingsPath);
-    const settingsRaw = JSON.stringify(settings);
-    const oldHooks = /server\.js (publish|board)/.test(settingsRaw);
-    const oldSkills = ["foreman", "worker"].filter(
-      (s) => fs11.existsSync(path11.join(home, ".claude", "skills", s, "SKILL.md"))
-    );
-    if (oldMcp || oldHooks || oldSkills.length > 0) {
-      const doClean = await confirm(
-        "Found a pre-plugin agent-bus install (user-scope MCP/hooks/skills). Remove it so the plugin's registrations don't double-fire?",
-        true
-      );
-      if (doClean) {
-        if (oldMcp && mcpServers) {
-          delete mcpServers["agent-bus"];
-          writeJsonWithBackup(claudeJsonPath, claudeJson);
-          out(`\u2714 removed user-scope mcpServers["agent-bus"] from ${claudeJsonPath}`);
-        }
-        if (oldHooks) {
-          const removed = removeHooks(settings, /server\.js (publish|board)/);
-          if (removed > 0) {
-            writeJsonWithBackup(settingsPath, settings);
-            out(`\u2714 removed ${removed} old agent-bus hook(s) from ${settingsPath}`);
-          }
-        }
-        for (const s of oldSkills) {
-          fs11.rmSync(path11.join(home, ".claude", "skills", s), { recursive: true, force: true });
-          out(`\u2714 removed old ~/.claude/skills/${s} (the plugin ships the /yc: skills)`);
-        }
-      } else {
-        out("\u25CF left the old install in place \u2014 expect duplicate board injections and two MCP servers");
-      }
-    }
-    const legacyDir = path11.join(home, ".claude", "coordination");
-    const legacy = legacyCoordinationFiles(legacyDir);
-    if (legacy.length > 0 && info) {
-      const target = coordinationDir({}, process.cwd());
-      const doMove = flags.migrate ?? await confirm(
-        `Found ${legacy.length} legacy file(s) in ${legacyDir} (pre-isolation bus). Move them into this repo's bus (${target})?`,
-        false
-      );
-      if (doMove) {
-        fs11.mkdirSync(target, { recursive: true, mode: 448 });
-        for (const name of legacy) fs11.renameSync(path11.join(legacyDir, name), path11.join(target, name));
-        out(`\u2714 migrated ${legacy.length} file(s) \u2192 ${target}`);
-      } else {
-        out(
-          `\u25CF left legacy files in place. To keep using them instead, set AGENT_BUS_HOME=${legacyDir}; to migrate later, re-run: yes-chef init --migrate`
-        );
       }
     }
     out("");
@@ -9240,6 +9118,7 @@ async function runInit(argv) {
 var init_init = __esm({
   "src/init.ts"() {
     "use strict";
+    init_config();
     init_paths();
   }
 });
@@ -9248,6 +9127,7 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
+import * as os7 from "node:os";
 
 // src/server.ts
 import * as fs10 from "node:fs";
@@ -32554,7 +32434,7 @@ import * as fs6 from "node:fs";
 import * as os3 from "node:os";
 import * as path6 from "node:path";
 function memoryDir(env = process.env, cwd = process.cwd()) {
-  const override = env.AGENT_BUS_MEMORY_DIR?.trim();
+  const override = env.YES_CHEF_MEMORY_DIR?.trim();
   if (override) return override;
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   return path6.join(os3.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
@@ -32669,8 +32549,8 @@ function oneLine(text) {
   return points.length <= RESULT_MAX ? flat : `${points.slice(0, RESULT_MAX - 1).join("")}\u2026`;
 }
 function agentRank(agent) {
-  if (agent === "expo" || agent === "foreman") return [0, 0, agent];
-  const station = agent.match(/^(?:station|worker)-(\d+)$/);
+  if (agent === "expo") return [0, 0, agent];
+  const station = agent.match(/^station-(\d+)$/);
   if (station) return [1, Number.parseInt(station[1], 10), agent];
   if (agent === "unattributed") return [3, 0, agent];
   return [2, 0, agent];
@@ -32828,7 +32708,7 @@ init_paths();
 init_priorities();
 var JOURNAL_VERSION = 1;
 var JOURNAL_LAYOUT = 2;
-var MARKER_FILE = "agent-bus.json";
+var MARKER_FILE = "yes-chef.json";
 var PUSH_DEBOUNCE_MS = 6e4;
 var GIT_TIMEOUT_MS = 2e4;
 function git3(cwd, args) {
@@ -32906,8 +32786,8 @@ function ensureRepo(dir, url2) {
     fs8.mkdirSync(dir, { recursive: true, mode: 448 });
     if (!fs8.existsSync(path8.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
-      git3(dir, ["config", "user.name", "agent-bus"]);
-      git3(dir, ["config", "user.email", "agent-bus@localhost"]);
+      git3(dir, ["config", "user.name", "yes-chef"]);
+      git3(dir, ["config", "user.email", "yes-chef@localhost"]);
     }
     if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
       git3(dir, ["remote", "add", "origin", url2]);
@@ -32940,7 +32820,7 @@ function syncPull(dir) {
   tryGit(dir, ["rebase", "--abort"]);
   return { ok: false, reason: "conflict" };
 }
-var OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal", "log"]);
+var OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal"]);
 function readMarker(dir) {
   const file2 = path8.join(dir, MARKER_FILE);
   let raw;
@@ -32968,10 +32848,11 @@ function validateJournal(dir, opts) {
         reason: `journal layout v${marker.journal} was written by a newer yes-chef \u2014 update the plugin`
       };
     }
-    if (marker.journal < JOURNAL_LAYOUT && opts?.write) {
-      fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
-`);
-      return { ok: true, bootstrapped: true };
+    if (marker.journal < JOURNAL_LAYOUT) {
+      return {
+        ok: false,
+        reason: `journal layout v${marker.journal} is no longer supported \u2014 start a fresh journal repo`
+      };
     }
     return { ok: true };
   }
@@ -32987,7 +32868,7 @@ function validateJournal(dir, opts) {
     return {
       ok: false,
       needsAdopt: true,
-      reason: "the configured remote.url is not an agent-bus journal (no agent-bus.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `yes-chef sync --adopt` once to initialize the journal structure alongside the existing content."
+      reason: "the configured remote.url is not an yes-chef journal (no yes-chef.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `yes-chef sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
   fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
@@ -32995,10 +32876,10 @@ function validateJournal(dir, opts) {
   return { ok: true, bootstrapped: true };
 }
 function debounceMarkerPath(dir) {
-  return path8.join(dir, ".git", "agent-bus-last-push");
+  return path8.join(dir, ".git", "yes-chef-last-push");
 }
 function syncStatusPath(dir) {
-  return path8.join(dir, ".git", "agent-bus-sync-status");
+  return path8.join(dir, ".git", "yes-chef-sync-status");
 }
 function writeSyncStatus(dir, result, now) {
   try {
@@ -33021,8 +32902,7 @@ function changedLogDates(dir, head0, journal) {
     "--name-only",
     `${head0}..HEAD`,
     "--",
-    path8.join("journal", journal.project, journal.handle, "log"),
-    path8.join("log", journal.handle)
+    path8.join("journal", journal.project, journal.handle, "log")
   ]);
   if (diff === null) return void 0;
   const dates = /* @__PURE__ */ new Set();
@@ -33048,7 +32928,7 @@ function syncPush(journal, opts) {
   };
   try {
     const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
-    const ownPaths = [path8.join("journal", project, handle), "log", MARKER_FILE];
+    const ownPaths = [path8.join("journal", project, handle), MARKER_FILE];
     const own = ownPaths.filter((p) => fs8.existsSync(path8.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
     let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
@@ -33159,7 +33039,6 @@ function readEventsFromDir(logDir, into) {
 }
 function readEvents(dir, project, handle) {
   const events = [];
-  readEventsFromDir(path8.join(dir, "log", handle), events);
   readEventsFromDir(path8.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
@@ -33240,14 +33119,14 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "yes-chef", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see agent_bus_peers). Use agent_bus_peers to discover the team, agent_bus_send to message one, and agent_bus_receive to read messages addressed to you. Call agent_bus_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with agent_bus_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run agent_bus_questions, agent_bus_priorities to read/set the ranked priorities, agent_bus_answer to resolve, agent_bus_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: agent_bus_todo_add concrete things only they can do (idempotent via dedupKey), and agent_bus_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "")
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see yc_peers). Use yc_peers to discover the team, yc_send to message one, and yc_receive to read messages addressed to you. Call yc_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with yc_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run yc_questions, yc_priorities to read/set the ranked priorities, yc_answer to resolve, yc_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: yc_todo_add concrete things only they can do (idempotent via dedupKey), and yc_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "")
     }
   );
   server.registerTool(
-    "agent_bus_send",
+    "yc_send",
     {
       title: "Send a message to another agent",
-      description: `Enqueue a message to another agent on this repo's bus. \`to\` is a peer agent id (expo, station-2, \u2026 \u2014 see agent_bus_peers), the principal ("${principal}"), or "*" to broadcast to everyone. Do not include secrets. Waking the recipient costs a full model turn \u2014 for an FYI / status update that needs no immediate action, pass wake:false so it is delivered on their next natural drain instead.`,
+      description: `Enqueue a message to another agent on this repo's bus. \`to\` is a peer agent id (expo, station-2, \u2026 \u2014 see yc_peers), the principal ("${principal}"), or "*" to broadcast to everyone. Do not include secrets. Waking the recipient costs a full model turn \u2014 for an FYI / status update that needs no immediate action, pass wake:false so it is delivered on their next natural drain instead.`,
       inputSchema: {
         to: external_exports3.string().describe('recipient agent id, or "*" for broadcast'),
         body: external_exports3.string(),
@@ -33279,7 +33158,7 @@ function buildServer(store, agentId, config2) {
           return {
             ...asToolResult({
               ok: false,
-              error: "Direct station-to-station messaging is disabled. Route via the expo \u2014 use agent_bus_ask for a decision, or agent_bus_send({to:'expo'}) for a handoff."
+              error: "Direct station-to-station messaging is disabled. Route via the expo \u2014 use yc_ask for a decision, or yc_send({to:'expo'}) for a handoff."
             }),
             isError: true
           };
@@ -33306,7 +33185,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_receive",
+    "yc_receive",
     {
       title: "Receive messages addressed to me",
       description: "Return messages addressed to you (directed + broadcast) since your read cursor. Long-polls up to wait_seconds, returning as soon as a message lands. Advances your cursor when mark_read is true.",
@@ -33341,7 +33220,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_peers",
+    "yc_peers",
     {
       title: "List registered worktree agents",
       description: "List every agent registered on this machine's bus and whether it is online (heartbeat within the last 60s).",
@@ -33363,7 +33242,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_history",
+    "yc_history",
     {
       title: "Read past messages",
       description: "Read past messages (audit). Optionally filter by peer (messages to/from that agent) or thread id. Returns up to `limit` most-recent messages in chronological order.",
@@ -33385,7 +33264,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_board",
+    "yc_board",
     {
       title: "Read the standup board",
       description: "Snapshot of every agent: who's active (branch + last-active age), recent learnings (commits + memory writes), and any file/ticket collisions with you. Always includes a cheap `stateHash` fingerprint \u2014 if it matches your last pass, nothing moved and you can skip a deeper re-scan. Pass full:true to bundle active tasks + open questions + the priorities digest into this ONE read (instead of separate tasks/questions/priorities calls).",
@@ -33461,7 +33340,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_paths",
+    "yc_paths",
     {
       title: "Where does this agent resolve? (paths + identity + journal health)",
       description: "Your canonical identity and this repo's bus locations: agentId, coordinationDir, db, your .notify file (arm your Monitor on it), repo root/slug, and the durable-journal sync health. The bus is scoped per repo \u2014 always read paths from here, never guess them.",
@@ -33474,7 +33353,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_ask",
+    "yc_ask",
     {
       title: "Escalate an open question to the expo",
       description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them.`,
@@ -33492,7 +33371,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_questions",
+    "yc_questions",
     {
       title: "List questions on the bus",
       description: "List questions. Expo inbox = state 'open'. States: open | needs_human | answered. Omit state for all recent.",
@@ -33523,14 +33402,14 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_answer",
+    "yc_answer",
     {
       title: "Answer a question (resolve it)",
-      description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'foreman' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
+      description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'expo' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
       inputSchema: {
         id: external_exports3.number().int(),
         answer: external_exports3.string(),
-        by: external_exports3.enum(["foreman", "human"]).optional(),
+        by: external_exports3.enum(["expo", "human"]).optional(),
         priority: external_exports3.string().optional().describe("the priority this maps to")
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
@@ -33542,7 +33421,7 @@ function buildServer(store, agentId, config2) {
       store.answerQuestion({
         id: input.id,
         answer: input.answer,
-        resolvedBy: input.by ?? "foreman",
+        resolvedBy: input.by ?? "expo",
         priorityRef: input.priority ?? null
       });
       deliverWake([q.asker], { from: "expo", subject: "answer" });
@@ -33550,10 +33429,10 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_escalate",
+    "yc_escalate",
     {
       title: "Bubble a question up to the principal",
-      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). Include your recommendation and the priority it touches. Then present it to him and, once he decides, call agent_bus_answer with by='human'.`,
+      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). Include your recommendation and the priority it touches. Then present it to him and, once he decides, call yc_answer with by='human'.`,
       inputSchema: {
         id: external_exports3.number().int(),
         recommendation: external_exports3.string().optional(),
@@ -33574,7 +33453,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_rec_outcome",
+    "yc_rec_outcome",
     {
       title: "Record a recommendation's hindsight outcome (expo self-audit)",
       description: `The expo's introspection. After one of your recommendations has played out, record whether it HELD UP ('validated') or was OVERTURNED by a later finding ('contradicted'), with a short reason. This grades YOUR OWN judgment in hindsight \u2014 not whether ${principal} accepted the advice \u2014 and feeds the expo-effectiveness score on the dashboard. Run it as part of your routine: revisit recent recommendations, and when a station's later finding overturns a call you made, mark it 'contradicted' honestly (that is the signal ${principal} wants to see degrade the score).`,
@@ -33594,7 +33473,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_priorities",
+    "yc_priorities",
     {
       title: "Read or set the menu \u2014 the expo's ranked priorities",
       description: `No args: read the current ranked priorities (+ whether they're stale/unset). Pass \`set\` to replace them (ranked, most-important first). Pass confirm=true to mark the existing list still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
@@ -33628,7 +33507,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_delegate",
+    "yc_delegate",
     {
       title: "Fire a ticket to a station (delegate a task)",
       description: 'Hand a ticket (a unit of real work) to a station \u2014 expo use. `to` = a station agent id (station-1, station-2, \u2026), or omit for the unassigned rail ("any available station"). The first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.',
@@ -33647,7 +33526,7 @@ function buildServer(store, agentId, config2) {
         return {
           ...asToolResult({
             ok: false,
-            error: "Stations don't fire tickets. Hand work upward instead: agent_bus_ask for a decision, or agent_bus_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
+            error: "Stations don't fire tickets. Hand work upward instead: yc_ask for a decision, or yc_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
           }),
           isError: true
         };
@@ -33673,7 +33552,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_tasks",
+    "yc_tasks",
     {
       title: "List delegated tasks",
       description: "List tickets (tasks). A station checks its own with assignee=<me>; the expo omits filters or uses active=true. States: open | assigned | in_progress | returned | done | cancelled.",
@@ -33711,7 +33590,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_task_update",
+    "yc_task_update",
     {
       title: "Advance a ticket (fire / plate / serve / 86)",
       description: "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), 'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it.",
@@ -33740,10 +33619,10 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_todos",
+    "yc_todos",
     {
       title: "Read the principal's to-do list",
-      description: `List the personal to-do items the expo is tracking for ${principal}. No args: everything (open first). Pass state to filter: open | done | dismissed. Read-only \u2014 the expo manages the list via agent_bus_todo_add / agent_bus_todo_update.`,
+      description: `List the personal to-do items the expo is tracking for ${principal}. No args: everything (open first). Pass state to filter: open | done | dismissed. Read-only \u2014 the expo manages the list via yc_todo_add / yc_todo_update.`,
       inputSchema: {
         state: external_exports3.enum(["open", "done", "dismissed"]).optional(),
         limit: external_exports3.number().int().min(1).max(200).optional()
@@ -33773,17 +33652,17 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_todo_add",
+    "yc_todo_add",
     {
       title: "Add an item to the principal's to-do list",
-      description: `Add a concrete thing only ${principal} can personally do (a decision, a merge/review click, a reply he owes) to his to-do list. Foreman-managed. Idempotent while open: pass a stable \`dedupKey\` (e.g. the PR#, question id, or a normalized title) so re-deriving the same item each pass never duplicates it \u2014 an existing open match is returned untouched. Set \`origin\` (what surfaced it) and \`priority\` (which ranked priority it maps to) for provenance.`,
+      description: `Add a concrete thing only ${principal} can personally do (a decision, a merge/review click, a reply he owes) to his to-do list. Expo-managed. Idempotent while open: pass a stable \`dedupKey\` (e.g. the PR#, question id, or a normalized title) so re-deriving the same item each pass never duplicates it \u2014 an existing open match is returned untouched. Set \`origin\` (what surfaced it) and \`priority\` (which ranked priority it maps to) for provenance.`,
       inputSchema: {
         title: external_exports3.string(),
         detail: external_exports3.string().optional(),
         dedupKey: external_exports3.string().optional().describe("stable identity to prevent re-adds while open"),
         origin: external_exports3.string().optional().describe("what spawned it \u2014 PR#, question id, priority text"),
         priority: external_exports3.string().optional(),
-        source: external_exports3.enum(["foreman", "human"]).optional()
+        source: external_exports3.enum(["expo", "human"]).optional()
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     },
@@ -33795,13 +33674,13 @@ function buildServer(store, agentId, config2) {
         dedupKey: input.dedupKey ?? null,
         originRef: input.origin ?? null,
         priority: input.priority ?? null,
-        source: input.source ?? "foreman"
+        source: input.source ?? "expo"
       });
       return asToolResult({ ok: true, id, isNew });
     }
   );
   server.registerTool(
-    "agent_bus_todo_update",
+    "yc_todo_update",
     {
       title: "Cross off / dismiss / re-open a to-do",
       description: "Change a to-do's state. 'done' crosses it off \u2014 pass `doneSignal` describing HOW you inferred completion (e.g. 'PR #2354 merged', 'commit abc123', 'escalation #7 answered') so the auto-cross-off stays transparent and reversible. 'dismissed' drops an item that's no longer relevant; 'open' re-opens one.",
@@ -33821,10 +33700,10 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "agent_bus_focus",
+    "yc_focus",
     {
       title: "Set a station's focus (its evolving specialization)",
-      description: `Label a station with its current specialization ("developer API", "billing") \u2014 shown on the board and in the books, and addressable in agent_bus_send/delegate as a convenience (the station-<n> id stays the durable key). A station may set its own focus; the expo may set anyone's. Pass focus: null to clear.`,
+      description: `Label a station with its current specialization ("developer API", "billing") \u2014 shown on the board and in the books, and addressable in yc_send/delegate as a convenience (the station-<n> id stays the durable key). A station may set its own focus; the expo may set anyone's. Pass focus: null to clear.`,
       inputSchema: {
         station: external_exports3.string().optional().describe("target station id (default: yourself)"),
         focus: external_exports3.string().min(1).max(80).nullable()
@@ -33852,7 +33731,7 @@ function buildServer(store, agentId, config2) {
   );
   if (isExpo(agentId)) {
     server.registerTool(
-      "agent_bus_digest_note",
+      "yc_digest_note",
       {
         title: "Add a prose note to today's journal digest (expo only)",
         description: "Record a short narrative note (2\u20135 lines) into the durable journal's daily digest \u2014 the end-of-day wrap-up a human reads when browsing the journal repo. Renders under 'Notes' in journal/<project>/<handle>/<date>.md on the next sync. No-op guidance: requires remote journaling (config remote.url); notes are plaintext in the journal repo.",
@@ -33872,7 +33751,7 @@ function buildServer(store, agentId, config2) {
       }
     );
     server.registerTool(
-      "agent_bus_gh_poll",
+      "yc_gh_poll",
       {
         title: "Poll GitHub for other engineers' PRs (expo only)",
         description: "Record what OTHER engineers are shipping (open + recently-merged PRs on this repo, excluding the principal's) for the dashboard team lane and per-station relevance matching. Network call \u2014 run once every few passes, not every tick" + (cfg.gh.poll ? "." : ". NOTE: gh.poll is disabled in this repo's config \u2014 skip it."),
@@ -33903,7 +33782,7 @@ function buildServer(store, agentId, config2) {
       pasteCommand: p.launched ? void 0 : p.command
     }));
     server.registerTool(
-      "agent_bus_worker_add",
+      "yc_station_add",
       {
         title: "Open more stations (expo only)",
         description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu (ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
@@ -33912,16 +33791,16 @@ function buildServer(store, agentId, config2) {
       },
       async (input) => {
         store.touch(agentId);
-        const { addWorkers: addWorkers2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
+        const { addStations: addStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
         try {
-          return asToolResult({ ok: true, added: presentPlans(addWorkers2(input.count ?? 1)) });
+          return asToolResult({ ok: true, added: presentPlans(addStations2(input.count ?? 1)) });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
         }
       }
     );
     server.registerTool(
-      "agent_bus_worker_remove",
+      "yc_station_remove",
       {
         title: "Close a station (expo only)",
         description: "Stop a station's session and remove its managed workspace. Refuses if the station has uncommitted work unless force:true. Idempotent.",
@@ -33933,16 +33812,16 @@ function buildServer(store, agentId, config2) {
       },
       async (input) => {
         store.touch(agentId);
-        const { removeWorker: removeWorker2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
+        const { removeStation: removeStation2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
         try {
-          return asToolResult({ ok: true, ...removeWorker2(input.id, { force: input.force }) });
+          return asToolResult({ ok: true, ...removeStation2(input.id, { force: input.force }) });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
         }
       }
     );
     server.registerTool(
-      "agent_bus_scale",
+      "yc_scale",
       {
         title: "Scale the station line (expo only)",
         description: "Reconcile the line to exactly `target` stations \u2014 adds or opens/closes as needed (highest index retired first; refuses to discard uncommitted work unless force:true).",
@@ -33954,9 +33833,9 @@ function buildServer(store, agentId, config2) {
       },
       async (input) => {
         store.touch(agentId);
-        const { scaleWorkers: scaleWorkers2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
+        const { scaleStations: scaleStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
         try {
-          const res = scaleWorkers2(input.target, { force: input.force });
+          const res = scaleStations2(input.target, { force: input.force });
           return asToolResult({ ok: true, added: presentPlans(res.added), removed: res.removed });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
@@ -33967,7 +33846,7 @@ function buildServer(store, agentId, config2) {
   return server;
 }
 function resolveSelf() {
-  return resolveAgentId({ foremanBasename: loadConfig().expo.basename });
+  return resolveAgentId({ expoBasename: loadConfig().expo.basename });
 }
 function pathsReport(agentId, cfg) {
   const info = repoInfo();
@@ -34024,7 +33903,7 @@ function runCli(subcommand, argv) {
       );
       return 0;
     }
-    process.stderr.write(`[agent-bus] unknown subcommand: ${subcommand}
+    process.stderr.write(`[yes-chef] unknown subcommand: ${subcommand}
 `);
     return 2;
   } finally {
@@ -34060,7 +33939,7 @@ async function main() {
   await server.connect(new StdioServerTransport());
 }
 var invokedDirectly = (() => {
-  if (process.env.AGENT_BUS_FORCE_MAIN === "1") return true;
+  if (process.env.YES_CHEF_FORCE_MAIN === "1") return true;
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
@@ -34073,7 +33952,7 @@ var invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   main().catch((err) => {
-    console.error("[agent-bus] fatal:", err);
+    console.error("[yes-chef] fatal:", err);
     process.exit(1);
   });
 }
@@ -34112,30 +33991,30 @@ function reportPlans(plans) {
     }
   }
 }
-function cmdWorker(argv) {
+function cmdStation(argv) {
   const sub = argv[0];
   if (sub === "add") {
     const n = intOpt(argv, "-n", 1);
-    const plans = addWorkers(n);
+    const plans = addStations(n);
     if (plans.length === 0) out2("nothing to add");
     reportPlans(plans);
     out2(`
-Stations register with the expo on their first turn (agent_bus_peers to check).`);
+Stations register with the expo on their first turn (yc_peers to check).`);
     return;
   }
   if (sub === "ls") {
-    const workers = listWorkers();
-    if (workers.length === 0) {
+    const stations = listStations();
+    if (stations.length === 0) {
       out2("no stations \u2014 open some: yes-chef station add -n 2");
       return;
     }
-    for (const w of workers) out2(`${w.id}	${w.branch}	${w.dir}`);
+    for (const w of stations) out2(`${w.id}	${w.branch}	${w.dir}`);
     return;
   }
   if (sub === "rm") {
     const id = argv[1];
     if (!id || id.startsWith("-")) fail("usage: yes-chef station rm station-<n> [--force]");
-    const res = removeWorker(id, { force: flag(argv, "--force") });
+    const res = removeStation(id, { force: flag(argv, "--force") });
     out2(res.removed ? `\u2714 ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }
@@ -34144,15 +34023,49 @@ Stations register with the expo on their first turn (agent_bus_peers to check).`
 function cmdScale(argv) {
   const target = Number.parseInt(argv[0] ?? "", 10);
   if (!Number.isInteger(target) || target < 0) fail("usage: yes-chef scale <N>");
-  const { added, removed } = scaleWorkers(target, { force: flag(argv, "--force") });
+  const { added, removed } = scaleStations(target, { force: flag(argv, "--force") });
   reportPlans(added);
   for (const id of removed) out2(`\u2714 ${id} retired`);
-  if (added.length === 0 && removed.length === 0) out2(`already at ${target} workers`);
+  if (added.length === 0 && removed.length === 0) out2(`already at ${target} stations`);
+}
+function cmdBooks(argv) {
+  const info = repoInfo(process.cwd());
+  if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
+  const configPath = path12.join(info.repoRoot, CONFIG_BASENAME);
+  if (!fs12.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: yes-chef init`);
+  let cfg;
+  try {
+    cfg = JSON.parse(fs12.readFileSync(configPath, "utf8"));
+  } catch (err) {
+    fail(`${configPath} is not valid JSON: ${String(err)}`);
+  }
+  const remote = cfg.remote ?? {};
+  const url2 = argv.find((a) => !a.startsWith("--"));
+  if (!url2) {
+    if (typeof remote.url === "string" && remote.url) {
+      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os7.userInfo().username)}")`);
+    } else {
+      out2("no books attached \u2014 attach with: yes-chef books <private-git-url> [--handle <name>]");
+    }
+    return;
+  }
+  const hi = argv.indexOf("--handle");
+  const handleArg = hi !== -1 ? argv[hi + 1] : argv.find((a) => a.startsWith("--handle="))?.slice("--handle=".length);
+  cfg.remote = {
+    ...remote,
+    url: url2,
+    handle: handleArg ?? remote.handle ?? os7.userInfo().username
+  };
+  fs12.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+`);
+  out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
+  out2("  next: yes-chef sync   (initializes the journal; --adopt if the repo is non-empty)");
+  out2("  (restart running Claude Code sessions so the bus picks up the config change)");
 }
 function requireRemote() {
   const j = openJournal();
   if (!j) {
-    fail('no remote journal configured \u2014 set remote.url in agent-bus.config.json, e.g. {"remote":{"url":"git@github.com:you/yes-chef-books.git"}}');
+    fail("no books attached \u2014 run: yes-chef books git@github.com:you/yes-chef-books.git");
   }
   if (!fs12.existsSync(path12.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
@@ -34169,7 +34082,7 @@ function cmdRestore() {
     const projects = listProjects(dir);
     if (projects.length > 0) {
       out2(`  journal has projects: ${projects.join(", ")}`);
-      out2("  (a different key? set remote.project in agent-bus.config.json \u2014 origin-less repos derive it from the dir name, which varies per machine)");
+      out2(`  (a different key? set remote.project in ${CONFIG_BASENAME} \u2014 origin-less repos derive it from the dir name, which varies per machine)`);
     }
     return;
   }
@@ -34206,7 +34119,7 @@ function cmdDigest(argv) {
 }
 function cmdPaths() {
   const cfg = loadConfig();
-  const agentId = resolveAgentId({ foremanBasename: cfg.expo.basename });
+  const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
   out2(JSON.stringify(pathsReport(agentId, cfg), null, 2));
 }
 async function main2() {
@@ -34219,8 +34132,9 @@ async function main2() {
         return;
       }
       case "station":
-      case "worker":
-        return cmdWorker(rest);
+        return cmdStation(rest);
+      case "books":
+        return cmdBooks(rest);
       case "scale":
         return cmdScale(rest);
       case "restore":
@@ -34242,11 +34156,12 @@ async function main2() {
       default: {
         out2("yes-chef \u2014 an expo/station agent fleet for Claude Code");
         out2("");
-        out2("  yes-chef init                scaffold agent-bus.config.json + clean up pre-plugin installs");
-        out2("  yes-chef station add [-n N]   spin up N workers");
-        out2("  yes-chef station ls           list this repo's workers");
-        out2("  yes-chef station rm <id>      retire a worker (--force discards uncommitted work)");
-        out2("  yes-chef scale <N>           reconcile the pool to exactly N workers");
+        out2(`  yes-chef init                scaffold ${CONFIG_BASENAME}`);
+        out2("  yes-chef books [<url>]       attach the books (durable journal) to this repo's config");
+        out2("  yes-chef station add [-n N]   open N stations");
+        out2("  yes-chef station ls           list this repo's stations");
+        out2("  yes-chef station rm <id>      retire a station (--force discards uncommitted work)");
+        out2("  yes-chef scale <N>           reconcile the brigade to exactly N stations");
         out2("  yes-chef restore             rebuild local bus state from the remote journal (remote.url)");
         out2("  yes-chef sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out2("                                non-empty repo as a journal \u2014 explicit by design)");
@@ -34262,6 +34177,6 @@ async function main2() {
   }
 }
 main2().catch((err) => {
-  console.error("agent-bus fatal:", err);
+  console.error("yes-chef fatal:", err);
   process.exit(1);
 });
