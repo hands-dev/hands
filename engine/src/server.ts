@@ -28,11 +28,11 @@ import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
 import {
+  craftFiles,
   journalDir,
   openJournal,
   readSyncStatus,
   resolveProject,
-  stationFiles,
   syncPush,
 } from "./remote.js";
 import { type MessageRow, Store } from "./store.js";
@@ -63,18 +63,29 @@ function presentMessage(row: MessageRow) {
 }
 
 /**
- * A station's self-managed context, injected into its MCP instructions at
- * connect — this is what makes a rebooted (or machine-moved, when the books
- * carry the files) station come up already knowing its beat. Capped per file
- * so a neglected book can't blow up the context.
+ * The CRAFT a station holds (its focus label), injected into its MCP
+ * instructions at connect — this is what makes a rebooted (or machine-moved,
+ * when the books carry the files) station come up already knowing its craft.
+ * The seat is furniture; the craft is portable. Capped per file so a
+ * neglected book can't blow up the context. Instructions are static per
+ * connection, so mid-session swaps are delivered by the expo as a waking
+ * message + a hands_paths re-read (which resolves from CURRENT focus).
  */
-export function stationContext(
+export function craftContext(
   agentId: string,
+  store: Store,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): string {
   if (!isStation(agentId)) return "";
-  const files = stationFiles(agentId, env, cwd);
+  const craft = store.getFocus(agentId);
+  if (!craft) {
+    return (
+      "\n\nYou hold no craft yet — the expo assigns one via hands_focus. Until then work " +
+      "tickets generically; once assigned, your craft's book + skill arrive via hands_paths."
+    );
+  }
+  const files = craftFiles(craft, env, cwd);
   const read = (file: string, cap = 6000): string | null => {
     try {
       const body = fs.readFileSync(file, "utf8").trim();
@@ -87,10 +98,17 @@ export function stationContext(
   };
   const skill = read(files.skill);
   const book = read(files.book);
-  if (!skill && !book) return "";
+  const header =
+    `\n\n## Your craft: ${craft}\n` +
+    "The craft is portable — if the expo reassigns yours mid-session you'll get a waking " +
+    "message; re-read your files via hands_paths (they always resolve from your CURRENT craft).";
+  if (!skill && !book) {
+    return `${header}\nNo book or skill written for this craft yet — you are founding it.`;
+  }
   return (
-    (skill ? `\n\n## Your station skill (self-maintained — ${files.skill})\n${skill}` : "") +
-    (book ? `\n\n## Your prep book (self-maintained — ${files.book})\n${book}` : "")
+    header +
+    (skill ? `\n\n### Craft skill (self-maintained — ${files.skill})\n${skill}` : "") +
+    (book ? `\n\n### Prep book (self-maintained — ${files.book})\n${book}` : "")
   );
 }
 
@@ -143,12 +161,12 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
             "commit, memory write, answered escalation) shows they finished one."
           : "") +
         (isStation(agentId)
-          ? " Keep your station files current (paths in hands_paths): your PREP BOOK (distilled beat " +
-            "knowledge — rewrite, don't append; ≤150 lines) and your STATION SKILL (your own " +
-            "operating manual). Update them on idle wakes and before any /compact — they are how " +
-            "your expertise survives reboots and machine moves."
+          ? " Keep your CRAFT's files current (paths in hands_paths): its PREP BOOK (distilled " +
+            "knowledge — rewrite, don't append; ≤150 lines) and its CRAFT SKILL (its operating " +
+            "manual). Update them on idle wakes and before any /compact — the craft, not the " +
+            "seat, is how expertise survives reboots, machine moves, and reassignment."
           : "") +
-        stationContext(agentId),
+        craftContext(agentId, store),
     },
   );
 
@@ -430,7 +448,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     },
     async () => {
       store.touch(agentId);
-      return asToolResult(pathsReport(agentId, cfg));
+      return asToolResult(pathsReport(agentId, cfg, store.getFocus(agentId)));
     },
   );
 
@@ -849,12 +867,17 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
   server.registerTool(
     "hands_focus",
     {
-      title: "Set a station's focus (its evolving specialization)",
+      title: "Assign a station's craft (set/swap its focus label)",
       description:
-        'Label a station with its current specialization ("developer API", "billing") — shown on ' +
-        "the board and in the books, and addressable in hands_send/delegate as a convenience " +
-        "(the station-<n> id stays the durable key). A station may set its own focus; the expo may " +
-        "set anyone's. Pass focus: null to clear.",
+        'Assign a station its CRAFT — the named, portable specialization it holds ("saucier", ' +
+        '"ordering API"). The craft, not the seat, owns the prep book + craft skill under crafts/, ' +
+        "so reassigning moves the whole skillset and history to that station: an existing name " +
+        "restores its files, a new name founds fresh ones. Shown on the board and in the books, " +
+        "and addressable in hands_send/delegate as a convenience (the station-<n> id stays the " +
+        "durable key). Swapping a RUNNING station's craft: set it here, then send a waking message " +
+        "so it re-reads via hands_paths. Keep one craft on one active seat at a time — two seats " +
+        "writing one book is the same mistake as two machines on one handle. A station may set " +
+        "its own; the expo may set anyone's. Pass focus: null to clear.",
       inputSchema: {
         station: z.string().optional().describe("target station id (default: yourself)"),
         focus: z.string().min(1).max(80).nullable(),
@@ -1035,10 +1058,14 @@ function resolveSelf(): string {
  * `hands paths` CLI, and the hands_paths MCP tool — the one authority
  * agents consult instead of guessing per-repo paths.
  */
-export function pathsReport(agentId: string, cfg: HandsConfig) {
+export function pathsReport(agentId: string, cfg: HandsConfig, focus?: string | null) {
   const info = repoInfo();
   const enabled = Boolean(cfg.remote.url?.trim());
   const journal = enabled ? readSyncStatus(journalDir()) : null;
+  // Resolved from CURRENT focus on every call — this is what makes mid-session
+  // craft swaps observable without a reconnect.
+  const craft = focus ?? null;
+  const files = craft ? craftFiles(craft) : null;
   return {
     cwd: process.cwd(),
     agentId,
@@ -1048,10 +1075,15 @@ export function pathsReport(agentId: string, cfg: HandsConfig) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
-    /** every station's self-managed files live here; per-agent paths for stations */
-    stationsDir: stationFiles(agentId).dir,
+    /** the craft roster — every craft's book + skill live here */
+    craftsDir: craftFiles("roster").dir,
     ...(isStation(agentId)
-      ? { book: stationFiles(agentId).book, skillFile: stationFiles(agentId).skill }
+      ? {
+          craft,
+          craftSlug: files?.slug ?? null,
+          book: files?.book ?? null,
+          skillFile: files?.skill ?? null,
+        }
       : {}),
     journalProject: enabled ? resolveProject(cfg) : null,
     journalSync: journal
@@ -1064,8 +1096,19 @@ export function pathsReport(agentId: string, cfg: HandsConfig) {
 
 function runCli(subcommand: string, argv: string[]): number {
   if (subcommand === "paths") {
-    // Debug: where does this cwd resolve? (isolation check — no DB touch)
-    process.stdout.write(`${JSON.stringify(pathsReport(resolveSelf(), loadConfig()), null, 2)}\n`);
+    // Debug: where does this cwd resolve? Reads the existing DB for the
+    // current craft, but never CREATES one as a side effect of a debug call.
+    const id = resolveSelf();
+    let focus: string | null = null;
+    if (fs.existsSync(dbPath())) {
+      const s = new Store();
+      try {
+        focus = s.getFocus(id);
+      } finally {
+        s.close();
+      }
+    }
+    process.stdout.write(`${JSON.stringify(pathsReport(id, loadConfig(), focus), null, 2)}\n`);
     return 0;
   }
   const agentId = resolveSelf();

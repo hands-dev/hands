@@ -35,7 +35,6 @@ import {
   openJournal,
   readEvents,
   replayInto,
-  stationFiles,
   syncPull,
   syncPush,
   validateJournal,
@@ -99,16 +98,8 @@ function cmdStation(argv: string[]): void {
     const id = argv[1];
     if (!id || id.startsWith("-")) fail("usage: hands station rm station-<n> [--force]");
     const res = removeStation(id, { force: flag(argv, "--force") });
-    // The prep book + skill survive retirement (a future station on the same
-    // beat inherits them) — just stamp the book so the gap is visible.
-    try {
-      const files = stationFiles(id);
-      if (fs.existsSync(files.book)) {
-        fs.appendFileSync(files.book, `\n> station retired ${new Date().toISOString().slice(0, 10)}\n`);
-      }
-    } catch {
-      // best-effort — never fail the removal over a book stamp
-    }
+    // No craft bookkeeping here: the craft outlives the seat — closing a
+    // station is not a craft event. Its files stay on the roster untouched.
     out(res.removed ? `✔ ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }
@@ -232,7 +223,16 @@ function cmdDigest(argv: string[]): void {
 function cmdPaths(): void {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
-  out(JSON.stringify(pathsReport(agentId, cfg), null, 2));
+  let focus: string | null = null;
+  if (fs.existsSync(dbPath())) {
+    const store = new Store();
+    try {
+      focus = store.getFocus(agentId);
+    } finally {
+      store.close();
+    }
+  }
+  out(JSON.stringify(pathsReport(agentId, cfg, focus), null, 2));
 }
 
 async function main(): Promise<void> {

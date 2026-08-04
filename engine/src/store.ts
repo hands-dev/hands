@@ -431,6 +431,18 @@ export class Store {
     this.journal("focus.set", { station: agentId, focus, at: now });
   }
 
+  /**
+   * An agent's current focus label — i.e. the CRAFT it holds. Deliberately
+   * not presence-windowed (unlike listPeers): an offline station's craft must
+   * still resolve so its files inject correctly at the next connect.
+   */
+  getFocus(agentId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT focus FROM agents WHERE id = ?`)
+      .get(agentId) as { focus: string | null } | undefined;
+    return row?.focus ?? null;
+  }
+
   /** Agent ids whose focus label matches (case-insensitive) — label addressing. */
   findByFocus(label: string): string[] {
     return (

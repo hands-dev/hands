@@ -144,11 +144,18 @@ switch a pane's model yourself.
 
 **The station path:**
 
-1. **Pick a station** from the bundled read — prefer idle, prefer matching **focus** (its beat).
-   When a ticket starts a new beat, set it: `hands_focus({ station, focus: "developer API" })`.
-   Stations keep self-managed prep books + skills in `stationsDir` (from `hands_paths`) — when
-   opening a station or reassigning a beat, skim them: a station id whose book already covers the
-   beat is worth reusing (a fresh station on that id inherits the book automatically).
+1. **Pick a seat, assign the craft.** Stations are furniture; the **craft** — the named, portable
+   specialization holding the prep book + craft skill — is what you actually deploy (a craft is
+   what a chef de partie carries: the saucier brings their craft to whatever station needs them).
+   The roster lives in `craftsDir` (from `hands_paths`) — skim it before assigning: an existing
+   name restores its whole book and history onto whatever seat you give it; a new name founds a
+   fresh craft. Assign with `hands_focus({ station, focus: "saucier" })` — prefer an idle seat,
+   prefer the seat already holding that craft.
+   **Hot-swap:** need fish instead of sauce? `hands_focus` the new craft onto the seat, then send
+   a waking message ("you're the poissonnier now — swap crafts") — the station distills its
+   outgoing book first, then adopts the new one via `hands_paths`. Swapping two stations is two
+   focus sets + two wakes. Guardrail: **one craft on one active seat at a time** — two seats
+   writing one book is the two-machines-one-handle mistake.
 2. **Fire the ticket:** `hands_delegate({ to, title, body, priority, dish })` — always cite the
    special it serves, and the **dish** (the external deliverable — Linear/PR ref) when one
    exists. For a fresh special the first ticket is almost always **a plan**: *"Plan: get <X>

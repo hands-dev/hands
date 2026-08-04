@@ -584,29 +584,35 @@ export function readEvents(dir: string, project: string, handle: string): Journa
   return events.sort((a, b) => a.ts - b.ts);
 }
 
-export interface StationFiles {
-  /** dir holding every station's files (the expo browses this to match beats) */
+export interface CraftFiles {
+  /** dir holding every craft's files (the expo browses this as the roster) */
   dir: string;
-  /** the prep book — the station's self-curated knowledge distillation */
+  /** the craft's key on disk — sanitizeSegment of its name */
+  slug: string;
+  /** the prep book — the craft's self-curated knowledge distillation */
   book: string;
-  /** the station's self-maintained SKILL file — its own operating manual */
+  /** the craft's self-maintained SKILL file — its own operating manual */
   skill: string;
   /** true when the files live in the books clone (machine-portable via sync) */
   durable: boolean;
 }
 
 /**
- * Where a station's self-managed files live. Books on → inside the clone
- * under the contributor's namespace (`journal/<project>/<handle>/stations/`),
- * so normal sync ships them and they survive machine moves; digests never
- * render them, so the shared narrative stays the expo's. Books off → a local
- * `stations/` dir in the coordination dir (reboot-durable, not portable).
+ * Where a CRAFT's self-managed files live. A craft is a named, portable
+ * specialization ("saucier", "ordering API") that a station holds via its
+ * focus label — the seat is furniture, the craft carries the expertise.
+ * Books on → inside the clone under the contributor's namespace
+ * (`journal/<project>/<handle>/crafts/`), so normal sync ships the files and
+ * they survive machine moves; digests never render them, so the shared
+ * narrative stays the expo's. Books off → a local `crafts/` dir in the
+ * coordination dir (reboot-durable, not portable). Spelling variants of one
+ * name ("Ordering API" / "ordering api") deliberately converge on one slug.
  */
-export function stationFiles(
-  agentId: string,
+export function craftFiles(
+  craft: string,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
-): StationFiles {
+): CraftFiles {
   const config = loadConfig({ cwd, env });
   const enabled = Boolean(config.remote.url?.trim());
   const dir = enabled
@@ -615,13 +621,15 @@ export function stationFiles(
         "journal",
         resolveProject(config, cwd),
         resolveHandle(config),
-        "stations",
+        "crafts",
       )
-    : path.join(coordinationDir(env, cwd), "stations");
+    : path.join(coordinationDir(env, cwd), "crafts");
+  const slug = sanitizeSegment(craft, "unnamed");
   return {
     dir,
-    book: path.join(dir, `${agentId}.md`),
-    skill: path.join(dir, `${agentId}.skill.md`),
+    slug,
+    book: path.join(dir, `${slug}.md`),
+    skill: path.join(dir, `${slug}.skill.md`),
     durable: enabled,
   };
 }
