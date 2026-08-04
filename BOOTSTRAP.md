@@ -18,8 +18,8 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ## Step 1 — Install the plugin
 
 ```
-/plugin marketplace add heymichaelp/yes-chef
-/plugin install yc@yes-chef
+/plugin marketplace add heymichaelp/hands
+/plugin install yc@hands
 ```
 
 ## Step 2 — Clone the project + configure
@@ -27,18 +27,18 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ```bash
 git clone <REPO_SSH> <REPO_DIR>
 cd <REPO_DIR>
-yes-chef init           # scaffold config (or restore your committed yes-chef.config.json)
+hands init           # scaffold config (or restore your committed hands.config.json)
 ```
 
-If `yes-chef.config.json` is committed in the project repo, init leaves it alone — the journal
+If `hands.config.json` is committed in the project repo, init leaves it alone — the journal
 url + handle come back with the clone.
 
 ## Step 3 — Restore coordination state from the journal
 
 ```bash
 cd <REPO_DIR>
-yes-chef restore        # pulls the journal repo, replays your handle's events
-yes-chef paths          # verify: agentId "expo", journalSync healthy
+hands restore        # pulls the journal repo, replays your handle's events
+hands paths          # verify: agentId "expo", journalSync healthy
 ```
 
 ## Step 4 — Restore project memory (optional, if this repo carries a snapshot)
@@ -52,20 +52,20 @@ mkdir -p "$MEM" && cp memory/*.md "$MEM/"
 
 ## Step 5 — Run
 
-- Main checkout: `/yc:expo` (or `/loop /yc:expo`).
-- Stations: `yes-chef station add -n <N>` — no `git worktree` commands, ever.
-- Dashboard: `yes-chef serve` → http://localhost:4319
+- Main checkout: `/hands:expo` (or `/loop /hands:expo`).
+- Stations: `hands station add -n <N>` — no `git worktree` commands, ever.
+- Dashboard: `hands serve` → http://localhost:4319
 
 ## Step 6 — Re-auth other MCP servers (human, as needed)
 
 Project-specific MCP servers (Linear, Sentry, …) re-add with `claude mcp add …` + OAuth. The
-yes-chef plugin is the only piece the fleet itself needs.
+hands plugin is the only piece the fleet itself needs.
 
 ---
 
 ### What does NOT carry over
 
 - Auth (Step 0/6).
-- Live station sessions — recreate with `yes-chef station add`.
+- Live station sessions — recreate with `hands station add`.
 - Claude session context — by design; the books restore *state*; the expo rehydrates from
   board + tasks + priorities on its first pass.

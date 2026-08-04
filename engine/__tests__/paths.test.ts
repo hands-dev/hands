@@ -25,7 +25,7 @@ let worktreeA: string;
 let nonGit: string;
 
 beforeAll(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-paths-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-paths-"));
   repoA = makeRepo(root, "alpha");
   repoB = makeRepo(root, "beta");
   worktreeA = path.join(root, "alpha-feature");
@@ -41,8 +41,8 @@ afterAll(() => {
 });
 
 describe("coordinationDir (per-repo slug)", () => {
-  it("YES_CHEF_HOME overrides verbatim", () => {
-    expect(coordinationDir({ YES_CHEF_HOME: "/tmp/xyz" }, repoA)).toBe("/tmp/xyz");
+  it("HANDS_HOME overrides verbatim", () => {
+    expect(coordinationDir({ HANDS_HOME: "/tmp/xyz" }, repoA)).toBe("/tmp/xyz");
   });
 
   it("two repos resolve to two different slug dirs", () => {
@@ -70,7 +70,7 @@ describe("coordinationDir (per-repo slug)", () => {
 
   it("db and notify paths live under the slug dir", () => {
     const dir = coordinationDir({}, repoA);
-    expect(dbPath({}, repoA)).toBe(path.join(dir, "yes-chef.db"));
+    expect(dbPath({}, repoA)).toBe(path.join(dir, "hands.db"));
     expect(notifyPath("station-1", {}, repoA)).toBe(path.join(dir, "station-1.notify"));
   });
 });
@@ -92,7 +92,7 @@ describe("loadConfig", () => {
   afterEach(() => resetConfigCache());
 
   it("returns full defaults when no config files exist", () => {
-    const cfg = loadConfig({ cwd: nonGit, env: { YES_CHEF_TEST_HOME: nonGit } });
+    const cfg = loadConfig({ cwd: nonGit, env: { HANDS_TEST_HOME: nonGit } });
     expect(cfg).toEqual(DEFAULT_CONFIG);
     expect(cfg.principal.name).toBe("Michael");
     expect(cfg.topology).toBe("strict-hub");
@@ -102,32 +102,32 @@ describe("loadConfig", () => {
     const home = path.join(root, "home1");
     fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
     fs.writeFileSync(
-      path.join(home, ".claude", "yes-chef.config.json"),
+      path.join(home, ".claude", "hands.config.json"),
       JSON.stringify({ principal: { name: "Ada" }, stations: { model: "opus" } }),
     );
     fs.writeFileSync(
-      path.join(repoA, "yes-chef.config.json"),
+      path.join(repoA, "hands.config.json"),
       JSON.stringify({ topology: "open", stations: { overrides: { "station-2": "haiku" } } }),
     );
     try {
-      const cfg = loadConfig({ cwd: repoA, env: { YES_CHEF_TEST_HOME: home } });
+      const cfg = loadConfig({ cwd: repoA, env: { HANDS_TEST_HOME: home } });
       expect(cfg.principal.name).toBe("Ada"); // user layer
       expect(cfg.stations.model).toBe("opus"); // user layer
       expect(cfg.topology).toBe("open"); // repo layer
       expect(cfg.stations.overrides).toEqual({ "station-2": "haiku" }); // repo layer
       expect(cfg.stations.launcher).toBe("auto"); // default
     } finally {
-      fs.rmSync(path.join(repoA, "yes-chef.config.json"), { force: true });
+      fs.rmSync(path.join(repoA, "hands.config.json"), { force: true });
     }
   });
 
   it("ignores a malformed config file (falls back to defaults)", () => {
-    fs.writeFileSync(path.join(repoA, "yes-chef.config.json"), "{not json");
+    fs.writeFileSync(path.join(repoA, "hands.config.json"), "{not json");
     try {
-      const cfg = loadConfig({ cwd: repoA, env: { YES_CHEF_TEST_HOME: nonGit } });
+      const cfg = loadConfig({ cwd: repoA, env: { HANDS_TEST_HOME: nonGit } });
       expect(cfg.topology).toBe("strict-hub");
     } finally {
-      fs.rmSync(path.join(repoA, "yes-chef.config.json"), { force: true });
+      fs.rmSync(path.join(repoA, "hands.config.json"), { force: true });
     }
   });
 });

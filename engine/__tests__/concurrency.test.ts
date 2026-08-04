@@ -8,7 +8,7 @@ import { Store } from "../src/store.js";
 let home: string;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-conc-"));
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-conc-"));
 });
 
 afterEach(() => {
@@ -70,15 +70,15 @@ describe("concurrent multi-connection writes", () => {
     const TOTAL = STATIONS * PER_STATION;
 
     // Create the schema up-front (stations only insert).
-    const file = path.join(home, "yes-chef.db");
-    const seed = new Store({ env: { YES_CHEF_HOME: home }, path: file });
+    const file = path.join(home, "hands.db");
+    const seed = new Store({ env: { HANDS_HOME: home }, path: file });
     seed.close();
 
     await Promise.all(
       Array.from({ length: STATIONS }, (_, w) => runStation(file, w, PER_STATION)),
     );
 
-    const store = new Store({ env: { YES_CHEF_HOME: home }, path: file });
+    const store = new Store({ env: { HANDS_HOME: home }, path: file });
 
     // No loss: exactly TOTAL rows.
     const all = store.history({ limit: 500 });

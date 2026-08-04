@@ -35,7 +35,7 @@ const ASSETS: Record<string, string> = {
 /** Static shell; all data (including the principal) arrives via SSE/JSON. */
 const SHELL = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="icon" href="data:,"/><title>yes-chef</title>
+<link rel="icon" href="data:,"/><title>hands</title>
 <link rel="stylesheet" href="/assets/dashboard.css"/>
 </head><body><div id="root"></div>
 <script type="module" src="/assets/dashboard.js"></script></body></html>
@@ -80,7 +80,7 @@ export function serve(opts?: {
 }): Promise<ServeHandle> {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
-  const port = opts?.port ?? Number(env.YES_CHEF_PORT ?? 4319);
+  const port = opts?.port ?? Number(env.HANDS_PORT ?? 4319);
   const tickMs = opts?.tickMs ?? 1000;
   const booksTickMs = opts?.booksTickMs ?? 60_000;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();

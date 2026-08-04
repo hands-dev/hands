@@ -25,7 +25,7 @@ import { DEFAULT_CONFIG } from "../src/config.js";
 let root: string;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-remote-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-remote-"));
 });
 
 afterEach(() => {
@@ -35,7 +35,7 @@ afterEach(() => {
 /** A journal wired straight to this test's sandbox (no config file needed). */
 function journalAt(handle: string, url: string, opts?: { home?: string }) {
   const j = openJournal({
-    env: { YES_CHEF_HOME: path.join(root, opts?.home ?? "unused-coord") },
+    env: { HANDS_HOME: path.join(root, opts?.home ?? "unused-coord") },
     cwd: root,
     config: { ...DEFAULT_CONFIG, remote: { url, handle, project: null } },
   });
@@ -97,7 +97,7 @@ describe("journal append + replay round-trip", () => {
     const remote = bareRemote("origin.git");
     const j = journalAt("michael", remote);
     const homeA = fs.mkdtempSync(path.join(root, "busA-"));
-    const a = new Store({ env: { YES_CHEF_HOME: homeA } });
+    const a = new Store({ env: { HANDS_HOME: homeA } });
     a.setJournal(j.append);
     populate(a);
 
@@ -106,7 +106,7 @@ describe("journal append + replay round-trip", () => {
     expect(events.every((e: JournalEvent) => e.v === 1 && typeof e.ts === "number")).toBe(true);
 
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
-    const envB = { YES_CHEF_HOME: homeB };
+    const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
     const res = replayInto(b, events, envB);
     expect(res.skipped).toBe(0);
@@ -118,13 +118,13 @@ describe("journal append + replay round-trip", () => {
   it("replay is idempotent (twice over the same DB changes nothing)", () => {
     const remote = bareRemote("origin.git");
     const j = journalAt("michael", remote);
-    const a = new Store({ env: { YES_CHEF_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
+    const a = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
     a.setJournal(j.append);
     populate(a);
     const events = readEvents(j.dir, j.project, "michael");
 
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
-    const envB = { YES_CHEF_HOME: homeB };
+    const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
     replayInto(b, events, envB);
     const first = snapshotState(b);
@@ -136,7 +136,7 @@ describe("journal append + replay round-trip", () => {
 
   it("materializes priorities.set into priorities.md and skips unknown event types", () => {
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
-    const envB = { YES_CHEF_HOME: homeB };
+    const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
     const res = replayInto(
       b,
@@ -170,7 +170,7 @@ describe("git sync + machine-move restore", () => {
 
     // machine 1: journal + push
     const j1 = journalAt("michael", remote);
-    const a = new Store({ env: { YES_CHEF_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
+    const a = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
     a.setJournal(j1.append);
     populate(a);
     const pushed = syncPush(j1, { force: true });
@@ -184,7 +184,7 @@ describe("git sync + machine-move restore", () => {
     expect(events.length).toBeGreaterThanOrEqual(12);
 
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
-    const envB = { YES_CHEF_HOME: homeB };
+    const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
     replayInto(b, events, envB);
     expect(snapshotState(b)).toEqual(snapshotState(a));
@@ -239,7 +239,7 @@ describe("journal repo shape contract", () => {
     const shaBefore = execFileSync("git", ["ls-remote", remote, "main"], { encoding: "utf8" });
     const refused = syncPush(j, { force: true });
     expect(refused.status).toBe("invalid");
-    expect(refused.detail).toContain("yes-chef sync --adopt");
+    expect(refused.detail).toContain("hands sync --adopt");
     // nothing was pushed — the remote's main is untouched
     expect(execFileSync("git", ["ls-remote", remote, "main"], { encoding: "utf8" })).toBe(shaBefore);
 
@@ -258,7 +258,7 @@ describe("journal repo shape contract", () => {
     j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
     const res = syncPush(j, { force: true });
     expect(res.status).toBe("invalid");
-    expect(res.detail).toContain("newer yes-chef");
+    expect(res.detail).toContain("newer hands");
     // read path gates too
     expect(validateJournal(j.dir).ok).toBe(false);
   });
@@ -345,7 +345,7 @@ describe("journal v2: project identity", () => {
   it("openJournal writes to journal/<project>/<handle>/log and stamps agent + v2 marker", () => {
     const remote = bareRemote("origin.git");
     const j = openJournal({
-      env: { YES_CHEF_HOME: path.join(root, "unused-coord") },
+      env: { HANDS_HOME: path.join(root, "unused-coord") },
       cwd: root,
       config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "Michael P", project: "My/Proj" } },
       agentId: "station-2",
@@ -378,7 +378,7 @@ describe("journal replay", () => {
 
   it("replays digest.note as a stateless no-op without the unknown-type warning", () => {
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
-    const envB = { YES_CHEF_HOME: homeB };
+    const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
     const res = replayInto(b, [{ v: 1, ts: 1, type: "digest.note", agent: "expo", data: { text: "good day" } }], envB);
     expect(res.applied).toBe(1);

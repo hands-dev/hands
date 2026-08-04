@@ -10,8 +10,8 @@ let home: string;
 let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-books-"));
-  env = { YES_CHEF_HOME: home, YES_CHEF_TEST_HOME: path.join(home, "user") };
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-books-"));
+  env = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user") };
   resetConfigCache();
 });
 afterEach(() => {
@@ -22,7 +22,7 @@ afterEach(() => {
 function writeUserConfig(config: object): void {
   const dir = path.join(home, "user", ".claude");
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "yes-chef.config.json"), JSON.stringify(config));
+  fs.writeFileSync(path.join(dir, "hands.config.json"), JSON.stringify(config));
   resetConfigCache();
 }
 

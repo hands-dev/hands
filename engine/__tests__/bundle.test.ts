@@ -28,7 +28,7 @@ afterAll(() => {
 
 describe("committed plugin bundles", () => {
   it("are fresh relative to src/ (run `npm run bundle` if this fails)", async () => {
-    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-bundle-"));
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hands-bundle-"));
     await buildBundles(tmp);
     const files = [
       "server.mjs",
@@ -41,7 +41,7 @@ describe("committed plugin bundles", () => {
     for (const file of files) {
       const fresh = fs.readFileSync(path.join(tmp, file), "utf8");
       const committed = fs.readFileSync(path.join(committedDir, file), "utf8");
-      expect(committed, `${file} is stale — run: cd yes-chef && npm run bundle`).toBe(fresh);
+      expect(committed, `${file} is stale — run: cd hands && npm run bundle`).toBe(fresh);
     }
   }, 60_000);
 });

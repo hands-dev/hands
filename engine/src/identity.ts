@@ -68,9 +68,9 @@ export function agentIdFromArgv(argv: readonly string[] = process.argv): string 
 
 /**
  * Resolve this instance's agent id. Precedence:
- *   1. `YES_CHEF_ID` env var — what the provisioner sets on managed stations
+ *   1. `HANDS_ID` env var — what the provisioner sets on managed stations
  *   2. `--agent-id <name>` launch arg
- *   3. expo-basename override — `YES_CHEF_EXPO_BASENAME` env, or the
+ *   3. expo-basename override — `HANDS_EXPO_BASENAME` env, or the
  *      `expo.basename` config passed by the caller
  *   4. main-worktree autodetect: cwd inside a repo's MAIN worktree → `expo`
  *      (this is what gives every repo its own expo, regardless of name)
@@ -85,21 +85,21 @@ export function resolveAgentId(options?: {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   argv?: readonly string[];
-  /** config `expo.basename` (env YES_CHEF_EXPO_BASENAME still wins) */
+  /** config `expo.basename` (env HANDS_EXPO_BASENAME still wins) */
   expoBasename?: string | null;
 }): string {
   const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? process.env;
   const argv = options?.argv ?? process.argv;
 
-  const fromEnv = env.YES_CHEF_ID?.trim();
+  const fromEnv = env.HANDS_ID?.trim();
   if (fromEnv) return resolveAgentRef(fromEnv);
 
   const fromArg = agentIdFromArgv(argv)?.trim();
   if (fromArg) return resolveAgentRef(fromArg);
 
   const base = path.basename(cwd);
-  const expoBasename = env.YES_CHEF_EXPO_BASENAME?.trim() || options?.expoBasename;
+  const expoBasename = env.HANDS_EXPO_BASENAME?.trim() || options?.expoBasename;
   if (expoBasename && base === expoBasename) return "expo";
 
   if (repoInfo(cwd)?.isMainWorktree) return "expo";

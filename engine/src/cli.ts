@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 /**
- * yes-chef CLI — provisioning + setup. The user thinks in stations:
+ * hands CLI — provisioning + setup. The user thinks in stations:
  *
- *   yes-chef init                per-repo config scaffold
- *   yes-chef books <url>         attach the books (durable journal) to this repo's config
- *   yes-chef station add [-n N]   open N stations (worktree hidden inside)
- *   yes-chef station ls           list this repo's stations
- *   yes-chef station rm <id>      retire a station (idempotent; --force discards)
- *   yes-chef scale <N>           reconcile the brigade to exactly N stations
- *   yes-chef restore             rebuild local bus state from the remote journal
- *   yes-chef sync                push pending journal appends now
- *   yes-chef paths               where this cwd resolves (debug)
+ *   hands init                per-repo config scaffold
+ *   hands books <url>         attach the books (durable journal) to this repo's config
+ *   hands station add [-n N]   open N stations (worktree hidden inside)
+ *   hands station ls           list this repo's stations
+ *   hands station rm <id>      retire a station (idempotent; --force discards)
+ *   hands scale <N>           reconcile the brigade to exactly N stations
+ *   hands restore             rebuild local bus state from the remote journal
+ *   hands sync                push pending journal appends now
+ *   hands paths               where this cwd resolves (debug)
  *
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
  * the human/expo-facing lifecycle tool (on the Bash PATH via plugin/bin).
@@ -49,7 +49,7 @@ function out(line: string): void {
 }
 
 function fail(message: string): never {
-  process.stderr.write(`yes-chef: ${message}\n`);
+  process.stderr.write(`hands: ${message}\n`);
   process.exit(1);
 }
 
@@ -83,13 +83,13 @@ function cmdStation(argv: string[]): void {
     const plans = addStations(n);
     if (plans.length === 0) out("nothing to add");
     reportPlans(plans);
-    out(`\nStations register with the expo on their first turn (yc_peers to check).`);
+    out(`\nStations register with the expo on their first turn (hands_peers to check).`);
     return;
   }
   if (sub === "ls") {
     const stations = listStations();
     if (stations.length === 0) {
-      out("no stations — open some: yes-chef station add -n 2");
+      out("no stations — open some: hands station add -n 2");
       return;
     }
     for (const w of stations) out(`${w.id}\t${w.branch}\t${w.dir}`);
@@ -97,7 +97,7 @@ function cmdStation(argv: string[]): void {
   }
   if (sub === "rm") {
     const id = argv[1];
-    if (!id || id.startsWith("-")) fail("usage: yes-chef station rm station-<n> [--force]");
+    if (!id || id.startsWith("-")) fail("usage: hands station rm station-<n> [--force]");
     const res = removeStation(id, { force: flag(argv, "--force") });
     // The prep book + skill survive retirement (a future station on the same
     // beat inherits them) — just stamp the book so the gap is visible.
@@ -112,12 +112,12 @@ function cmdStation(argv: string[]): void {
     out(res.removed ? `✔ ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }
-  fail("usage: yes-chef station <add|ls|rm>");
+  fail("usage: hands station <add|ls|rm>");
 }
 
 function cmdScale(argv: string[]): void {
   const target = Number.parseInt(argv[0] ?? "", 10);
-  if (!Number.isInteger(target) || target < 0) fail("usage: yes-chef scale <N>");
+  if (!Number.isInteger(target) || target < 0) fail("usage: hands scale <N>");
   const { added, removed } = scaleStations(target, { force: flag(argv, "--force") });
   reportPlans(added);
   for (const id of removed) out(`✔ ${id} retired`);
@@ -126,14 +126,14 @@ function cmdScale(argv: string[]): void {
 
 /**
  * Attach (or inspect) the books — the durable journal — on this repo's
- * existing config. `yes-chef init` covers the fresh-scaffold path; this is
+ * existing config. `hands init` covers the fresh-scaffold path; this is
  * the "I set up the kitchen first, books later" path.
  */
 function cmdBooks(argv: string[]): void {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo — run from your repo's main checkout");
   const configPath = path.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here — run: yes-chef init`);
+  if (!fs.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here — run: hands init`);
 
   let cfg: Record<string, unknown>;
   try {
@@ -148,7 +148,7 @@ function cmdBooks(argv: string[]): void {
     if (typeof remote.url === "string" && remote.url) {
       out(`books: ${remote.url} (handle "${String(remote.handle ?? os.userInfo().username)}")`);
     } else {
-      out("no books attached — attach with: yes-chef books <private-git-url> [--handle <name>]");
+      out("no books attached — attach with: hands books <private-git-url> [--handle <name>]");
     }
     return;
   }
@@ -163,14 +163,14 @@ function cmdBooks(argv: string[]): void {
   };
   fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
   out(`✔ books attached: ${url} (handle "${String((cfg.remote as Record<string, unknown>).handle)}")`);
-  out("  next: yes-chef sync   (initializes the journal; --adopt if the repo is non-empty)");
+  out("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
   out("  (restart running Claude Code sessions so the bus picks up the config change)");
 }
 
 function requireRemote() {
   const j = openJournal();
   if (!j) {
-    fail("no books attached — run: yes-chef books git@github.com:you/yes-chef-books.git");
+    fail("no books attached — run: hands books git@github.com:you/hands-books.git");
   }
   if (!fs.existsSync(path.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
@@ -219,14 +219,14 @@ function cmdDigest(argv: string[]): void {
   syncPull(j.dir); // best-effort — render from the freshest merged view we have
   const i = argv.indexOf("--date");
   const date = i !== -1 ? argv[i + 1] : undefined;
-  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("usage: yes-chef digest [--date YYYY-MM-DD]");
+  if (date && !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("usage: hands digest [--date YYYY-MM-DD]");
   const changed = regenerateDigests(j, date ? new Set([date]) : undefined);
   if (changed.length === 0) {
     out("digests already up to date");
     return;
   }
   for (const f of changed) out(`✔ ${f}`);
-  out("(committed + pushed on the next sync — or run: yes-chef sync)");
+  out("(committed + pushed on the next sync — or run: hands sync)");
 }
 
 function cmdPaths(): void {
@@ -260,26 +260,26 @@ async function main(): Promise<void> {
       case "dashboard": {
         const { serve } = await import("./serve.js");
         const handle = await serve();
-        out(`yes-chef dashboard → ${handle.url}\n(Ctrl-C to stop)`);
+        out(`hands dashboard → ${handle.url}\n(Ctrl-C to stop)`);
         return; // the http server keeps the process alive
       }
       case "paths":
         return cmdPaths();
       default: {
-        out("yes-chef — an expo/station agent fleet for Claude Code");
+        out("hands — an expo/station agent fleet for Claude Code");
         out("");
-        out(`  yes-chef init                scaffold ${CONFIG_BASENAME}`);
-        out("  yes-chef books [<url>]       attach the books (durable journal) to this repo's config");
-        out("  yes-chef station add [-n N]   open N stations");
-        out("  yes-chef station ls           list this repo's stations");
-        out("  yes-chef station rm <id>      retire a station (--force discards uncommitted work)");
-        out("  yes-chef scale <N>           reconcile the brigade to exactly N stations");
-        out("  yes-chef restore             rebuild local bus state from the remote journal (remote.url)");
-        out("  yes-chef sync [--adopt]      push pending journal appends now (--adopt initializes a");
+        out(`  hands init                scaffold ${CONFIG_BASENAME}`);
+        out("  hands books [<url>]       attach the books (durable journal) to this repo's config");
+        out("  hands station add [-n N]   open N stations");
+        out("  hands station ls           list this repo's stations");
+        out("  hands station rm <id>      retire a station (--force discards uncommitted work)");
+        out("  hands scale <N>           reconcile the brigade to exactly N stations");
+        out("  hands restore             rebuild local bus state from the remote journal (remote.url)");
+        out("  hands sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out("                                non-empty repo as a journal — explicit by design)");
-        out("  yes-chef digest [--date D]  re-render journal digests (normally automatic on sync)");
-        out("  yes-chef serve               live dashboard → http://localhost:4319");
-        out("  yes-chef paths               show where this directory resolves (debug)");
+        out("  hands digest [--date D]  re-render journal digests (normally automatic on sync)");
+        out("  hands serve               live dashboard → http://localhost:4319");
+        out("  hands paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
       }
     }
@@ -290,6 +290,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error("yes-chef fatal:", err);
+  console.error("hands fatal:", err);
   process.exit(1);
 });

@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type YesChefConfig, DEFAULT_CONFIG } from "../src/config.js";
+import { type HandsConfig, DEFAULT_CONFIG } from "../src/config.js";
 import { resetRepoInfoCache } from "../src/paths.js";
 import {
   addStations,
@@ -21,10 +21,10 @@ function git(cwd: string, args: string[]): string {
 
 let root: string;
 let repo: string;
-let cfg: YesChefConfig;
+let cfg: HandsConfig;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-prov-"));
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-prov-"));
   repo = path.join(root, "proj");
   fs.mkdirSync(repo);
   git(repo, ["init", "-q", "-b", "main"]);
@@ -50,7 +50,7 @@ afterEach(() => {
 });
 
 describe("station provisioning (manual launcher)", () => {
-  it("adds N stations as hidden worktrees on yc/station-<n> branches", () => {
+  it("adds N stations as hidden worktrees on hands/station-<n> branches", () => {
     const plans = addStations(2, { cwd: repo, config: cfg });
     expect(plans.map((p) => p.id)).toEqual(["station-1", "station-2"]);
     expect(plans.every((p) => p.launched === false && p.launcher === "manual")).toBe(true);
@@ -63,8 +63,8 @@ describe("station provisioning (manual launcher)", () => {
       expect(git(p.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(p.branch);
     }
     // the paste command carries identity + loop
-    expect(plans[0]!.command).toContain("YES_CHEF_ID=station-1");
-    expect(plans[0]!.command).toContain("claude --model sonnet '/loop /yc:station'");
+    expect(plans[0]!.command).toContain("HANDS_ID=station-1");
+    expect(plans[0]!.command).toContain("claude --model sonnet '/loop /hands:station'");
   });
 
   it("ls reflects the pool; add fills the lowest free index", () => {
@@ -82,7 +82,7 @@ describe("station provisioning (manual launcher)", () => {
     expect(fs.existsSync(dir)).toBe(true);
     expect(removeStation("station-1", { cwd: repo, config: cfg }).removed).toBe(true);
     expect(fs.existsSync(dir)).toBe(false);
-    expect(git(repo, ["branch", "--list", "yc/station-1"])).toBe("");
+    expect(git(repo, ["branch", "--list", "hands/station-1"])).toBe("");
     // idempotent
     expect(removeStation("station-1", { cwd: repo, config: cfg }).removed).toBe(false);
   });

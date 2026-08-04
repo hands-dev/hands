@@ -8,8 +8,8 @@ let home: string;
 let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-test-"));
-  env = { YES_CHEF_HOME: home };
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-test-"));
+  env = { HANDS_HOME: home };
 });
 
 afterEach(() => {
@@ -84,7 +84,7 @@ describe("Store persistence", () => {
     first.insertMessage({ from: "wt1", to: "wt2", body: "durable" });
     first.close();
 
-    const second = open(); // same YES_CHEF_HOME → same db file
+    const second = open(); // same HANDS_HOME → same db file
     expect(second.history().map((m) => m.body)).toEqual(["durable"]);
     second.close();
   });
@@ -106,7 +106,7 @@ describe("Store security", () => {
   it("creates the db file with 0600 permissions", () => {
     const store = open();
     store.insertMessage({ from: "wt1", to: "wt2", body: "x" });
-    const mode = fs.statSync(path.join(home, "yes-chef.db")).mode & 0o777;
+    const mode = fs.statSync(path.join(home, "hands.db")).mode & 0o777;
     expect(mode).toBe(0o600);
     store.close();
   });

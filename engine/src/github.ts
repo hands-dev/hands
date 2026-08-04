@@ -38,7 +38,7 @@ const PR_FIELDS = "number,title,author,headRefName,updatedAt,url,files";
 /**
  * Poll GitHub for what OTHER engineers are doing — open + recently-merged PRs on
  * this repo, excluding your own — and record them for the dashboard team lane and
- * per-worktree relevance matching. Runs via `yes-chef gh-poll` (the expo).
+ * per-worktree relevance matching. Runs via `hands gh-poll` (the expo).
  * Best-effort: a missing/unauthenticated `gh` returns ok:false, never throws.
  */
 export function pollGithub(

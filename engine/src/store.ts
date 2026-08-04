@@ -170,8 +170,8 @@ function isBusy(err: unknown): boolean {
 }
 
 /**
- * Shared-SQLite store for yes-chef. One instance per stdio server process; the
- * DB file at `~/.claude/coordination/yes-chef.db` (WAL mode) is the single
+ * Shared-SQLite store for hands. One instance per stdio server process; the
+ * DB file at `~/.claude/coordination/hands.db` (WAL mode) is the single
  * source of truth shared across every worktree's process.
  */
 export class Store {

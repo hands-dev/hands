@@ -71,7 +71,7 @@ cat <<DONE
  worktree per branch listed in WORKTREES.
 
  The expo/station orchestration is separate — set it up with:
-   cd $MAIN && yes-chef init   # (the yes-chef plugin ships the CLI)
+   cd $MAIN && hands init   # (the Hands plugin ships the CLI)
  (see SETUP.md). You do NOT need it to work on the code.
 ============================================================
 DONE

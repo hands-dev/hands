@@ -1,11 +1,11 @@
 {
-  "name": "yes-chef",
+  "name": "hands",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Yes, Chef \u2014 per-repo expo/station coordination bus for Claude Code (stdio MCP server + provisioning CLI).",
+  "description": "Hands \u2014 extra hands for your repo: per-repo expo/station coordination bus for Claude Code (stdio MCP server + provisioning CLI).",
   "bin": {
-    "yes-chef": "dist/cli.js"
+    "hands": "dist/cli.js"
   },
   "scripts": {
     "start": "tsx src/server.ts",

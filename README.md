@@ -1,38 +1,39 @@
-# Yes, Chef
+# Hands
 
-An **expo/station agent fleet for Claude Code.** The repo's main checkout runs the **expo** — the
-expeditor at the pass: all of the context, none of the cooking. **Stations** are autonomous Claude
-instances that know exactly two things: their **focus** (an evolving specialization) and the
-**ticket** at hand. The principal — you — is the chef. Everything is coordinated over a local,
-per-repo message bus with strict pass discipline, and optionally recorded in **the books**: a
-durable, browsable journal.
+**Extra hands for your repo.** An expo/station agent fleet for Claude Code, run like a kitchen:
+the repo's main checkout is the **expo** — the expeditor at the pass, all of the context and none
+of the cooking. **Stations** are autonomous Claude instances that know exactly two things: their
+**focus** (an evolving specialization) and the **ticket** at hand. The principal — you — is the
+chef. Everything is coordinated over a local, per-repo message bus with strict pass discipline,
+and optionally recorded in **the books**: a durable, browsable journal. The fleet is Hands — and
+calling *"hands"* on a finished dish is how you summon them to ship it.
 
 Distributed as a Claude Code plugin (this repo is its own marketplace).
 
 ## Install
 
 ```
-/plugin marketplace add heymichaelp/yes-chef
-/plugin install yc@yes-chef
+/plugin marketplace add heymichaelp/hands
+/plugin install hands@hands
 ```
 
-That registers everything: the MCP server (`yc_*` tools), the passive-standup hooks
-(`Stop → publish`, `UserPromptSubmit → board`), the `/yc:expo` · `/yc:station` · `/yc:init`
-skills, and the `yes-chef` CLI on your Bash PATH. Requires Node ≥ 22.5.
+That registers everything: the MCP server (`hands_*` tools), the passive-standup hooks
+(`Stop → publish`, `UserPromptSubmit → board`), the `/hands:expo` · `/hands:station` · `/hands:init`
+skills, and the `hands` CLI on your Bash PATH. Requires Node ≥ 22.5.
 
 Then, per repo (from its main checkout) — one slash command:
 
 ```
-/yc:init          # conversational setup: principal + optional books repo
-                  # (or skip it — /yc:expo bootstraps itself on first run)
+/hands:init       # conversational setup: principal + optional books repo
+                  # (or skip it — /hands:expo bootstraps itself on first run)
 ```
 
 ## Run the kitchen
 
 ```bash
-/yc:expo                     # main checkout — or /loop /yc:expo for always-on
-yes-chef station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
-/yc:dashboard                # live dashboard (SSE) → http://localhost:4319  (or: yes-chef serve)
+/hands:expo               # main checkout — or /loop /hands:expo for always-on
+hands station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
+/hands:dashboard          # live dashboard (SSE) → http://localhost:4319  (or: hands serve)
 ```
 
 The expo asks for **today's specials** (the ranked priorities — they change day to day with what's
@@ -40,12 +41,12 @@ available and what the day calls for), then works the pass: fires **tickets** to
 everything that returns, escalates only what genuinely needs the chef. Ask it *"what's on the
 rail?"* any time for the in-flight picture, grouped by **dish** (the external deliverable — your
 Linear ticket or PR; several rail tickets usually assemble one dish; the tracker itself is **the
-board**, which yes-chef references but never owns). When a dish is finished, call **hands** — the
+board**, which hands references but never owns). When a dish is finished, call **hands** — the
 ship step: *"get hands on PR 1234"* → reviewed, merged, deployed.
 
-Manage the line: `yes-chef station ls` · `yes-chef scale <N>` · `yes-chef station rm station-<n>`
+Manage the line: `hands station ls` · `hands scale <N>` · `hands station rm station-<n>`
 — or let the expo scale it (`stations.allowScaling`). Stations carry focus labels
-(`station-2 · developer API`) set via `yc_focus` — addressable by label, journaled, shown
+(`station-2 · developer API`) set via `hands_focus` — addressable by label, journaled, shown
 everywhere; the numeric id stays the routing key.
 
 ## How it stays cheap (wakes are the cost)
@@ -56,7 +57,7 @@ station's entire context. The bus minimizes and meters wakes structurally:
 - **Strict pass discipline, server-enforced:** stations talk only to the expo and the chef;
   station↔station sends and broadcasts are rejected *before* any write. (`topology: "open"` opts
   out.)
-- **Non-waking FYIs:** `yc_send({ wake: false })` delivers on the next natural drain.
+- **Non-waking FYIs:** `hands_send({ wake: false })` delivers on the next natural drain.
 - **Burst suppression:** an undrained recipient isn't re-woken; one drain returns everything.
 - **`stateHash` + one bundled read:** the expo's 15-minute utilization review short-circuits when
   nothing changed; `board({ full: true })` is one read, not four.
@@ -68,7 +69,7 @@ Point the bus at a **separate, private** git repo and every action goes **on the
 append-only event log rendered into browsable daily digest pages (repo → contributor → date):
 
 ```
-yes-chef.json                                           layout marker
+hands.json                                           layout marker
 journal/<project>/<handle>/<date>.md                    the day's page — the primary artifact
 journal/<project>/<handle>/README.md                    per-contributor index
 journal/<project>/<handle>/log/<date>.ndjson             the day's event log
@@ -77,26 +78,26 @@ journal/<project>/<handle>/stations/<id>.skill.md        a station's own SKILL (
 ```
 
 ```jsonc
-"remote": { "url": "git@github.com:you/yes-chef-books.git", "handle": "michael", "project": null }
+"remote": { "url": "git@github.com:you/hands-books.git", "handle": "michael", "project": null }
 ```
 
 - **Digest pages are deterministic markdown:** the expo's Notes first (see
-  `yc_digest_note` — its end-of-day narrative), then per-agent sections
+  `hands_digest_note` — its end-of-day narrative), then per-agent sections
   (`## station-2 · developer API`): ticket lifecycle with dish refs, questions + answers,
   specials, message *counts*. Message **bodies never render** — they stay in the NDJSON layer.
   Regenerated automatically on every sync, including past days when events arrive late;
-  `yes-chef digest [--date]` re-renders manually.
+  `hands digest [--date]` re-renders manually.
 - **One books repo serves every project and contributor.** `project` is the code repo's name
   (from its origin; `remote.project` disambiguates same-named repos); the handle defaults to your
   GitHub username. Writers only touch their own namespace, so sync needs no merge logic. Digest
   conflicts auto-resolve and re-render from the merged events; one handle = one machine writing at
   a time (concurrent same-day appends on a shared handle conflict loudly rather than merge).
 - Pushes ride the turn-end hook (debounced ~1/min, offline-tolerant, never fails a bus action).
-- `yes-chef restore` rebuilds the whole coordination state — tickets, questions, specials, focus,
+- `hands restore` rebuilds the whole coordination state — tickets, questions, specials, focus,
   history — on a restart or a new machine. **If it's not on the books, it didn't happen; you also
   can't cook them** (append-only by construction).
 - **Shape is validated, never assumed:** empty repos self-initialize; a repo with other content is
-  refused until an explicit `yes-chef sync --adopt`; a layout newer or older than this build fails
+  refused until an explicit `hands sync --adopt`; a layout newer or older than this build fails
   loudly.
 - **Stations mature on their own.** Each station self-curates a **prep book** (distilled beat
   knowledge) and its own **station skill** (its operating manual) under the contributor's
@@ -111,9 +112,9 @@ journal/<project>/<handle>/stations/<id>.skill.md        a station's own SKILL (
 
 ## Configuration
 
-`yes-chef.config.json` at the repo root (user fallback `~/.claude/yes-chef.config.json`).
-Scaffold it with `yes-chef init`; attach the books to an existing config with
-`yes-chef books <url> [--handle <name>]`:
+`hands.config.json` at the repo root (user fallback `~/.claude/hands.config.json`).
+Scaffold it with `hands init`; attach the books to an existing config with
+`hands books <url> [--handle <name>]`:
 
 ```jsonc
 {
@@ -124,7 +125,7 @@ Scaffold it with `yes-chef init`; attach the books to an existing config with
     "model": "sonnet",                         // default tier
     "overrides": { "station-4": "opus" },      // per-station tier
     "launcher": "auto",                        // auto | tmux | iterm | manual
-    "worktreeRoot": null,                      // null = ~/.yes-chef/worktrees/<slug>
+    "worktreeRoot": null,                      // null = ~/.hands/worktrees/<slug>
     "baseBranch": null,                        // null = current HEAD of the main checkout
     "allowScaling": true                       // may the expo open/close stations itself
   },
@@ -135,7 +136,7 @@ Scaffold it with `yes-chef init`; attach the books to an existing config with
 ```
 
 Each git repo gets its own isolated bus automatically;
-`yc_paths` (or `yes-chef paths`) shows where anything resolves, including books sync health.
+`hands_paths` (or `hands paths`) shows where anything resolves, including books sync health.
 
 ## Choosing an execution pattern
 

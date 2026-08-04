@@ -76,9 +76,9 @@ export function resetRepoInfoCache(): void {
 }
 
 /**
- * Root for this repo's yes-chef state — auto-scoped per git repo so two
+ * Root for this repo's hands state — auto-scoped per git repo so two
  * projects on one machine never share a bus:
- *   1. `YES_CHEF_HOME` set → returned verbatim (explicit override; tests use it).
+ *   1. `HANDS_HOME` set → returned verbatim (explicit override; tests use it).
  *   2. cwd inside a git repo → `~/.claude/coordination/<basename>-<hash>` — the
  *      slug derives from the shared git common-dir, so every worktree of a repo
  *      lands on the SAME dir while a different repo gets its own.
@@ -88,14 +88,14 @@ export function coordinationDir(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): string {
-  const override = env.YES_CHEF_HOME?.trim();
+  const override = env.HANDS_HOME?.trim();
   if (override) return override;
   const info = repoInfo(cwd);
   return path.join(os.homedir(), ".claude", "coordination", info?.slug ?? "_global");
 }
 
 export function dbPath(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string {
-  return path.join(coordinationDir(env, cwd), "yes-chef.db");
+  return path.join(coordinationDir(env, cwd), "hands.db");
 }
 
 export function notifyPath(

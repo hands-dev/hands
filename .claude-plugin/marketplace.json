@@ -1,16 +1,16 @@
 {
-  "name": "yes-chef",
+  "name": "hands",
   "owner": {
     "name": "Michael Phillips"
   },
   "metadata": {
-    "description": "Yes, Chef \u2014 expo/station multi-agent orchestration for Claude Code."
+    "description": "Hands — extra hands for your repo: expo/station multi-agent orchestration for Claude Code."
   },
   "plugins": [
     {
-      "name": "yc",
+      "name": "hands",
       "source": "./plugin",
-      "description": "Yes, Chef \u2014 expo/station multi-agent orchestration for Claude Code."
+      "description": "Hands — extra hands for your repo: expo/station multi-agent orchestration for Claude Code."
     }
   ]
 }

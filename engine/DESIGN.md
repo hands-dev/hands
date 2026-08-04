@@ -1,4 +1,4 @@
-# agent-bus — design & build plan (HISTORICAL — predates the yes-chef naming; see ../README.md)
+# agent-bus — design & build plan (HISTORICAL — predates the current "Hands" naming; see ../README.md)
 
 Cross-worktree coordination for Claude Code, as a personal machine-local tool at
 `~/.claude/tools/agent-bus/`, registered user-scoped so every worktree/pane gets it with no per-repo or

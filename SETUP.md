@@ -1,7 +1,7 @@
-# yes-chef — setup
+# hands — setup
 
 > **Normal install is the plugin — see [README.md](README.md).** Two slash commands, then
-> `yes-chef init` per repo. This file covers development setup and the manual bits the plugin
+> `hands init` per repo. This file covers development setup and the manual bits the plugin
 > doesn't own.
 
 ## Development setup
@@ -26,11 +26,11 @@ claude plugin validate ./plugin     # manifest sanity
 claude plugin validate .            # marketplace sanity
 ```
 
-## Per-repo pieces (what `yes-chef init` handles)
+## Per-repo pieces (what `hands init` handles)
 
-- `yes-chef.config.json` scaffold at the repo root — principal, topology, station tiers/launcher,
+- `hands.config.json` scaffold at the repo root — principal, topology, station tiers/launcher,
   optional books journal (`remote.url` + `remote.handle`). Full reference in README. Attach the
-  books to an existing config later with `yes-chef books <url>`.
+  books to an existing config later with `hands books <url>`.
 
 ## Optional extras (not plugin-managed)
 
@@ -41,13 +41,13 @@ wanted; fix the `ABS_PATH…` placeholders.
 ## Seed priorities (optional)
 
 ```bash
-cp coordination/priorities.example.md "$(yes-chef paths | jq -r .coordinationDir)/priorities.md"
+cp coordination/priorities.example.md "$(hands paths | jq -r .coordinationDir)/priorities.md"
 ```
 
 Or just answer the expo when it asks for the day's ranked priorities.
 
 ## Two repos side by side
 
-Nothing to do — each repo's bus auto-scopes by git common-dir. Run `yes-chef init` in each repo
-for its config; the plugin registration is machine-wide. `YES_CHEF_HOME` pins a bus location
+Nothing to do — each repo's bus auto-scopes by git common-dir. Run `hands init` in each repo
+for its config; the plugin registration is machine-wide. `HANDS_HOME` pins a bus location
 explicitly if you ever need to.

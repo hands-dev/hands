@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { type YesChefConfig, loadConfig } from "./config.js";
+import { type HandsConfig, loadConfig } from "./config.js";
 import { regenerateDigests } from "./digest.js";
 import { coordinationDir, repoInfo } from "./paths.js";
 import { writePriorities } from "./priorities.js";
@@ -25,7 +25,7 @@ import type { Store } from "./store.js";
  * same handle share the day's log file, so concurrent same-day writes can
  * conflict (accepted — sync surfaces it; sequential pull-then-append is
  * clean). Pushes ride the Stop-hook publish cadence (debounced, best-effort,
- * offline-tolerant). Restore = pull + replay (`yes-chef restore`).
+ * offline-tolerant). Restore = pull + replay (`hands restore`).
  *
  * Multiplayer is the same mechanism pointed at a shared repo: each fleet
  * appends ONLY under its own project/handle namespace, so writers never touch
@@ -39,15 +39,15 @@ import type { Store } from "./store.js";
 export const JOURNAL_VERSION = 1;
 
 /**
- * Journal-REPO layout version, recorded in the `yes-chef.json` marker at the
+ * Journal-REPO layout version, recorded in the `hands.json` marker at the
  * repo root. The marker is the shape contract: it identifies a repo as an
- * yes-chef journal (guarding against a typo'd remote.url pointing at some
+ * hands journal (guarding against a typo'd remote.url pointing at some
  * real repo), and gates replay when the layout doesn't match this build. The
  * tool owns exactly the marker and `journal/` — and never stages anything
  * else, so the repo may freely hold other content.
  */
 export const JOURNAL_LAYOUT = 2;
-export const MARKER_FILE = "yes-chef.json";
+export const MARKER_FILE = "hands.json";
 
 export interface JournalEvent {
   v: number;
@@ -140,7 +140,7 @@ const projectCache = new Map<string, string>();
  * repo/dir basename (machine-dependent by nature — set `remote.project` for
  * origin-less repos that sync across machines). Cached per cwd like repoInfo.
  */
-export function resolveProject(config: YesChefConfig, cwd: string = process.cwd()): string {
+export function resolveProject(config: HandsConfig, cwd: string = process.cwd()): string {
   const override = config.remote.project?.trim();
   if (override) return sanitizeSegment(override);
   const cached = projectCache.get(cwd);
@@ -177,7 +177,7 @@ export function githubUsername(): string | null {
   }
 }
 
-export function resolveHandle(config: YesChefConfig): string {
+export function resolveHandle(config: HandsConfig): string {
   const h = config.remote.handle?.trim();
   if (h) return sanitizeSegment(h, "local");
   try {
@@ -202,8 +202,8 @@ export function ensureRepo(dir: string, url: string): boolean {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     if (!fs.existsSync(path.join(dir, ".git"))) {
       git(dir, ["init", "-q", "-b", "main"]);
-      git(dir, ["config", "user.name", "yes-chef"]);
-      git(dir, ["config", "user.email", "yes-chef@localhost"]);
+      git(dir, ["config", "user.name", "hands"]);
+      git(dir, ["config", "user.email", "hands@localhost"]);
     }
     if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
       git(dir, ["remote", "add", "origin", url]);
@@ -319,7 +319,7 @@ export function validateJournal(
     if (marker.journal > JOURNAL_LAYOUT) {
       return {
         ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer yes-chef — update the plugin`,
+        reason: `journal layout v${marker.journal} was written by a newer hands — update the plugin`,
       };
     }
     if (marker.journal < JOURNAL_LAYOUT) {
@@ -343,9 +343,9 @@ export function validateJournal(
       ok: false,
       needsAdopt: true,
       reason:
-        "the configured remote.url is not an yes-chef journal (no yes-chef.json marker — either " +
+        "the configured remote.url is not an hands journal (no hands.json marker — either " +
         "this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is " +
-        "really where the journal should live, run `yes-chef sync --adopt` once to initialize " +
+        "really where the journal should live, run `hands sync --adopt` once to initialize " +
         "the journal structure alongside the existing content.",
     };
   }
@@ -356,11 +356,11 @@ export function validateJournal(
 
 /** Marker/status live under .git/ so they never dirty the journal work tree. */
 function debounceMarkerPath(dir: string): string {
-  return path.join(dir, ".git", "yes-chef-last-push");
+  return path.join(dir, ".git", "hands-last-push");
 }
 
 function syncStatusPath(dir: string): string {
-  return path.join(dir, ".git", "yes-chef-sync-status");
+  return path.join(dir, ".git", "hands-sync-status");
 }
 
 export interface SyncStatus extends SyncResult {
@@ -504,7 +504,7 @@ export function syncPush(
 export function openJournal(options?: {
   env?: NodeJS.ProcessEnv;
   cwd?: string;
-  config?: YesChefConfig;
+  config?: HandsConfig;
   /** emitting agent id, stamped onto every event (expo | station-<n>) */
   agentId?: string;
 }): RemoteJournal | null {

@@ -5,7 +5,7 @@ import { notifyPath } from "./paths.js";
  * Append a nudge line to each recipient's `<agent>.notify` file.
  *
  * MCP cannot wake an idle interactive Claude Code — the model must choose to
- * call `yc_receive`. A pane can `tail -f ~/.claude/coordination/<me>.notify`
+ * call `hands_receive`. A pane can `tail -f ~/.claude/coordination/<me>.notify`
  * (e.g. via a Monitor) so a new line prompts it to check its inbox. This is a
  * best-effort side channel; delivery correctness lives entirely in the DB.
  */

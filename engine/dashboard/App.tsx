@@ -31,7 +31,7 @@ export function App() {
     <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
       <header className="flex items-center gap-3">
         <div>
-          <h1 className="text-lg font-semibold tracking-tight">Yes, Chef</h1>
+          <h1 className="text-lg font-semibold tracking-tight">Hands</h1>
           <p className="text-sm text-muted-foreground" title={snapshot.db}>
             The pass · {snapshot.db.split("/").slice(-2, -1)[0]}
           </p>
