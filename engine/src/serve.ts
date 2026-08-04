@@ -7,6 +7,7 @@ import { dbPath } from "./paths.js";
 import { openJournal, type OtherKitchen, readOtherKitchens, syncPull } from "./remote.js";
 import { buildSnapshot, type Snapshot } from "./snapshot.js";
 import { Store } from "./store.js";
+import { TokenSampler, type TokenSeries } from "./tokens.js";
 
 /** The one wire shape — served by /api/state and pushed on /api/events. */
 export type DashboardPayload = Snapshot & {
@@ -14,6 +15,8 @@ export type DashboardPayload = Snapshot & {
   principal: string;
   /** other handles' recent books activity (empty when the books are off) */
   kitchens: OtherKitchen[];
+  /** per-pane token burn from Claude Code transcripts (null until first sample) */
+  tokens: TokenSeries | null;
 };
 
 export interface ServeHandle {
@@ -75,6 +78,10 @@ export function serve(opts?: {
   tickMs?: number;
   /** books pull-and-reread interval (test hook) */
   booksTickMs?: number;
+  /** token-transcript sampling interval (test hook) */
+  tokensTickMs?: number;
+  /** transcripts root, default ~/.claude/projects (test hook) */
+  projectsDir?: string;
   /** where dashboard.js/.css live (test hook) */
   assetsDir?: string;
 }): Promise<ServeHandle> {
@@ -91,6 +98,18 @@ export function serve(opts?: {
   // it only pulls (best-effort, on the slow tick) and reads the clone.
   const journal = openJournal({ env });
   let kitchens: OtherKitchen[] = [];
+  const tokensTickMs = opts?.tokensTickMs ?? 60_000;
+  const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : undefined);
+  let tokens: TokenSeries | null = null;
+
+  const refreshTokens = (): void => {
+    try {
+      const peers = store.listPeers().map((p) => ({ id: p.id, cwd: p.cwd ?? null }));
+      tokens = sampler.sample(peers);
+    } catch {
+      // keep the previous sample
+    }
+  };
 
   const refreshKitchens = (): void => {
     if (!journal) return;
@@ -105,14 +124,15 @@ export function serve(opts?: {
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens),
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(tokens?.totals24h ?? null),
     };
   };
 
   const clients = new Set<ServerResponse>();
   let timer: NodeJS.Timeout | null = null;
   let booksTimer: NodeJS.Timeout | null = null;
+  let tokensTimer: NodeJS.Timeout | null = null;
   let lastKey = "";
   let ticks = 0;
 
@@ -180,6 +200,10 @@ export function serve(opts?: {
         refreshKitchens(); // first viewer gets a fresh multiplayer read
         booksTimer = setInterval(refreshKitchens, booksTickMs);
       }
+      if (!tokensTimer) {
+        refreshTokens(); // first viewer gets a fresh burn read
+        tokensTimer = setInterval(refreshTokens, tokensTickMs);
+      }
       req.on("close", () => {
         clients.delete(res);
         if (clients.size === 0) {
@@ -190,6 +214,10 @@ export function serve(opts?: {
           if (booksTimer) {
             clearInterval(booksTimer);
             booksTimer = null;
+          }
+          if (tokensTimer) {
+            clearInterval(tokensTimer);
+            tokensTimer = null;
           }
         }
       });
@@ -231,6 +259,10 @@ export function serve(opts?: {
           if (booksTimer) {
             clearInterval(booksTimer);
             booksTimer = null;
+          }
+          if (tokensTimer) {
+            clearInterval(tokensTimer);
+            tokensTimer = null;
           }
           for (const res of clients) res.end();
           clients.clear();
