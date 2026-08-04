@@ -146,6 +146,9 @@ switch a pane's model yourself.
 
 1. **Pick a station** from the bundled read — prefer idle, prefer matching **focus** (its beat).
    When a ticket starts a new beat, set it: `yc_focus({ station, focus: "developer API" })`.
+   Stations keep self-managed prep books + skills in `stationsDir` (from `yc_paths`) — when
+   opening a station or reassigning a beat, skim them: a station id whose book already covers the
+   beat is worth reusing (a fresh station on that id inherits the book automatically).
 2. **Fire the ticket:** `yc_delegate({ to, title, body, priority, dish })` — always cite the
    special it serves, and the **dish** (the external deliverable — Linear/PR ref) when one
    exists. For a fresh special the first ticket is almost always **a plan**: *"Plan: get <X>

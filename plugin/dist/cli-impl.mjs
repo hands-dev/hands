@@ -8731,6 +8731,23 @@ function readEvents(dir, project, handle) {
   readEventsFromDir(path8.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
+function stationFiles(agentId, env = process.env, cwd = process.cwd()) {
+  const config2 = loadConfig({ cwd, env });
+  const enabled = Boolean(config2.remote.url?.trim());
+  const dir = enabled ? path8.join(
+    journalDir(env, cwd),
+    "journal",
+    resolveProject(config2, cwd),
+    resolveHandle(config2),
+    "stations"
+  ) : path8.join(coordinationDir(env, cwd), "stations");
+  return {
+    dir,
+    book: path8.join(dir, `${agentId}.md`),
+    skill: path8.join(dir, `${agentId}.skill.md`),
+    durable: enabled
+  };
+}
 function clip(text, max = 120) {
   const flat = text.replace(/\s+/g, " ").trim();
   const points = Array.from(flat);
@@ -32944,6 +32961,31 @@ function presentMessage(row) {
     createdAt: new Date(row.created_at).toISOString()
   };
 }
+function stationContext(agentId, env = process.env, cwd = process.cwd()) {
+  if (!isStation(agentId)) return "";
+  const files = stationFiles(agentId, env, cwd);
+  const read = (file2, cap = 6e3) => {
+    try {
+      const body = fs11.readFileSync(file2, "utf8").trim();
+      if (!body) return null;
+      const points = Array.from(body);
+      return points.length <= cap ? body : `${points.slice(0, cap).join("")}
+\u2026(truncated \u2014 trim this file)`;
+    } catch {
+      return null;
+    }
+  };
+  const skill = read(files.skill);
+  const book = read(files.book);
+  if (!skill && !book) return "";
+  return (skill ? `
+
+## Your station skill (self-maintained \u2014 ${files.skill})
+${skill}` : "") + (book ? `
+
+## Your prep book (self-maintained \u2014 ${files.book})
+${book}` : "");
+}
 function buildServer(store, agentId, config2) {
   const cfg = config2 ?? loadConfig();
   const principal = cfg.principal.name;
@@ -32967,7 +33009,7 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "yes-chef", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see yc_peers). Use yc_peers to discover the team, yc_send to message one, and yc_receive to read messages addressed to you. Call yc_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with yc_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run yc_questions, yc_priorities to read/set the ranked priorities, yc_answer to resolve, yc_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: yc_todo_add concrete things only they can do (idempotent via dedupKey), and yc_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "")
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see yc_peers). Use yc_peers to discover the team, yc_send to message one, and yc_receive to read messages addressed to you. Call yc_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with yc_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run yc_questions, yc_priorities to read/set the ranked priorities, yc_answer to resolve, yc_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: yc_todo_add concrete things only they can do (idempotent via dedupKey), and yc_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " Keep your station files current (paths in yc_paths): your PREP BOOK (distilled beat knowledge \u2014 rewrite, don't append; \u2264150 lines) and your STATION SKILL (your own operating manual). Update them on idle wakes and before any /compact \u2014 they are how your expertise survives reboots and machine moves." : "") + stationContext(agentId)
     }
   );
   server.registerTool(
@@ -33709,6 +33751,9 @@ function pathsReport(agentId, cfg) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
+    /** every station's self-managed files live here; per-agent paths for stations */
+    stationsDir: stationFiles(agentId).dir,
+    ...isStation(agentId) ? { book: stationFiles(agentId).book, skillFile: stationFiles(agentId).skill } : {},
     journalProject: enabled ? resolveProject(cfg) : null,
     journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : enabled ? "never-synced" : "disabled"
   };
@@ -33865,6 +33910,15 @@ Stations register with the expo on their first turn (yc_peers to check).`);
     const id = argv[1];
     if (!id || id.startsWith("-")) fail("usage: yes-chef station rm station-<n> [--force]");
     const res = removeStation(id, { force: flag(argv, "--force") });
+    try {
+      const files = stationFiles(id);
+      if (fs13.existsSync(files.book)) {
+        fs13.appendFileSync(files.book, `
+> station retired ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}
+`);
+      }
+    } catch {
+    }
     out2(res.removed ? `\u2714 ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }

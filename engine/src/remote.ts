@@ -584,6 +584,48 @@ export function readEvents(dir: string, project: string, handle: string): Journa
   return events.sort((a, b) => a.ts - b.ts);
 }
 
+export interface StationFiles {
+  /** dir holding every station's files (the expo browses this to match beats) */
+  dir: string;
+  /** the prep book — the station's self-curated knowledge distillation */
+  book: string;
+  /** the station's self-maintained SKILL file — its own operating manual */
+  skill: string;
+  /** true when the files live in the books clone (machine-portable via sync) */
+  durable: boolean;
+}
+
+/**
+ * Where a station's self-managed files live. Books on → inside the clone
+ * under the contributor's namespace (`journal/<project>/<handle>/stations/`),
+ * so normal sync ships them and they survive machine moves; digests never
+ * render them, so the shared narrative stays the expo's. Books off → a local
+ * `stations/` dir in the coordination dir (reboot-durable, not portable).
+ */
+export function stationFiles(
+  agentId: string,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): StationFiles {
+  const config = loadConfig({ cwd, env });
+  const enabled = Boolean(config.remote.url?.trim());
+  const dir = enabled
+    ? path.join(
+        journalDir(env, cwd),
+        "journal",
+        resolveProject(config, cwd),
+        resolveHandle(config),
+        "stations",
+      )
+    : path.join(coordinationDir(env, cwd), "stations");
+  return {
+    dir,
+    book: path.join(dir, `${agentId}.md`),
+    skill: path.join(dir, `${agentId}.skill.md`),
+    durable: enabled,
+  };
+}
+
 export interface KitchenUpdate {
   ts: number;
   type: string;

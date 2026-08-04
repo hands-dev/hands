@@ -35,6 +35,7 @@ import {
   openJournal,
   readEvents,
   replayInto,
+  stationFiles,
   syncPull,
   syncPush,
   validateJournal,
@@ -98,6 +99,16 @@ function cmdStation(argv: string[]): void {
     const id = argv[1];
     if (!id || id.startsWith("-")) fail("usage: yes-chef station rm station-<n> [--force]");
     const res = removeStation(id, { force: flag(argv, "--force") });
+    // The prep book + skill survive retirement (a future station on the same
+    // beat inherits them) — just stamp the book so the gap is visible.
+    try {
+      const files = stationFiles(id);
+      if (fs.existsSync(files.book)) {
+        fs.appendFileSync(files.book, `\n> station retired ${new Date().toISOString().slice(0, 10)}\n`);
+      }
+    } catch {
+      // best-effort — never fail the removal over a book stamp
+    }
     out(res.removed ? `✔ ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }
