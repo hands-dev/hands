@@ -10,6 +10,16 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Brand alignment ("Midnight service" — hands-website/app/globals.css):
+ * shadcn STRUCTURE is untouched; a handful of token VALUES are borrowed from
+ * the marketing site so the two surfaces read as one family — saffron
+ * --primary (+ paper-ink text) in both modes, the warm carbon ink surface
+ * set in dark mode, "heard" green for live/active status. Fonts and radii
+ * deliberately stay shadcn — the dashboard optimizes for shadcn, the site
+ * for brand. If the site's tokens change, re-borrow: accent, ink/-2/-3,
+ * line, text, muted, heard.
+ */
 :root {
   --radius: 0.625rem;
   --background: oklch(1 0 0);
@@ -18,8 +28,8 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: #e2a33c;
+  --primary-foreground: #241d15;
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
@@ -29,7 +39,8 @@
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  --ring: #e2a33c;
+  --heard: #6a8a4a; /* site's ack green, stepped darker for the light surface */
   /*
    * Chart palette: the ONE deliberate deviation from stock shadcn theme
    * values. Stock light --chart-4/--chart-5 are two oranges with a
@@ -45,24 +56,26 @@
 }
 
 .dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  /* the site's warm carbon — ink / ink-2 / ink-3 / line / text / muted */
+  --background: #151110;
+  --foreground: #ece4d4;
+  --card: #1d1815;
+  --card-foreground: #ece4d4;
+  --popover: #1d1815;
+  --popover-foreground: #ece4d4;
+  --primary: #e2a33c;
+  --primary-foreground: #241d15;
+  --secondary: #262019;
+  --secondary-foreground: #ece4d4;
+  --muted: #262019;
+  --muted-foreground: #a39682;
+  --accent: #262019;
+  --accent-foreground: #ece4d4;
   --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --border: #332a21;
+  --input: #2a221b;
+  --ring: #e2a33c;
+  --heard: #8fae6d;
   --chart-1: #3987e5;
   --chart-2: #008300;
   --chart-3: #d55181;
@@ -98,6 +111,7 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-heard: var(--heard);
 }
 
 @layer base {
@@ -106,5 +120,9 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  ::selection {
+    background: #e2a33c; /* the site's selection: saffron on ink */
+    color: #151110;
   }
 }

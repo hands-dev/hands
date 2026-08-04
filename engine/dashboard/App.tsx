@@ -25,7 +25,7 @@ function LiveBadge({ connected }: { connected: boolean }) {
   return (
     <Badge variant="outline" className="gap-1.5">
       <span
-        className={cn("size-2 rounded-full", connected ? "bg-emerald-500" : "bg-amber-500")}
+        className={cn("size-2 rounded-full", connected ? "bg-heard" : "bg-amber-500")}
       />
       {connected ? "Live" : "Reconnecting…"}
     </Badge>
