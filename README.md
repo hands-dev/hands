@@ -45,9 +45,10 @@ board**, which hands references but never owns). When a dish is finished, call *
 ship step: *"get hands on PR 1234"* → reviewed, merged, deployed.
 
 Manage the line: `hands station ls` · `hands scale <N>` · `hands station rm station-<n>`
-— or let the expo scale it (`stations.allowScaling`). Stations carry focus labels
-(`station-2 · developer API`) set via `hands_focus` — addressable by label, journaled, shown
-everywhere; the numeric id stays the routing key.
+— or let the expo scale it (`stations.allowScaling`). A station holds a **craft** — the named,
+portable specialization (`station-2 · saucier`) assigned via `hands_focus`, addressable by label,
+journaled, shown everywhere; the numeric id stays the routing key. Crafts hot-swap between seats:
+move the saucier to the poissonnier's station and the whole skillset moves too.
 
 ## How it stays cheap (wakes are the cost)
 
@@ -73,8 +74,8 @@ hands.json                                           layout marker
 journal/<project>/<handle>/<date>.md                    the day's page — the primary artifact
 journal/<project>/<handle>/README.md                    per-contributor index
 journal/<project>/<handle>/log/<date>.ndjson             the day's event log
-journal/<project>/<handle>/stations/<id>.md              a station's prep book (self-managed)
-journal/<project>/<handle>/stations/<id>.skill.md        a station's own SKILL (self-managed)
+journal/<project>/<handle>/crafts/<name>.md              a craft's prep book (self-managed)
+journal/<project>/<handle>/crafts/<name>.skill.md        a craft's own SKILL (self-managed)
 ```
 
 ```jsonc
@@ -99,11 +100,13 @@ journal/<project>/<handle>/stations/<id>.skill.md        a station's own SKILL (
 - **Shape is validated, never assumed:** empty repos self-initialize; a repo with other content is
   refused until an explicit `hands sync --adopt`; a layout newer or older than this build fails
   loudly.
-- **Stations mature on their own.** Each station self-curates a **prep book** (distilled beat
-  knowledge) and its own **station skill** (its operating manual) under the contributor's
-  namespace. The server injects both at connect, so a rebooted — or machine-moved — station comes
-  up already knowing its beat. Digests never render them: the shared narrative stays the expo's;
-  each kitchen's line matures under its own handle.
+- **Crafts mature on their own.** A **craft** is a named, portable specialization — what a chef
+  de partie carries between stations. Each craft self-curates a **prep book** (distilled
+  knowledge) and its own **craft skill** (its operating manual) under the contributor's
+  namespace, keyed by the craft's name, not the seat. The server injects both into whichever
+  station holds the craft, so a rebooted, machine-moved, or newly-assigned station comes up
+  already knowing the craft. Digests never render them: the shared narrative stays the expo's;
+  each kitchen's crafts mature under its own handle.
 - **Open books = multiplayer.** Two people pointing at one books repo each write their own pages
   and read each other's — the whole cross-kitchen story is "every kitchen keeps its book; skim the
   other kitchens' pages." The dashboard's **Other kitchens** panel shows the rest of the books

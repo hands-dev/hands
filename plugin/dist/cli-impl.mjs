@@ -7372,6 +7372,15 @@ var init_store = __esm({
         );
         this.journal("focus.set", { station: agentId, focus, at: now });
       }
+      /**
+       * An agent's current focus label — i.e. the CRAFT it holds. Deliberately
+       * not presence-windowed (unlike listPeers): an offline station's craft must
+       * still resolve so its files inject correctly at the next connect.
+       */
+      getFocus(agentId) {
+        const row = this.db.prepare(`SELECT focus FROM agents WHERE id = ?`).get(agentId);
+        return row?.focus ?? null;
+      }
       /** Agent ids whose focus label matches (case-insensitive) — label addressing. */
       findByFocus(label) {
         return this.db.prepare("SELECT id FROM agents WHERE focus IS NOT NULL AND lower(focus) = lower(?) ORDER BY id").all(label.trim()).map((r) => r.id);
@@ -8731,7 +8740,7 @@ function readEvents(dir, project, handle) {
   readEventsFromDir(path8.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
-function stationFiles(agentId, env = process.env, cwd = process.cwd()) {
+function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
   const enabled = Boolean(config2.remote.url?.trim());
   const dir = enabled ? path8.join(
@@ -8739,12 +8748,14 @@ function stationFiles(agentId, env = process.env, cwd = process.cwd()) {
     "journal",
     resolveProject(config2, cwd),
     resolveHandle(config2),
-    "stations"
-  ) : path8.join(coordinationDir(env, cwd), "stations");
+    "crafts"
+  ) : path8.join(coordinationDir(env, cwd), "crafts");
+  const slug = sanitizeSegment(craft, "unnamed");
   return {
     dir,
-    book: path8.join(dir, `${agentId}.md`),
-    skill: path8.join(dir, `${agentId}.skill.md`),
+    slug,
+    book: path8.join(dir, `${slug}.md`),
+    skill: path8.join(dir, `${slug}.skill.md`),
     durable: enabled
   };
 }
@@ -32961,9 +32972,13 @@ function presentMessage(row) {
     createdAt: new Date(row.created_at).toISOString()
   };
 }
-function stationContext(agentId, env = process.env, cwd = process.cwd()) {
+function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
   if (!isStation(agentId)) return "";
-  const files = stationFiles(agentId, env, cwd);
+  const craft = store.getFocus(agentId);
+  if (!craft) {
+    return "\n\nYou hold no craft yet \u2014 the expo assigns one via hands_focus. Until then work tickets generically; once assigned, your craft's book + skill arrive via hands_paths.";
+  }
+  const files = craftFiles(craft, env, cwd);
   const read = (file2, cap = 6e3) => {
     try {
       const body = fs11.readFileSync(file2, "utf8").trim();
@@ -32977,13 +32992,20 @@ function stationContext(agentId, env = process.env, cwd = process.cwd()) {
   };
   const skill = read(files.skill);
   const book = read(files.book);
-  if (!skill && !book) return "";
-  return (skill ? `
+  const header = `
 
-## Your station skill (self-maintained \u2014 ${files.skill})
+## Your craft: ${craft}
+The craft is portable \u2014 if the expo reassigns yours mid-session you'll get a waking message; re-read your files via hands_paths (they always resolve from your CURRENT craft).`;
+  if (!skill && !book) {
+    return `${header}
+No book or skill written for this craft yet \u2014 you are founding it.`;
+  }
+  return header + (skill ? `
+
+### Craft skill (self-maintained \u2014 ${files.skill})
 ${skill}` : "") + (book ? `
 
-## Your prep book (self-maintained \u2014 ${files.book})
+### Prep book (self-maintained \u2014 ${files.book})
 ${book}` : "");
 }
 function buildServer(store, agentId, config2) {
@@ -33009,7 +33031,7 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "hands", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " Keep your station files current (paths in hands_paths): your PREP BOOK (distilled beat knowledge \u2014 rewrite, don't append; \u2264150 lines) and your STATION SKILL (your own operating manual). Update them on idle wakes and before any /compact \u2014 they are how your expertise survives reboots and machine moves." : "") + stationContext(agentId)
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " Keep your CRAFT's files current (paths in hands_paths): its PREP BOOK (distilled knowledge \u2014 rewrite, don't append; \u2264150 lines) and its CRAFT SKILL (its operating manual). Update them on idle wakes and before any /compact \u2014 the craft, not the seat, is how expertise survives reboots, machine moves, and reassignment." : "") + craftContext(agentId, store)
     }
   );
   server.registerTool(
@@ -33239,7 +33261,7 @@ function buildServer(store, agentId, config2) {
     },
     async () => {
       store.touch(agentId);
-      return asToolResult(pathsReport(agentId, cfg));
+      return asToolResult(pathsReport(agentId, cfg, store.getFocus(agentId)));
     }
   );
   server.registerTool(
@@ -33592,8 +33614,8 @@ function buildServer(store, agentId, config2) {
   server.registerTool(
     "hands_focus",
     {
-      title: "Set a station's focus (its evolving specialization)",
-      description: `Label a station with its current specialization ("developer API", "billing") \u2014 shown on the board and in the books, and addressable in hands_send/delegate as a convenience (the station-<n> id stays the durable key). A station may set its own focus; the expo may set anyone's. Pass focus: null to clear.`,
+      title: "Assign a station's craft (set/swap its focus label)",
+      description: `Assign a station its CRAFT \u2014 the named, portable specialization it holds ("saucier", "ordering API"). The craft, not the seat, owns the prep book + craft skill under crafts/, so reassigning moves the whole skillset and history to that station: an existing name restores its files, a new name founds fresh ones. Shown on the board and in the books, and addressable in hands_send/delegate as a convenience (the station-<n> id stays the durable key). Swapping a RUNNING station's craft: set it here, then send a waking message so it re-reads via hands_paths. Keep one craft on one active seat at a time \u2014 two seats writing one book is the same mistake as two machines on one handle. A station may set its own; the expo may set anyone's. Pass focus: null to clear.`,
       inputSchema: {
         station: external_exports3.string().optional().describe("target station id (default: yourself)"),
         focus: external_exports3.string().min(1).max(80).nullable()
@@ -33738,10 +33760,12 @@ function buildServer(store, agentId, config2) {
 function resolveSelf() {
   return resolveAgentId({ expoBasename: loadConfig().expo.basename });
 }
-function pathsReport(agentId, cfg) {
+function pathsReport(agentId, cfg, focus) {
   const info = repoInfo();
   const enabled = Boolean(cfg.remote.url?.trim());
   const journal = enabled ? readSyncStatus(journalDir()) : null;
+  const craft = focus ?? null;
+  const files = craft ? craftFiles(craft) : null;
   return {
     cwd: process.cwd(),
     agentId,
@@ -33751,16 +33775,31 @@ function pathsReport(agentId, cfg) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
-    /** every station's self-managed files live here; per-agent paths for stations */
-    stationsDir: stationFiles(agentId).dir,
-    ...isStation(agentId) ? { book: stationFiles(agentId).book, skillFile: stationFiles(agentId).skill } : {},
+    /** the craft roster — every craft's book + skill live here */
+    craftsDir: craftFiles("roster").dir,
+    ...isStation(agentId) ? {
+      craft,
+      craftSlug: files?.slug ?? null,
+      book: files?.book ?? null,
+      skillFile: files?.skill ?? null
+    } : {},
     journalProject: enabled ? resolveProject(cfg) : null,
     journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : enabled ? "never-synced" : "disabled"
   };
 }
 function runCli(subcommand, argv) {
   if (subcommand === "paths") {
-    process.stdout.write(`${JSON.stringify(pathsReport(resolveSelf(), loadConfig()), null, 2)}
+    const id = resolveSelf();
+    let focus = null;
+    if (fs11.existsSync(dbPath())) {
+      const s = new Store();
+      try {
+        focus = s.getFocus(id);
+      } finally {
+        s.close();
+      }
+    }
+    process.stdout.write(`${JSON.stringify(pathsReport(id, loadConfig(), focus), null, 2)}
 `);
     return 0;
   }
@@ -33910,15 +33949,6 @@ Stations register with the expo on their first turn (hands_peers to check).`);
     const id = argv[1];
     if (!id || id.startsWith("-")) fail("usage: hands station rm station-<n> [--force]");
     const res = removeStation(id, { force: flag(argv, "--force") });
-    try {
-      const files = stationFiles(id);
-      if (fs13.existsSync(files.book)) {
-        fs13.appendFileSync(files.book, `
-> station retired ${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}
-`);
-      }
-    } catch {
-    }
     out2(res.removed ? `\u2714 ${id} retired` : `${id} was not provisioned (nothing to do)`);
     return;
   }
@@ -34024,7 +34054,16 @@ function cmdDigest(argv) {
 function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
-  out2(JSON.stringify(pathsReport(agentId, cfg), null, 2));
+  let focus = null;
+  if (fs13.existsSync(dbPath())) {
+    const store = new Store();
+    try {
+      focus = store.getFocus(agentId);
+    } finally {
+      store.close();
+    }
+  }
+  out2(JSON.stringify(pathsReport(agentId, cfg, focus), null, 2));
 }
 async function main2() {
   const [cmd, ...rest] = process.argv.slice(2);
