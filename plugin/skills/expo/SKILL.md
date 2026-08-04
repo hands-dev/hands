@@ -153,7 +153,9 @@ switch a pane's model yourself.
    `hands_paths`): `head -n 12 <craftsDir>/*.md` — books open with their identity, so twelve
    lines per craft tells you what each one knows. The bundled read tells you which seat holds
    which craft. Re-read the roster when a NEW beat appears or a special changes; from memory
-   otherwise (it changes slowly).
+   otherwise (it changes slowly). An **empty roster** in a kitchen with real station-pattern
+   demand → suggest the principal run `/hands:crafts` (the brigade-design survey) once; until
+   then stations work generically, which is fine for small kitchens.
 
    **The casting ladder** for a ticket:
    - A craft covers it and is **seated + idle** → fire the ticket there. Done.
