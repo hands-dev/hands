@@ -328,8 +328,8 @@ describe("same-handle multi-machine", () => {
 
 describe("journal v2: project identity", () => {
   it("derives the repo name from scp and https origins, case-insensitively", () => {
-    expect(projectFromOrigin("git@github.com:heymichaelp/Roundhouse.git")).toBe("roundhouse");
-    expect(projectFromOrigin("https://github.com/HeyMichaelP/roundhouse")).toBe("roundhouse");
+    expect(projectFromOrigin("git@github.com:heymichaelp/Hands.git")).toBe("hands");
+    expect(projectFromOrigin("https://github.com/HeyMichaelP/hands")).toBe("hands");
     expect(projectFromOrigin("https://gitlab.com/group/sub/repo.git")).toBe("repo");
     expect(projectFromOrigin("")).toBeNull();
   });

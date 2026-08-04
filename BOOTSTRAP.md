@@ -19,7 +19,7 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 
 ```
 /plugin marketplace add heymichaelp/hands
-/plugin install yc@hands
+/plugin install hands@hands
 ```
 
 ## Step 2 — Clone the project + configure
