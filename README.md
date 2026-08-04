@@ -32,7 +32,7 @@ Then, per repo (from its main checkout) — one slash command:
 ```bash
 /yc:expo                     # main checkout — or /loop /yc:expo for always-on
 yes-chef station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
-yes-chef serve               # live dashboard → http://localhost:4319
+/yc:dashboard                # live dashboard (SSE) → http://localhost:4319  (or: yes-chef serve)
 ```
 
 The expo asks for **today's specials** (the ranked priorities — they change day to day with what's

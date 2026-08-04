@@ -3455,8 +3455,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path13) {
-      let input = path13;
+    function removeDotSegments(path14) {
+      let input = path14;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3708,8 +3708,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path13, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path13 && path13 !== "/" ? path13 : void 0;
+        const [path14, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path14 && path14 !== "/" ? path14 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7108,12 +7108,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs13, exportName) {
+    function addFormats(ajv, list, fs14, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs13[f]);
+        ajv.addFormat(f, fs14[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8438,384 +8438,6 @@ var init_provision = __esm({
   }
 });
 
-// src/dashboard.ts
-function dashboardHtml(principal) {
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="icon" href="data:," />
-<title>yes-chef</title>
-<style>
-  /* shadcn/ui baseline theme tokens (default / "zinc") */
-  :root {
-    --background:0 0% 100%; --foreground:240 10% 3.9%;
-    --card:0 0% 100%; --card-foreground:240 10% 3.9%;
-    --primary:240 5.9% 10%; --primary-foreground:0 0% 98%;
-    --secondary:240 4.8% 95.9%; --secondary-foreground:240 5.9% 10%;
-    --muted:240 4.8% 95.9%; --muted-foreground:240 3.8% 46.1%;
-    --accent:240 4.8% 95.9%; --accent-foreground:240 5.9% 10%;
-    --destructive:0 72% 51%; --destructive-foreground:0 0% 98%;
-    --border:240 5.9% 90%; --input:240 5.9% 90%; --ring:240 5.9% 10%;
-    --success:142 71% 45%; --warning:38 92% 50%;
-    --chart-1:220 70% 50%; --chart-2:160 60% 45%; --chart-3:30 80% 55%; --chart-4:280 65% 60%; --chart-5:340 75% 55%;
-    --radius:0.65rem;
-    --font-sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
-    --font-mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --background:240 10% 3.9%; --foreground:0 0% 98%;
-      --card:240 10% 5.5%; --card-foreground:0 0% 98%;
-      --primary:0 0% 98%; --primary-foreground:240 5.9% 10%;
-      --secondary:240 3.7% 15.9%; --secondary-foreground:0 0% 98%;
-      --muted:240 3.7% 15.9%; --muted-foreground:240 5% 64.9%;
-      --accent:240 3.7% 15.9%; --accent-foreground:0 0% 98%;
-      --destructive:0 72% 51%; --destructive-foreground:0 0% 98%;
-      --border:240 3.7% 15.9%; --input:240 3.7% 15.9%; --ring:240 4.9% 83.9%;
-      --success:142 69% 58%; --warning:38 92% 60%;
-      --chart-1:220 70% 55%; --chart-2:160 60% 50%; --chart-3:30 85% 60%; --chart-4:280 65% 65%; --chart-5:340 75% 60%;
-    }
-  }
-  * { box-sizing:border-box; }
-  body { margin:0; background:hsl(var(--background)); color:hsl(var(--foreground)); font-family:var(--font-sans); font-size:14px; -webkit-font-smoothing:antialiased; }
-  .mono { font-family:var(--font-mono); }
-  .muted { color:hsl(var(--muted-foreground)); }
-
-  /* Layout */
-  header { display:flex; align-items:center; gap:12px; padding:18px 24px; max-width:1200px; margin:0 auto; }
-  header .title { font-size:18px; font-weight:600; letter-spacing:-0.02em; }
-  header .title .accent { color:hsl(var(--muted-foreground)); font-weight:500; }
-  header .sub { color:hsl(var(--muted-foreground)); font-size:13px; }
-  header .spacer { margin-left:auto; }
-  main { max-width:1200px; margin:0 auto; padding:0 24px 40px; display:flex; flex-direction:column; gap:16px; }
-
-  /* Card */
-  .card { border:1px solid hsl(var(--border)); border-radius:var(--radius); background:hsl(var(--card)); color:hsl(var(--card-foreground)); box-shadow:0 1px 2px 0 hsl(240 10% 3.9% / 0.04); }
-  .card-header { display:flex; align-items:center; gap:10px; padding:18px 20px 0; }
-  .card-title { font-size:15px; font-weight:600; letter-spacing:-0.01em; }
-  .card-desc { color:hsl(var(--muted-foreground)); font-size:13px; line-height:1.55; padding:6px 20px 0; margin:0; }
-  .card-content { padding:16px 20px 20px; }
-
-  /* Badge */
-  .badge { display:inline-flex; align-items:center; gap:5px; border:1px solid transparent; border-radius:9999px; padding:2px 9px; font-size:11.5px; font-weight:600; line-height:1.35; white-space:nowrap; }
-  .badge-secondary { background:hsl(var(--secondary)); color:hsl(var(--secondary-foreground)); }
-  .badge-outline { color:hsl(var(--foreground)); border-color:hsl(var(--border)); }
-  .badge-destructive { background:hsl(var(--destructive)); color:hsl(var(--destructive-foreground)); }
-
-  /* Separator */
-  .sep { height:1px; background:hsl(var(--border)); border:0; margin:0; }
-
-  /* Table */
-  table.tbl { width:100%; border-collapse:collapse; font-size:13.5px; }
-  table.tbl th { text-align:left; font-weight:500; color:hsl(var(--muted-foreground)); padding:0 10px 8px; font-size:12px; }
-  table.tbl td { padding:9px 10px; border-top:1px solid hsl(var(--border)); vertical-align:middle; }
-  table.tbl td.trunc { max-width:0; width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  table.tbl td.right { text-align:right; white-space:nowrap; color:hsl(var(--muted-foreground)); }
-
-  /* Progress */
-  .progress { height:8px; background:hsl(var(--secondary)); border-radius:9999px; overflow:hidden; }
-  .progress > i { display:block; height:100%; border-radius:9999px; }
-
-  /* Stat tiles */
-  .stats { display:flex; gap:24px; }
-  .stat .n { font-size:28px; font-weight:700; line-height:1; letter-spacing:-0.02em; }
-  .stat .l { font-size:12px; color:hsl(var(--muted-foreground)); margin-top:4px; }
-  .stat.active .n { color:hsl(var(--success)); } .stat.idle .n { color:hsl(var(--warning)); } .stat.offline .n { color:hsl(var(--muted-foreground)); }
-
-  /* Overall utilization body */
-  .util { display:grid; grid-template-columns:auto minmax(0,1fr); gap:28px; align-items:center; }
-  @media (max-width:720px){ .util{ grid-template-columns:1fr; } }
-  .prow { display:grid; grid-template-columns:auto 1fr auto; gap:12px; align-items:center; padding:7px 0; }
-  .prow + .prow { border-top:1px solid hsl(var(--border)); }
-  .prow .lab { min-width:0; }
-  .prow .lab .t { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:500; }
-  .prow .lab .progress { margin-top:7px; }
-  .prow .cnt { color:hsl(var(--muted-foreground)); font-size:13px; white-space:nowrap; }
-  .prow .cnt b { color:hsl(var(--foreground)); }
-  .prow.zero .lab .t { color:hsl(var(--destructive)); }
-
-  /* Stations grid \u2014 equal 2 cols; long text never stretches a track */
-  .stations { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
-  @media (max-width:720px){ .stations{ grid-template-columns:1fr; } }
-  .wcard { min-width:0; border:1px solid hsl(var(--border)); border-radius:var(--radius); padding:14px 16px; display:flex; flex-direction:column; gap:9px; background:hsl(var(--card)); }
-  .wcard.offline { opacity:.55; }
-  .wcard.collide { border-color:hsl(var(--destructive) / 0.6); }
-  .wtop { display:flex; align-items:center; gap:8px; min-width:0; }
-  .wtop .dot { width:8px; height:8px; border-radius:9999px; flex:0 0 auto; }
-  .wtop .nm { font-weight:600; font-size:14.5px; }
-  .wtop .wt { color:hsl(var(--muted-foreground)); font-size:11.5px; }
-  .wtop .st { margin-left:auto; color:hsl(var(--muted-foreground)); font-size:12px; white-space:nowrap; }
-  .wtask { display:flex; gap:7px; align-items:baseline; min-width:0; font-size:13.5px; }
-  .wtask .ar { color:hsl(var(--muted-foreground)); flex:0 0 auto; }
-  .wtask .tt { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .wtask.none .tt { color:hsl(var(--muted-foreground)); font-style:italic; }
-  .wbot { display:flex; align-items:center; gap:9px; min-width:0; }
-  .wbot .branch { color:hsl(var(--muted-foreground)); font-size:11.5px; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-
-  /* Expo */
-  .fore-top { display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin-bottom:14px; }
-  .fore-top .score { font-size:40px; font-weight:700; line-height:1; letter-spacing:-0.02em; color:hsl(var(--muted-foreground)); }
-  .fore-top .score.has { color:hsl(var(--foreground)); }
-  .fore-top .tags { display:flex; gap:8px; flex-wrap:wrap; }
-  .oc-val { color:hsl(var(--success)); } .oc-con { color:hsl(var(--destructive)); }
-
-  .alert { border:1px solid hsl(var(--border)); border-radius:var(--radius); padding:12px 16px; display:flex; flex-direction:column; gap:6px; }
-  .alert-warn { border-color:hsl(var(--warning) / 0.5); background:hsl(var(--warning) / 0.08); }
-  .alert-row { display:flex; gap:10px; align-items:baseline; min-width:0; }
-  .alert-row .q { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .empty { color:hsl(var(--muted-foreground)); font-style:italic; font-size:13px; padding:6px 0; }
-  .live { display:inline-flex; align-items:center; gap:6px; color:hsl(var(--muted-foreground)); font-size:12px; }
-  .live .pulse { width:7px; height:7px; border-radius:9999px; background:hsl(var(--success)); animation:pulse 2s infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-  .chips { display:flex; flex-wrap:wrap; gap:8px; }
-</style>
-</head>
-<body>
-<header>
-  <div>
-    <div class="title">yes-chef <span class="accent">\xB7 the pass</span></div>
-  </div>
-  <div class="spacer"></div>
-  <span class="live"><span class="pulse"></span> <span id="livetxt">live</span></span>
-</header>
-<main>
-  <div id="needs"></div>
-  <div class="card"><div class="card-header"><span class="card-title">Overall utilization</span><span id="util-badge"></span></div><div class="card-content" id="util-body"></div></div>
-  <div class="card"><div class="card-header"><span class="card-title">Stations</span><span id="stations-badge"></span></div><div class="card-content" id="stations-body"></div></div>
-  <div id="collstrip"></div>
-  <div class="card"><div class="card-header"><span class="card-title">Expo effectiveness</span><span id="fore-badge"></span></div><div class="card-content" id="fore-body"></div></div>
-  <div id="others"></div>
-</main>
-<script>
-  function esc(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];}); }
-  function age(now,t){ if(t==null) return '\u2014'; var ms=now-t; if(ms<60000) return 'now'; var m=Math.floor(ms/60000); if(m<60) return m+'m'; var h=Math.floor(m/60); return h<24? h+'h':Math.floor(h/24)+'d'; }
-  function wtNum(id){ var m=/^(?:station|station)-(\\d+)$/.exec(id); return m? parseInt(m[1],10):null; }
-  var PRINCIPAL=${JSON.stringify(principal)};
-  function nmeOnly(id){ return id; }
-  function dotColor(s){ return s==='active'?'hsl(var(--success))':s==='idle'?'hsl(var(--warning))':'hsl(var(--muted-foreground))'; }
-  var PVAR=['hsl(var(--chart-1))','hsl(var(--chart-2))','hsl(var(--chart-3))','hsl(var(--chart-4))','hsl(var(--chart-5))'];
-  function pcolor(i){ return PVAR[i]||'hsl(var(--muted-foreground))'; }
-  function prioShort(p){ if(!p) return ''; return String(p).split(/\\s+[\u2014\u2013]\\s+|\\s+-\\s+|\\s*\\(/)[0].trim(); }
-  function prioIndex(ref, prios){
-    if(!ref) return -1;
-    var r=String(ref).toLowerCase().trim();
-    for(var i=0;i<prios.length;i++){
-      var full=String(prios[i]).toLowerCase();
-      var shortp=prioShort(prios[i]).toLowerCase();
-      if(full===r || full.indexOf(r)>=0 || (shortp && r.indexOf(shortp)>=0) || (shortp && shortp.indexOf(r)>=0)) return i;
-    }
-    return -1;
-  }
-  var ACTIVE={assigned:1,in_progress:1};
-  function curTask(tasks,id){
-    var m=tasks.filter(function(t){return t.assignee===id && ACTIVE[t.state];});
-    m.sort(function(a,b){return b.at-a.at;});
-    return m[0]||null;
-  }
-  var STOP={fix:1,feat:1,chore:1,refactor:1,docs:1,test:1,wip:1,the:1,and:1,for:1,home:1,eng:1,inn:1,main:1,staging:1};
-  function tokset(s){ return String(s||'').toLowerCase().split(/[^a-z0-9]+/).filter(function(t){ return t.length>2 && STOP[t]!==1; }); }
-  function inferPrioIndex(w, prios){
-    var wt=tokset((w.branch||'')+' '+(w.ticket||''));
-    if(!wt.length) return -1;
-    var best=-1, bestScore=0;
-    for(var i=0;i<prios.length;i++){
-      var pt=tokset(prios[i]); var score=0;
-      wt.forEach(function(t){ if(pt.indexOf(t)>=0) score += (/^[0-9]+$/.test(t)?3:1); });
-      if(score>bestScore){ bestScore=score; best=i; }
-    }
-    return bestScore>0? best : -1;
-  }
-  function stationPriority(s, w){
-    var prios=s.priorities||[];
-    var t=curTask(s.tasks,w.id);
-    if(t){ return { i:prioIndex(t.priority,prios), src:'task', task:t }; }
-    return { i:inferPrioIndex(w,prios), src:'branch', task:null };
-  }
-  function badge(cls, txt, style){ return '<span class="badge '+cls+'"'+(style?' style="'+style+'"':'')+'>'+txt+'</span>'; }
-
-  function renderUtil(s, stations){
-    var prios=s.priorities||[];
-    var active=0,idle=0,off=0;
-    stations.forEach(function(w){ if(w.state==='active')active++; else if(w.state==='idle')idle++; else off++; });
-    var perP=prios.map(function(){return 0;}); var unassigned=0;
-    var onduty=stations.filter(function(w){return w.state!=='offline';});
-    onduty.forEach(function(w){ var wp=stationPriority(s,w); if(wp.i>=0) perP[wp.i]++; else unassigned++; });
-    var denom=Math.max(onduty.length,1);
-    document.getElementById('util-badge').innerHTML = badge('badge-secondary', onduty.length+'/'+stations.length+' on duty');
-    var rows=prios.map(function(p,i){
-      var c=perP[i]; var pct=Math.round(c/denom*100);
-      return '<div class="prow'+(c===0?' zero':'')+'">'+
-        badge('badge-secondary','P'+(i+1),'background:'+pcolor(i)+';color:#fff')+
-        '<div class="lab"><div class="t">'+esc(prioShort(p))+'</div>'+
-          '<div class="progress"><i style="width:'+pct+'%;background:'+pcolor(i)+'"></i></div></div>'+
-        '<span class="cnt"><b>'+c+'</b> '+(c===1?'station':'stations')+'</span>'+
-      '</div>';
-    }).join('');
-    if(unassigned>0){
-      rows+='<div class="prow">'+badge('badge-outline','\xB7')+
-        '<div class="lab"><div class="t muted">off-priority / self-directed</div></div>'+
-        '<span class="cnt"><b>'+unassigned+'</b> '+(unassigned===1?'station':'stations')+'</span></div>';
-    }
-    document.getElementById('util-body').innerHTML =
-      '<div class="util">'+
-        '<div class="stats">'+
-          '<div class="stat active"><div class="n">'+active+'</div><div class="l">Active</div></div>'+
-          '<div class="stat idle"><div class="n">'+idle+'</div><div class="l">Idle</div></div>'+
-          '<div class="stat offline"><div class="n">'+off+'</div><div class="l">Offline</div></div>'+
-        '</div>'+
-        '<div>'+(rows||'<div class="empty">no specials set \u2014 ask the expo</div>')+'</div>'+
-      '</div>';
-  }
-
-  // Wake accounting: each wake is one full model turn over the station's whole
-  // context, so wakes/hour is the live cost dial. Amber past 6/h, red past 12/h.
-  function wakeBadge(w){
-    var h=w.wakesLastHour||0, d=w.wakes24h||0;
-    if(!h && !d) return '';
-    var style = h>=12? 'color:hsl(var(--destructive));border-color:hsl(var(--destructive))'
-              : h>=6?  'color:hsl(var(--warning));border-color:hsl(var(--warning))' : '';
-    return badge('badge-outline', h+' wakes/h \xB7 '+d+'/24h', style);
-  }
-
-  function stationCell(s, w, collide){
-    var prios=s.priorities||[];
-    var cls='wcard'+(w.state==='offline'?' offline':'')+(collide[w.id]?' collide':'');
-    var wp=stationPriority(s,w); var t=wp.task;
-    var taskHtml = t
-      ? '<div class="wtask"><span class="ar">\u25B8</span><span class="tt">'+esc(t.title)+(t.dish?' <span class="wt mono">('+esc(t.dish)+')</span>':'')+'</span></div>'
-      : '<div class="wtask none"><span class="ar">\u25B8</span><span class="tt">'+(w.state==='offline'?'offline':(w.branch?'self-directed':'no task'))+'</span></div>';
-    var ptag;
-    if(wp.i>=0 && wp.src==='branch'){
-      ptag=badge('badge-outline','~P'+(wp.i+1)+' '+esc(prioShort(prios[wp.i])),'color:'+pcolor(wp.i)+';border-color:'+pcolor(wp.i));
-    } else if(wp.i>=0){
-      ptag=badge('badge-secondary','P'+(wp.i+1)+' '+esc(prioShort(prios[wp.i])),'background:'+pcolor(wp.i)+';color:#fff');
-    } else {
-      ptag=badge('badge-outline', t?'off-priority':'\u2014');
-    }
-    return '<div class="'+cls+'">'+
-      '<div class="wtop">'+
-        '<span class="dot" style="background:'+dotColor(w.state)+'"></span>'+
-        '<span class="nm mono">'+esc(w.id)+'</span>'+
-        (w.focus?badge('badge-outline', esc(w.focus)):'')+
-        '<span class="st">'+w.state+' '+age(s.now,w.lastActive)+'</span>'+
-      '</div>'+
-      taskHtml+
-      '<div class="wbot">'+ptag+wakeBadge(w)+(w.branch?'<span class="branch mono">'+esc(w.branch)+'</span>':'')+'</div>'+
-    '</div>';
-  }
-
-  function renderStations(s, stations, collide){
-    document.getElementById('stations-badge').innerHTML = badge('badge-secondary', String(stations.length));
-    var half=Math.ceil(stations.length/2);
-    var left=stations.slice(0,half), right=stations.slice(half);
-    var order=[]; for(var i=0;i<half;i++){ order.push(left[i]); if(right[i]) order.push(right[i]); }
-    document.getElementById('stations-body').innerHTML =
-      '<div class="stations">'+order.map(function(w){return stationCell(s,w,collide);}).join('')+'</div>';
-  }
-
-  function renderExpo(s){
-    var qs=s.questions||[];
-    var recs=qs.filter(function(q){return q.recommendation || q.resolvedBy==='expo';});
-    recs.sort(function(a,b){return b.at-a.at;});
-    var val=0,con=0,pend=0;
-    recs.forEach(function(q){ var o=q.outcome; if(o==='validated')val++; else if(o==='contradicted')con++; else pend++; });
-    var wSum=0,wVal=0,ai=0;
-    recs.forEach(function(q){ if(q.outcome!=='validated'&&q.outcome!=='contradicted') return; var w=Math.pow(0.9,ai++); wSum+=w; if(q.outcome==='validated') wVal+=w; });
-    var assessed=val+con;
-    var score = assessed ? Math.round(wVal/wSum*100)+'%' : '\u2014';
-    document.getElementById('fore-badge').innerHTML = badge('badge-secondary', recs.length+' recs');
-    var rows=recs.slice(0,10).map(function(q){
-      var o=q.outcome;
-      var oc = o==='validated' ? '<span class="oc-val">\u2714 held up</span>'
-             : o==='contradicted' ? '<span class="oc-con">\u2718 overturned</span>'
-             : '<span class="muted">\u25E6 pending</span>';
-      var txt=q.recommendation||q.answer||q.question;
-      var pt=q.priority?badge('badge-outline', esc(prioShort(q.priority))):'';
-      return '<tr><td class="mono" style="white-space:nowrap">'+oc+'</td>'+
-        '<td class="mono" style="color:hsl(var(--muted-foreground));white-space:nowrap">'+esc(nmeOnly(q.asker))+'</td>'+
-        '<td class="trunc">'+esc(txt)+'</td>'+
-        '<td style="white-space:nowrap">'+pt+'</td>'+
-        '<td class="right mono">'+age(s.now,q.at)+'</td></tr>';
-    }).join('');
-    var table = recs.length
-      ? '<table class="tbl"><thead><tr><th>outcome</th><th>from</th><th>recommendation</th><th>priority</th><th class="right">age</th></tr></thead><tbody>'+rows+'</tbody></table>'
-      : '<div class="empty">no expo recommendations yet</div>';
-    document.getElementById('fore-body').innerHTML =
-      '<div class="fore-top">'+
-        '<span class="score'+(assessed?' has':'')+'">'+score+'</span>'+
-        '<div class="tags">'+
-          badge('badge-outline','<b class="oc-val">'+val+'</b>&nbsp;held up')+
-          badge('badge-outline','<b class="oc-con">'+con+'</b>&nbsp;overturned')+
-          badge('badge-secondary','<b>'+pend+'</b>&nbsp;not yet judged')+
-        '</div>'+
-      '</div>'+
-      '<p class="card-desc" style="padding:0 0 12px">The expo grades its own calls in hindsight \u2014 did each recommendation hold up, or did a later finding overturn it? '+
-        'Score = held up \xF7 (held up + overturned), recency-weighted. It measures the expo\\'s judgment, not whether '+esc(PRINCIPAL)+' accepted its advice.'+
-        (assessed?'':' Nothing judged yet \u2014 the score appears once the expo starts introspecting on how its recommendations played out.')+'</p>'+
-      table;
-  }
-
-  function render(s){
-    var realColl=(s.collisions||[]).filter(function(c){
-      var d=String(c.detail||'').toLowerCase();
-      return d.indexOf('settings')<0 && d.indexOf('.bak')<0 && d.indexOf('.local')<0 && d.indexOf('.lock')<0;
-    });
-
-    // needs-you (escalations awaiting the principal)
-    var qs=s.questions||[];
-    var needs=qs.filter(function(q){return q.state==='needs_human';});
-    document.getElementById('needs').innerHTML = needs.length
-      ? '<div class="alert alert-warn">'+needs.map(function(q){
-          var rec=q.recommendation?' <span class="muted">\u21B3 '+esc(q.recommendation)+'</span>':'';
-          return '<div class="alert-row">'+badge('badge-secondary', esc(nmeOnly(q.asker))+' needs you')+'<span class="q">'+esc(q.question)+rec+'</span></div>';
-        }).join('')+'</div>'
-      : '';
-
-    var collide={}; realColl.forEach(function(c){ collide[c.a]=1; collide[c.b]=1; });
-
-    var stations=[];
-    s.agents.forEach(function(a){ if(wtNum(a.id)!=null) stations.push(a); });
-    stations.sort(function(a,b){ return wtNum(a.id)-wtNum(b.id); });
-
-    renderUtil(s, stations);
-    renderStations(s, stations, collide);
-    renderExpo(s);
-
-    document.getElementById('collstrip').innerHTML = realColl.length
-      ? '<div class="alert" style="border-color:hsl(var(--destructive) / 0.5)"><div class="muted mono" style="font-size:12px">\u26A0 collisions \xB7 same file open in two panes</div>'+
-        realColl.map(function(c){
-          var what=c.kind==='file'?esc(c.detail):('same ticket '+esc(c.detail));
-          return '<div class="alert-row">'+badge('badge-destructive', esc(nmeOnly(c.a))+' & '+esc(nmeOnly(c.b)))+'<span class="q mono">'+what+'</span></div>';
-        }).join('')+'</div>'
-      : '';
-
-    var others=s.agents.filter(function(a){ return wtNum(a.id)==null && a.id!=='expo' && a.online; });
-    document.getElementById('others').innerHTML = others.length
-      ? '<div class="chips">'+others.map(function(a){
-          return badge('badge-outline','<span class="dot" style="display:inline-block;width:7px;height:7px;border-radius:9999px;background:'+dotColor(a.state)+'"></span> '+esc(nmeOnly(a.id))+' <span class="muted">'+esc(a.branch||'\u2014')+'</span>');
-        }).join('')+'</div>'
-      : '';
-  }
-
-  var fails=0;
-  function tick(){
-    fetch('/api/state',{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
-      fails=0; document.getElementById('livetxt').textContent='live'; render(s);
-    }).catch(function(){ fails++; if(fails>1) document.getElementById('livetxt').textContent='reconnecting\u2026'; });
-  }
-  tick(); setInterval(tick,2000);
-</script>
-</body>
-</html>`;
-}
-var init_dashboard = __esm({
-  "src/dashboard.ts"() {
-    "use strict";
-  }
-});
-
 // src/snapshot.ts
 import * as path10 from "node:path";
 function activity(raw) {
@@ -8976,28 +8598,119 @@ var init_snapshot = __esm({
 // src/serve.ts
 var serve_exports = {};
 __export(serve_exports, {
-  serve: () => serve
+  serve: () => serve,
+  snapshotKey: () => snapshotKey
 });
+import * as fs10 from "node:fs";
 import { createServer } from "node:http";
+import * as path11 from "node:path";
+import { fileURLToPath } from "node:url";
+function defaultAssetsDir() {
+  const here = path11.dirname(fileURLToPath(import.meta.url));
+  return [
+    path11.join(here, "assets"),
+    // plugin/dist/server-impl.mjs → sibling assets/
+    path11.join(here, "..", "..", "plugin", "dist", "assets")
+    // engine/src (tsx) + engine/dist (tsc)
+  ].find((d) => fs10.existsSync(d)) ?? null;
+}
+function snapshotKey(snapshot) {
+  const { now: _now, ...rest } = snapshot;
+  return JSON.stringify(rest);
+}
 function serve(opts) {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
   const port = opts?.port ?? Number(env.YES_CHEF_PORT ?? 4319);
+  const tickMs = opts?.tickMs ?? 1e3;
+  const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
   const store = new Store({ env });
   const db = dbPath(env);
-  const html = dashboardHtml(loadConfig({ env }).principal.name);
+  const principal = loadConfig({ env }).principal.name;
+  const payload = () => {
+    const snapshot = buildSnapshot(store, Date.now(), env);
+    return { json: JSON.stringify({ ...snapshot, db, principal }), key: snapshotKey(snapshot) };
+  };
+  const clients = /* @__PURE__ */ new Set();
+  let timer = null;
+  let lastKey = "";
+  let ticks = 0;
+  const tick = () => {
+    let p;
+    try {
+      p = payload();
+    } catch {
+      return;
+    }
+    if (p.key !== lastKey) {
+      lastKey = p.key;
+      for (const res of clients) res.write(`data: ${p.json}
+
+`);
+    } else if (++ticks % 20 === 0) {
+      for (const res of clients) res.write(`:hb
+
+`);
+    }
+  };
   const server = createServer((req, res) => {
     const url2 = req.url ?? "/";
     if (url2 === "/" || url2.startsWith("/index")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      res.end(html);
+      res.end(SHELL);
+      return;
+    }
+    if (url2.startsWith("/assets/")) {
+      const name = url2.slice("/assets/".length);
+      const type = ASSETS[name];
+      if (!type || !assetsDir) {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("not found");
+        return;
+      }
+      try {
+        const body = fs10.readFileSync(path11.join(assetsDir, name));
+        res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
+        res.end(body);
+      } catch {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("not found");
+      }
+      return;
+    }
+    if (url2.startsWith("/api/events")) {
+      res.writeHead(200, {
+        "content-type": "text/event-stream",
+        "cache-control": "no-store",
+        connection: "keep-alive"
+      });
+      res.write("retry: 2000\n\n");
+      try {
+        const p = payload();
+        lastKey = p.key;
+        res.write(`data: ${p.json}
+
+`);
+      } catch (err) {
+        res.write(`data: ${JSON.stringify({ error: String(err) })}
+
+`);
+      }
+      clients.add(res);
+      if (!timer) timer = setInterval(tick, tickMs);
+      req.on("close", () => {
+        clients.delete(res);
+        if (clients.size === 0 && timer) {
+          clearInterval(timer);
+          timer = null;
+        }
+      });
       return;
     }
     if (url2.startsWith("/api/state")) {
       try {
-        const snapshot = buildSnapshot(store);
         res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-        res.end(JSON.stringify({ ...snapshot, db }));
+        res.end(payload().json);
       } catch (err) {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
@@ -9007,14 +8720,23 @@ function serve(opts) {
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
+  server.requestTimeout = 0;
   return new Promise((resolve2, reject) => {
     server.once("error", reject);
     server.listen(port, host, () => {
+      const addr = server.address();
+      const boundPort = typeof addr === "object" && addr ? addr.port : port;
       resolve2({
-        port,
+        port: boundPort,
         host,
-        url: `http://${host}:${port}/`,
+        url: `http://${host}:${boundPort}/`,
         close: () => {
+          if (timer) {
+            clearInterval(timer);
+            timer = null;
+          }
+          for (const res of clients) res.end();
+          clients.clear();
           server.close();
           store.close();
         }
@@ -9022,14 +8744,25 @@ function serve(opts) {
     });
   });
 }
+var ASSETS, SHELL;
 var init_serve = __esm({
   "src/serve.ts"() {
     "use strict";
     init_config();
-    init_dashboard();
     init_paths();
     init_snapshot();
     init_store();
+    ASSETS = {
+      "dashboard.js": "text/javascript; charset=utf-8",
+      "dashboard.css": "text/css; charset=utf-8"
+    };
+    SHELL = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="icon" href="data:,"/><title>yes-chef</title>
+<link rel="stylesheet" href="/assets/dashboard.css"/>
+</head><body><div id="root"></div>
+<script type="module" src="/assets/dashboard.js"></script></body></html>
+`;
   }
 });
 
@@ -9038,9 +8771,9 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs11 from "node:fs";
+import * as fs12 from "node:fs";
 import * as os6 from "node:os";
-import * as path11 from "node:path";
+import * as path12 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -9074,8 +8807,8 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path11.join(info.repoRoot, CONFIG_BASENAME);
-      if (fs11.existsSync(configPath)) {
+      const configPath = path12.join(info.repoRoot, CONFIG_BASENAME);
+      if (fs12.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: yes-chef books <url>)");
       } else {
@@ -9100,7 +8833,7 @@ async function runInit(argv) {
           const handle = flags.handle ?? await ask("Books handle (your fleet's namespace)?", os6.userInfo().username);
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs11.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs12.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
@@ -9130,8 +8863,8 @@ init_paths();
 import * as os7 from "node:os";
 
 // src/server.ts
-import * as fs10 from "node:fs";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import * as fs11 from "node:fs";
+import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
 var util;
@@ -9492,8 +9225,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path13, errorMaps, issueData } = params;
-  const fullPath = [...path13, ...issueData.path || []];
+  const { data, path: path14, errorMaps, issueData } = params;
+  const fullPath = [...path14, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -9608,11 +9341,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path13, key) {
+  constructor(parent, value, path14, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path13;
+    this._path = path14;
     this._key = key;
   }
   get path() {
@@ -13535,10 +13268,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path13) {
-  if (!path13)
+function getElementAtPath(obj, path14) {
+  if (!path14)
     return obj;
-  return path13.reduce((acc, key) => acc?.[key], obj);
+  return path14.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -13921,11 +13654,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path13, issues) {
+function prefixIssues(path14, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path13);
+    iss.path.unshift(path14);
     return iss;
   });
 }
@@ -14108,7 +13841,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path13 = []) => {
+  const processError = (error49, path14 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -14118,7 +13851,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path13, ...issue2.path];
+        const fullpath = [...path14, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -14150,8 +13883,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path13 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path13) {
+  const path14 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path14) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -26557,13 +26290,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path13 = ref.slice(1).split("/").filter(Boolean);
-  if (path13.length === 0) {
+  const path14 = ref.slice(1).split("/").filter(Boolean);
+  if (path14.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path13[0] === defsKey) {
-    const key = path13[1];
+  if (path14[0] === defsKey) {
+    const key = path14[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -33943,8 +33676,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs10.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs10.realpathSync(fileURLToPath(import.meta.url))).href;
+    const entry = pathToFileURL(fs11.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs11.realpathSync(fileURLToPath2(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
@@ -33960,8 +33693,8 @@ if (invokedDirectly) {
 // src/cli.ts
 init_provision();
 init_store();
-import * as fs12 from "node:fs";
-import * as path12 from "node:path";
+import * as fs13 from "node:fs";
+import * as path13 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -34031,11 +33764,11 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path12.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs12.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: yes-chef init`);
+  const configPath = path13.join(info.repoRoot, CONFIG_BASENAME);
+  if (!fs13.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: yes-chef init`);
   let cfg;
   try {
-    cfg = JSON.parse(fs12.readFileSync(configPath, "utf8"));
+    cfg = JSON.parse(fs13.readFileSync(configPath, "utf8"));
   } catch (err) {
     fail(`${configPath} is not valid JSON: ${String(err)}`);
   }
@@ -34056,7 +33789,7 @@ function cmdBooks(argv) {
     url: url2,
     handle: handleArg ?? remote.handle ?? os7.userInfo().username
   };
-  fs12.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs13.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
   out2("  next: yes-chef sync   (initializes the journal; --adopt if the repo is non-empty)");
@@ -34067,7 +33800,7 @@ function requireRemote() {
   if (!j) {
     fail("no books attached \u2014 run: yes-chef books git@github.com:you/yes-chef-books.git");
   }
-  if (!fs12.existsSync(path12.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs13.existsSync(path13.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {

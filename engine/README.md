@@ -26,7 +26,8 @@ src/store.ts      shared SQLite (WAL) — one DB per repo slug
 src/cli.ts        yes-chef CLI (init, books, station, scale, sync, restore, serve, paths)
 src/provision.ts  managed station worktrees + launchers
 src/remote.ts     the books — append-only NDJSON journal + digest rendering
-src/dashboard.ts  read-only dashboard (yes-chef serve)
+src/serve.ts      read-only dashboard server (SSE) — yes-chef serve / /yc:dashboard
+dashboard/        the dashboard SPA (React + Tailwind + vendored shadcn) → plugin/dist/assets
 ```
 
 `DESIGN.md` is the original build plan, kept as a historical artifact — it

@@ -4,14 +4,20 @@
  * plugin/dist/{server,cli}-impl.mjs (esbuild, deps inlined, node builtins
  * external) plus tiny hand-authored wrapper entries that gate on the Node
  * floor BEFORE anything touches `node:sqlite` (a static import would hoist
- * past any in-module check; the wrapper's dynamic import cannot).
+ * past any in-module check; the wrapper's dynamic import cannot), plus the
+ * dashboard SPA: engine/dashboard/ → plugin/dist/assets/dashboard.{js,css}
+ * (esbuild browser bundle + the Tailwind v4 CLI).
  *
  * Run via `npm run bundle`. The bundles are committed — a plugin install is a
  * plain copy with no npm step — and __tests__/bundle.test.ts fails when they
- * go stale relative to src/.
+ * go stale relative to src/. Determinism matters (the test byte-compares):
+ * frontend deps are exact-pinned and styles.css uses `source(none)` so
+ * Tailwind never scans machine-dependent paths.
  */
 import * as esbuild from "esbuild";
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
+import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,6 +65,40 @@ export async function buildBundles(outDir = defaultOut) {
     NODE_FLOOR_CHECK("server-impl.mjs", 'process.env.YES_CHEF_FORCE_MAIN = "1";\n'),
   );
   fs.writeFileSync(path.join(outDir, "cli.mjs"), NODE_FLOOR_CHECK("cli-impl.mjs"));
+
+  // Dashboard SPA — browser JS via esbuild…
+  fs.mkdirSync(path.join(outDir, "assets"), { recursive: true });
+  await esbuild.build({
+    bundle: true,
+    entryPoints: [path.join(pkgDir, "dashboard", "main.tsx")],
+    outfile: path.join(outDir, "assets", "dashboard.js"),
+    alias: { "@": path.join(pkgDir, "dashboard") }, // vendored shadcn files import "@/lib/utils" verbatim
+    platform: "browser",
+    format: "esm",
+    target: "es2022",
+    jsx: "automatic",
+    minify: true,
+    define: { "process.env.NODE_ENV": '"production"' }, // strips React dev mode (~3x smaller)
+    legalComments: "none",
+    logLevel: "silent",
+  });
+  // …and CSS via the Tailwind v4 CLI (bin resolved from the package manifest,
+  // so no reliance on node_modules/.bin shims).
+  const req = createRequire(import.meta.url);
+  const cliPkgPath = req.resolve("@tailwindcss/cli/package.json");
+  const cliPkg = JSON.parse(fs.readFileSync(cliPkgPath, "utf8"));
+  const bin = typeof cliPkg.bin === "string" ? cliPkg.bin : cliPkg.bin.tailwindcss;
+  const tailwind = spawnSync(
+    process.execPath,
+    [
+      path.join(path.dirname(cliPkgPath), bin),
+      "--input", path.join(pkgDir, "dashboard", "styles.css"),
+      "--output", path.join(outDir, "assets", "dashboard.css"),
+      "--minify",
+    ],
+    { cwd: pkgDir, stdio: ["ignore", "ignore", "inherit"] },
+  );
+  if (tailwind.status !== 0) throw new Error("tailwind css build failed");
   return outDir;
 }
 
