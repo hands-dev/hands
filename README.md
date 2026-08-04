@@ -18,8 +18,9 @@ Distributed as a Claude Code plugin (this repo is its own marketplace).
 ```
 
 That registers everything: the MCP server (`hands_*` tools), the passive-standup hooks
-(`Stop → publish`, `UserPromptSubmit → board`), the `/hands:expo` · `/hands:station` · `/hands:init`
-skills, and the `hands` CLI on your Bash PATH. Requires Node ≥ 22.5.
+(`Stop → publish`, `UserPromptSubmit → board`), the `/hands:expo` · `/hands:station` · `/hands:init` ·
+`/hands:crafts` · `/hands:dashboard` · `/hands:feedback` skills, and the `hands` CLI on your
+Bash PATH. Requires Node ≥ 22.5.
 
 Then, per repo (from its main checkout) — one slash command:
 
@@ -35,6 +36,7 @@ Then, per repo (from its main checkout) — one slash command:
 hands station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
 /hands:dashboard          # live admin dashboard (SSE) → http://localhost:4319  (or: hands serve)
                           # incl. per-pane token burn, read from Claude Code's own transcripts
+/hands:feedback           # hit a rough edge? files your note as a GitHub issue for the maintainer
 ```
 
 The expo asks for **today's specials** (the ranked priorities — they change day to day with what's
