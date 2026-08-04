@@ -48,7 +48,9 @@ Manage the line: `hands station ls` · `hands scale <N>` · `hands station rm st
 — or let the expo scale it (`stations.allowScaling`). A station holds a **craft** — the named,
 portable specialization (`station-2 · saucier`) assigned via `hands_focus`, addressable by label,
 journaled, shown everywhere; the numeric id stays the routing key. Crafts hot-swap between seats:
-move the saucier to the poissonnier's station and the whole skillset moves too.
+move the saucier to the poissonnier's station and the whole skillset moves too. Not sure what
+crafts your repo warrants? `/hands:crafts` surveys the codebase and proposes a tight roster — or
+tells you honestly that the kitchen is small and doesn't need one.
 
 ## How it stays cheap (wakes are the cost)
 
