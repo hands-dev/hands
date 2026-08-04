@@ -30,6 +30,18 @@
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
+  /*
+   * Chart palette: the ONE deliberate deviation from stock shadcn theme
+   * values. Stock light --chart-4/--chart-5 are two oranges with a
+   * normal-vision ΔE of 7.4 (validator hard-fail; indistinguishable on a
+   * multi-line chart). These slots are a validated categorical set (worst
+   * adjacent CVD ΔE 9.1 light / 8.4 dark; normal-vision ≥19).
+   */
+  --chart-1: #2a78d6;
+  --chart-2: #008300;
+  --chart-3: #e87ba4;
+  --chart-4: #eda100;
+  --chart-5: #1baf7a;
 }
 
 .dark {
@@ -51,6 +63,11 @@
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
+  --chart-1: #3987e5;
+  --chart-2: #008300;
+  --chart-3: #d55181;
+  --chart-4: #c98500;
+  --chart-5: #199e70;
 }
 
 @theme inline {
@@ -76,6 +93,11 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
 }
 
 @layer base {

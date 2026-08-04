@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Hands \u2014 extra hands for your repo: per-repo expo/station coordination bus for Claude Code (stdio MCP server + provisioning CLI).",
+  "description": "Hands — extra hands for your repo: per-repo expo/station coordination bus for Claude Code (stdio MCP server + provisioning CLI).",
   "bin": {
     "hands": "dist/cli.js"
   },
@@ -32,6 +32,7 @@
     "radix-ui": "1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "recharts": "2.15.4",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "4.3.3",
     "tsx": "4.21.0",

@@ -33,7 +33,8 @@ Then, per repo (from its main checkout) — one slash command:
 ```bash
 /hands:expo               # main checkout — or /loop /hands:expo for always-on
 hands station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
-/hands:dashboard          # live dashboard (SSE) → http://localhost:4319  (or: hands serve)
+/hands:dashboard          # live admin dashboard (SSE) → http://localhost:4319  (or: hands serve)
+                          # incl. per-pane token burn, read from Claude Code's own transcripts
 ```
 
 The expo asks for **today's specials** (the ranked priorities — they change day to day with what's

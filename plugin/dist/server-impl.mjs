@@ -3237,8 +3237,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path12) {
-      let input = path12;
+    function removeDotSegments(path13) {
+      let input = path13;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3490,8 +3490,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path12, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path12 && path12 !== "/" ? path12 : void 0;
+        const [path13, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path13 && path13 !== "/" ? path13 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6890,12 +6890,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs12, exportName) {
+    function addFormats(ajv, list, fs13, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs12[f]);
+        ajv.addFormat(f, fs13[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -9212,24 +9212,170 @@ var init_snapshot = __esm({
   }
 });
 
+// src/tokens.ts
+import * as fs10 from "node:fs";
+import * as os6 from "node:os";
+import * as path11 from "node:path";
+function encodeProjectDir(cwd) {
+  return cwd.replace(/[^A-Za-z0-9]/g, "-");
+}
+var TOKEN_BUCKET_MS, TOKEN_WINDOW_MS, TAIL_CAP, MTIME_SLACK_MS, TokenSampler;
+var init_tokens = __esm({
+  "src/tokens.ts"() {
+    "use strict";
+    TOKEN_BUCKET_MS = 15 * 6e4;
+    TOKEN_WINDOW_MS = 24 * 60 * 6e4;
+    TAIL_CAP = 4 * 1024 * 1024;
+    MTIME_SLACK_MS = 60 * 6e4;
+    TokenSampler = class {
+      projectsDir;
+      now;
+      files = /* @__PURE__ */ new Map();
+      /** agentId → messageId → final usage (last write wins — the dedupe) */
+      messages = /* @__PURE__ */ new Map();
+      constructor(opts) {
+        this.projectsDir = opts?.projectsDir ?? path11.join(os6.homedir(), ".claude", "projects");
+        this.now = opts?.now ?? (() => Date.now());
+      }
+      sample(agents) {
+        const now = this.now();
+        for (const agent of agents) {
+          if (!agent.cwd) continue;
+          const dir = path11.join(this.projectsDir, encodeProjectDir(agent.cwd));
+          let names = [];
+          try {
+            names = fs10.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+          } catch {
+            continue;
+          }
+          let byMsg = this.messages.get(agent.id);
+          if (!byMsg) {
+            byMsg = /* @__PURE__ */ new Map();
+            this.messages.set(agent.id, byMsg);
+          }
+          for (const name of names) {
+            const file2 = path11.join(dir, name);
+            try {
+              const stat = fs10.statSync(file2);
+              if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
+              this.readAppended(file2, stat.size, byMsg);
+            } catch {
+            }
+          }
+          for (const [id, m] of byMsg) {
+            if (now - m.ts > TOKEN_WINDOW_MS + TOKEN_BUCKET_MS) byMsg.delete(id);
+          }
+        }
+        return this.series(now, agents);
+      }
+      readAppended(file2, size, byMsg) {
+        let state = this.files.get(file2);
+        let dropFirstLine = false;
+        if (!state) {
+          state = { offset: Math.max(0, size - TAIL_CAP), partial: "" };
+          dropFirstLine = state.offset > 0;
+          this.files.set(file2, state);
+        }
+        if (size < state.offset) {
+          state.offset = 0;
+          state.partial = "";
+        }
+        if (size <= state.offset) return;
+        const length = size - state.offset;
+        const buffer = Buffer.alloc(length);
+        const fd = fs10.openSync(file2, "r");
+        try {
+          fs10.readSync(fd, buffer, 0, length, state.offset);
+        } finally {
+          fs10.closeSync(fd);
+        }
+        state.offset = size;
+        let text = state.partial + buffer.toString("utf8");
+        if (dropFirstLine) {
+          const nl = text.indexOf("\n");
+          if (nl === -1) {
+            state.partial = "";
+            return;
+          }
+          text = text.slice(nl + 1);
+        }
+        const lines = text.split("\n");
+        state.partial = lines.pop() ?? "";
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          try {
+            const entry = JSON.parse(line);
+            if (entry.type !== "assistant") continue;
+            const usage = entry.message?.usage;
+            if (!usage) continue;
+            const ts = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
+            if (!Number.isFinite(ts)) continue;
+            const id = entry.message?.id ?? entry.uuid ?? `${file2}:${ts}`;
+            byMsg.set(id, {
+              ts,
+              out: usage.output_tokens ?? 0,
+              inTok: usage.input_tokens ?? 0,
+              cacheRead: usage.cache_read_input_tokens ?? 0
+            });
+          } catch {
+          }
+        }
+      }
+      series(now, agents) {
+        const bucketCount = Math.floor(TOKEN_WINDOW_MS / TOKEN_BUCKET_MS);
+        const lastBucket = Math.floor(now / TOKEN_BUCKET_MS) * TOKEN_BUCKET_MS;
+        const firstBucket = lastBucket - (bucketCount - 1) * TOKEN_BUCKET_MS;
+        const perAgent = {};
+        const totals24h = {};
+        for (const agent of agents) {
+          const byMsg = this.messages.get(agent.id);
+          const buckets = Array.from({ length: bucketCount }, (_, i) => ({
+            t: firstBucket + i * TOKEN_BUCKET_MS,
+            out: 0,
+            in: 0,
+            cacheRead: 0
+          }));
+          const totals = { out: 0, in: 0, cacheRead: 0 };
+          if (byMsg) {
+            for (const m of byMsg.values()) {
+              const idx = Math.floor((m.ts - firstBucket) / TOKEN_BUCKET_MS);
+              if (idx < 0 || idx >= bucketCount) continue;
+              const b = buckets[idx];
+              b.out += m.out;
+              b.in += m.inTok;
+              b.cacheRead += m.cacheRead;
+              totals.out += m.out;
+              totals.in += m.inTok;
+              totals.cacheRead += m.cacheRead;
+            }
+          }
+          perAgent[agent.id] = buckets;
+          totals24h[agent.id] = totals;
+        }
+        return { bucketMs: TOKEN_BUCKET_MS, windowMs: TOKEN_WINDOW_MS, perAgent, totals24h };
+      }
+    };
+  }
+});
+
 // src/serve.ts
 var serve_exports = {};
 __export(serve_exports, {
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
-import * as fs10 from "node:fs";
+import * as fs11 from "node:fs";
 import { createServer } from "node:http";
-import * as path11 from "node:path";
+import * as path12 from "node:path";
 import { fileURLToPath } from "node:url";
 function defaultAssetsDir() {
-  const here = path11.dirname(fileURLToPath(import.meta.url));
+  const here = path12.dirname(fileURLToPath(import.meta.url));
   return [
-    path11.join(here, "assets"),
+    path12.join(here, "assets"),
     // plugin/dist/server-impl.mjs → sibling assets/
-    path11.join(here, "..", "..", "plugin", "dist", "assets")
+    path12.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs10.existsSync(d)) ?? null;
+  ].find((d) => fs11.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -9247,6 +9393,16 @@ function serve(opts) {
   const principal = loadConfig({ env }).principal.name;
   const journal = openJournal({ env });
   let kitchens = [];
+  const tokensTickMs = opts?.tokensTickMs ?? 6e4;
+  const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : void 0);
+  let tokens = null;
+  const refreshTokens = () => {
+    try {
+      const peers = store.listPeers().map((p) => ({ id: p.id, cwd: p.cwd ?? null }));
+      tokens = sampler.sample(peers);
+    } catch {
+    }
+  };
   const refreshKitchens = () => {
     if (!journal) return;
     try {
@@ -9258,13 +9414,14 @@ function serve(opts) {
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens)
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(tokens?.totals24h ?? null)
     };
   };
   const clients = /* @__PURE__ */ new Set();
   let timer = null;
   let booksTimer = null;
+  let tokensTimer = null;
   let lastKey = "";
   let ticks = 0;
   const tick = () => {
@@ -9301,7 +9458,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs10.readFileSync(path11.join(assetsDir, name));
+        const body = fs11.readFileSync(path12.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -9334,6 +9491,10 @@ function serve(opts) {
         refreshKitchens();
         booksTimer = setInterval(refreshKitchens, booksTickMs);
       }
+      if (!tokensTimer) {
+        refreshTokens();
+        tokensTimer = setInterval(refreshTokens, tokensTickMs);
+      }
       req.on("close", () => {
         clients.delete(res);
         if (clients.size === 0) {
@@ -9344,6 +9505,10 @@ function serve(opts) {
           if (booksTimer) {
             clearInterval(booksTimer);
             booksTimer = null;
+          }
+          if (tokensTimer) {
+            clearInterval(tokensTimer);
+            tokensTimer = null;
           }
         }
       });
@@ -9381,6 +9546,10 @@ function serve(opts) {
             clearInterval(booksTimer);
             booksTimer = null;
           }
+          if (tokensTimer) {
+            clearInterval(tokensTimer);
+            tokensTimer = null;
+          }
           for (const res of clients) res.end();
           clients.clear();
           server.close();
@@ -9399,6 +9568,7 @@ var init_serve = __esm({
     init_remote();
     init_snapshot();
     init_store();
+    init_tokens();
     ASSETS = {
       "dashboard.js": "text/javascript; charset=utf-8",
       "dashboard.css": "text/css; charset=utf-8"
@@ -9414,7 +9584,7 @@ var init_serve = __esm({
 });
 
 // src/server.ts
-import * as fs11 from "node:fs";
+import * as fs12 from "node:fs";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -9776,8 +9946,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path12, errorMaps, issueData } = params;
-  const fullPath = [...path12, ...issueData.path || []];
+  const { data, path: path13, errorMaps, issueData } = params;
+  const fullPath = [...path13, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -9892,11 +10062,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path12, key) {
+  constructor(parent, value, path13, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path12;
+    this._path = path13;
     this._key = key;
   }
   get path() {
@@ -13819,10 +13989,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path12) {
-  if (!path12)
+function getElementAtPath(obj, path13) {
+  if (!path13)
     return obj;
-  return path12.reduce((acc, key) => acc?.[key], obj);
+  return path13.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -14205,11 +14375,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path12, issues) {
+function prefixIssues(path13, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path12);
+    iss.path.unshift(path13);
     return iss;
   });
 }
@@ -14392,7 +14562,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path12 = []) => {
+  const processError = (error49, path13 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -14402,7 +14572,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path12, ...issue2.path];
+        const fullpath = [...path13, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -14434,8 +14604,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path12 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path12) {
+  const path13 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path13) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -26841,13 +27011,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path12 = ref.slice(1).split("/").filter(Boolean);
-  if (path12.length === 0) {
+  const path13 = ref.slice(1).split("/").filter(Boolean);
+  if (path13.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path12[0] === defsKey) {
-    const key = path12[1];
+  if (path13[0] === defsKey) {
+    const key = path13[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -32838,7 +33008,7 @@ function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
   const files = craftFiles(craft, env, cwd);
   const read = (file2, cap = 6e3) => {
     try {
-      const body = fs11.readFileSync(file2, "utf8").trim();
+      const body = fs12.readFileSync(file2, "utf8").trim();
       if (!body) return null;
       const points = Array.from(body);
       return points.length <= cap ? body : `${points.slice(0, cap).join("")}
@@ -33650,7 +33820,7 @@ function runCli(subcommand, argv) {
   if (subcommand === "paths") {
     const id = resolveSelf();
     let focus = null;
-    if (fs11.existsSync(dbPath())) {
+    if (fs12.existsSync(dbPath())) {
       const s = new Store();
       try {
         focus = s.getFocus(id);
@@ -33734,8 +33904,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs11.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs11.realpathSync(fileURLToPath2(import.meta.url))).href;
+    const entry = pathToFileURL(fs12.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs12.realpathSync(fileURLToPath2(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
