@@ -259,9 +259,9 @@ osascript -e 'display notification "station-1: ship behind the flag or wait?" wi
 - You route and review; real work runs in an executor. Sub-agent dispatch is routing, not a
   loophole — if the returns wouldn't be compact, it belongs on a station.
 
-The read-only dashboard (`yes-chef serve` → localhost:4319) shows the principal the same picture:
-utilization vs specials, the Stations grid (ticket + dish + focus + wakes/hour), Expo
-effectiveness, the needs-you lane, and collisions.
+The read-only dashboard (`/yc:dashboard`, or `yes-chef serve` → localhost:4319) shows the
+principal the same picture live over SSE: the rail grouped by dish, the line (focus + ticket +
+wakes/hour), the needs-you lane, specials, their list, the book, and collisions.
 
 ## Introspect (feeds the effectiveness scores)
 
