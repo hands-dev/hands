@@ -40,7 +40,8 @@ available and what the day calls for), then works the pass: fires **tickets** to
 everything that returns, escalates only what genuinely needs the chef. Ask it *"what's on the
 rail?"* any time for the in-flight picture, grouped by **dish** (the external deliverable — your
 Linear ticket or PR; several rail tickets usually assemble one dish; the tracker itself is **the
-board**, which yes-chef references but never owns).
+board**, which yes-chef references but never owns). When a dish is finished, call **hands** — the
+ship step: *"get hands on PR 1234"* → reviewed, merged, deployed.
 
 Manage the line: `yes-chef station ls` · `yes-chef scale <N>` · `yes-chef station rm station-<n>`
 — or let the expo scale it (`stations.allowScaling`). Stations carry focus labels
