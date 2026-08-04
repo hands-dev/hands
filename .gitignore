@@ -1,6 +1,6 @@
 node_modules/
 # compiled TS output (the package builds it); plugin/dist bundles ARE committed
-agent-bus/dist/
+engine/dist/
 *.log
 # runtime message data — never commit (plaintext cross-worktree history)
 *.db

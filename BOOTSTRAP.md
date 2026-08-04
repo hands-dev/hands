@@ -27,10 +27,10 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ```bash
 git clone <REPO_SSH> <REPO_DIR>
 cd <REPO_DIR>
-yes-chef init           # scaffold config (or restore your committed agent-bus.config.json)
+yes-chef init           # scaffold config (or restore your committed yes-chef.config.json)
 ```
 
-If `agent-bus.config.json` is committed in the project repo, init leaves it alone — the journal
+If `yes-chef.config.json` is committed in the project repo, init leaves it alone — the journal
 url + handle come back with the clone.
 
 ## Step 3 — Restore coordination state from the journal

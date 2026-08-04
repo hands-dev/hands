@@ -16,7 +16,7 @@ Distributed as a Claude Code plugin (this repo is its own marketplace).
 /plugin install yc@yes-chef
 ```
 
-That registers everything: the MCP server (`agent_bus_*` tools), the passive-standup hooks
+That registers everything: the MCP server (`yc_*` tools), the passive-standup hooks
 (`Stop → publish`, `UserPromptSubmit → board`), the `/yc:expo` · `/yc:station` · `/yc:init`
 skills, and the `yes-chef` CLI on your Bash PATH. Requires Node ≥ 22.5.
 
@@ -44,7 +44,7 @@ board**, which yes-chef references but never owns).
 
 Manage the line: `yes-chef station ls` · `yes-chef scale <N>` · `yes-chef station rm station-<n>`
 — or let the expo scale it (`stations.allowScaling`). Stations carry focus labels
-(`station-2 · developer API`) set via `agent_bus_focus` — addressable by label, journaled, shown
+(`station-2 · developer API`) set via `yc_focus` — addressable by label, journaled, shown
 everywhere; the numeric id stays the routing key.
 
 ## How it stays cheap (wakes are the cost)
@@ -55,7 +55,7 @@ station's entire context. The bus minimizes and meters wakes structurally:
 - **Strict pass discipline, server-enforced:** stations talk only to the expo and the chef;
   station↔station sends and broadcasts are rejected *before* any write. (`topology: "open"` opts
   out.)
-- **Non-waking FYIs:** `agent_bus_send({ wake: false })` delivers on the next natural drain.
+- **Non-waking FYIs:** `yc_send({ wake: false })` delivers on the next natural drain.
 - **Burst suppression:** an undrained recipient isn't re-woken; one drain returns everything.
 - **`stateHash` + one bundled read:** the expo's 15-minute utilization review short-circuits when
   nothing changed; `board({ full: true })` is one read, not four.
@@ -67,7 +67,7 @@ Point the bus at a **separate, private** git repo and every action goes **on the
 append-only event log rendered into browsable daily digest pages (repo → contributor → date):
 
 ```
-agent-bus.json                                          layout marker
+yes-chef.json                                           layout marker
 journal/<project>/<handle>/<date>.md                    the day's page — the primary artifact
 journal/<project>/<handle>/README.md                    per-contributor index
 journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
@@ -78,7 +78,7 @@ journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
 ```
 
 - **Digest pages are deterministic markdown:** the expo's Notes first (see
-  `agent_bus_digest_note` — its end-of-day narrative), then per-agent sections
+  `yc_digest_note` — its end-of-day narrative), then per-agent sections
   (`## station-2 · developer API`): ticket lifecycle with dish refs, questions + answers,
   specials, message *counts*. Message **bodies never render** — they stay in the NDJSON layer.
   Regenerated automatically on every sync, including past days when events arrive late;
@@ -91,9 +91,8 @@ journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
   history — on a restart or a new machine. **If it's not on the books, it didn't happen; you also
   can't cook them** (append-only by construction).
 - **Shape is validated, never assumed:** empty repos self-initialize; a repo with other content is
-  refused until an explicit `yes-chef sync --adopt`; newer layouts fail loudly. Legacy v1 layouts
-  freeze in place and stay readable — note that the first v2 sync version-gates older plugins out
-  until they update.
+  refused until an explicit `yes-chef sync --adopt`; a layout newer or older than this build fails
+  loudly.
 - **Open books = multiplayer.** Two people pointing at one books repo each write their own pages
   and read each other's — the whole cross-kitchen story is "every kitchen keeps its book; skim the
   other kitchens' pages." (A dashboard lane for that is the natural next phase.)
@@ -101,7 +100,9 @@ journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
 
 ## Configuration
 
-`agent-bus.config.json` at the repo root (user fallback `~/.claude/agent-bus.config.json`):
+`yes-chef.config.json` at the repo root (user fallback `~/.claude/yes-chef.config.json`).
+Scaffold it with `yes-chef init`; attach the books to an existing config with
+`yes-chef books <url> [--handle <name>]`:
 
 ```jsonc
 {
@@ -112,7 +113,7 @@ journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
     "model": "sonnet",                         // default tier
     "overrides": { "station-4": "opus" },      // per-station tier
     "launcher": "auto",                        // auto | tmux | iterm | manual
-    "worktreeRoot": null,                      // null = ~/.agent-bus/worktrees/<slug>
+    "worktreeRoot": null,                      // null = ~/.yes-chef/worktrees/<slug>
     "baseBranch": null,                        // null = current HEAD of the main checkout
     "allowScaling": true                       // may the expo open/close stations itself
   },
@@ -122,9 +123,8 @@ journal/<project>/<handle>/log/<date>.<machine>.ndjson  machine event log
 }
 ```
 
-Legacy `foreman`/`workers` keys and `foreman`/`worker-N` agent ids are permanently aliased — old
-buses, books, and configs keep working. Each git repo gets its own isolated bus automatically;
-`agent_bus_paths` (or `yes-chef paths`) shows where anything resolves, including books sync health.
+Each git repo gets its own isolated bus automatically;
+`yc_paths` (or `yes-chef paths`) shows where anything resolves, including books sync health.
 
 ## Choosing an execution pattern
 
@@ -133,15 +133,15 @@ spoke, per-spawn cheap-model overrides, resumable mid-session) for work that dec
 converges; **stations** for isolated parallel file-writes, cross-session persistence, and
 independent ownership. Three questions decide — parallel file mutation? cross-session ownership?
 converging vs independent stream? Default to sub-agents; escalate to a station when the answer
-says so. (Long form: `agent-bus/README.md`.)
+says so.
 
 ## Repo layout
 
 ```
 plugin/          the Claude Code plugin (manifest, .mcp.json, hooks, skills, bin, committed bundles)
-agent-bus/       the TypeScript source + tests (bundled into plugin/dist by `npm run bundle`)
+engine/          the TypeScript source + tests (bundled into plugin/dist by `npm run bundle`)
 SETUP.md         dev setup · BOOTSTRAP.md  restore-a-machine runbook
 ```
 
-Development: `cd agent-bus && npm install && npm run test:run`. After changing `src/`, run
+Development: `cd engine && npm install && npm run test:run`. After changing `src/`, run
 `npm run bundle` — installs execute the committed bundles, and `bundle.test.ts` fails when stale.

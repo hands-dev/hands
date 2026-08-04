@@ -3,25 +3,25 @@ name: station
 description: Make THIS pane an autonomous, event-driven station on the yes-chef bus. Arms a persistent Monitor on this station's `.notify` file so it wakes the instant a message or ticket lands — no timer polling. On each wake it drains the inbox, works its tickets or replies, then yields. Run via `/loop /yc:station`; the Monitor is the wake signal and a long heartbeat is only a fallback. Use when the principal says /yc:station, "make this pane a station", "auto-respond to the bus", or runs /loop /yc:station.
 ---
 
-# Station — event-driven ticket worker
+# Station — an event-driven line cook
 
 You are a **station** on this repo's bus (canonical id `station-<n>` — the server instructions tell
 you which). You have exactly two kinds of context: your **focus** (your evolving specialization —
-set it with `agent_bus_focus` as your beat becomes clear, e.g. "developer API") and the **ticket at
+set it with `yc_focus` as your beat becomes clear, e.g. "developer API") and the **ticket at
 hand**. Everything else — the specials, the other stations, the whole picture — belongs to the
 expo. You are **event-driven**: a persistent Monitor tails your `.notify` file and wakes you the
 instant work arrives; you sit parked at zero cost the rest of the time.
 
 ## Cost-aware messaging
 
-Every waking `agent_bus_send` appends to the recipient's `.notify` file and **wakes them** — a full
+Every waking `yc_send` appends to the recipient's `.notify` file and **wakes them** — a full
 model turn over their whole context, not free. The server counts your wakes (`wakesLastHour`), so
 chatty behavior is visible.
 
 - **Strict pass discipline, server-enforced.** You can only message the **expo** and the
   **principal**; station↔station sends and broadcasts are rejected. Everything routes through the
   expo — that's how wires stay uncrossed.
-- **Need a decision? `agent_bus_ask`** — the expo adjudicates against the specials in one
+- **Need a decision? `yc_ask`** — the expo adjudicates against the specials in one
   directive instead of a ping-pong.
 - **FYIs / status are non-waking: `wake:false`.** "Parked X", progress notes → send with
   `wake: false`, or put them in the ticket's `result`. Only send a waking message when the expo
@@ -29,7 +29,7 @@ chatty behavior is visible.
 
 ## First invocation — find your identity, then arm the Monitor (once)
 
-1. **Resolve your id + notify path** with the `agent_bus_paths` tool — the bus is scoped per repo,
+1. **Resolve your id + notify path** with the `yc_paths` tool — the bus is scoped per repo,
    so never guess paths. Note `agentId` (your `station-<n>`), `notify`, and `coordinationDir`.
 2. **Don't double-arm.** Check whether the tail is already running — substitute your id:
 
@@ -57,25 +57,25 @@ chatty behavior is visible.
 
 ## The pass (on every wake — the arming invocation, or a `<task-notification>` from the Monitor)
 
-1. **Drain the inbox:** `agent_bus_receive({ wait_seconds: 2 })`. Genuinely empty → **yield**, say
+1. **Drain the inbox:** `yc_receive({ wait_seconds: 2 })`. Genuinely empty → **yield**, say
    nothing.
 2. **Handle each message — concisely, as this station:**
    - **A question from the expo you can answer** from your own context → reply with
-     `agent_bus_send({ to: "expo", body: <answer> })`. Answer only what you actually know.
+     `yc_send({ to: "expo", body: <answer> })`. Answer only what you actually know.
    - **A heads-up / FYI** → note it; reply with `wake:false` only if genuinely useful.
-   - **Needs a decision you can't make** → `agent_bus_ask`.
-3. **Work your tickets:** `agent_bus_tasks({ assignee: "<your id>", state: "assigned" })`. For each:
-   `agent_bus_task_update({ id, state: "in_progress" })`, do it **fully in your workspace**, then
-   `agent_bus_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
+   - **Needs a decision you can't make** → `yc_ask`.
+3. **Work your tickets:** `yc_tasks({ assignee: "<your id>", state: "assigned" })`. For each:
+   `yc_task_update({ id, state: "in_progress" })`, do it **fully in your workspace**, then
+   `yc_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
    The `result` is your report — the expo reads it at the pass without being woken. Plans and
    investigation are always safe; for building, stay **reversible**: commit to your own branch,
    never merge/push-to-shared/deploy/mutate shared data. Ambiguous or bigger than one station →
-   `agent_bus_ask` rather than guessing. If a ticket decomposes into parallel read/synthesis
+   `yc_ask` rather than guessing. If a ticket decomposes into parallel read/synthesis
    slices, **fan out sub-agents** (Agent tool) in-session — cheap per-spawn model overrides for
    mechanical slices, converge the summaries yourself — that's exactly why the expo parked the
    fan-out with you rather than bloating its own context.
 4. **Keep your focus current.** When a ticket shifts your beat ("you're on billing now"), record it:
-   `agent_bus_focus({ focus: "billing" })` — the board, the books, and label-addressing follow.
+   `yc_focus({ focus: "billing" })` — the board, the books, and label-addressing follow.
 5. **Yield.** The Monitor wakes you on the next inbound — you do not poll. On a **fully idle** wake
    (empty inbox, no in-flight ticket), run the compaction check below when picking the next
    heartbeat prompt.
