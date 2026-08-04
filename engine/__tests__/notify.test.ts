@@ -8,9 +8,9 @@ let home: string;
 let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-notify-"));
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-notify-"));
   fs.mkdirSync(home, { recursive: true });
-  env = { YES_CHEF_HOME: home };
+  env = { HANDS_HOME: home };
 });
 
 afterEach(() => {

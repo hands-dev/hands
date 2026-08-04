@@ -16,8 +16,8 @@ let env: NodeJS.ProcessEnv;
 let handle: ServeHandle | null = null;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-serve-"));
-  env = { YES_CHEF_HOME: home };
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-serve-"));
+  env = { HANDS_HOME: home };
 });
 afterEach(() => {
   handle?.close();
@@ -154,7 +154,7 @@ describe("other kitchens (books multiplayer)", () => {
 
     // casey's kitchen appends + pushes from its own clone
     const casey = openJournal({
-      env: { YES_CHEF_HOME: path.join(home, "casey-home") },
+      env: { HANDS_HOME: path.join(home, "casey-home") },
       cwd: process.cwd(),
       config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "casey", project: "proj" } },
       agentId: "expo",
@@ -166,11 +166,11 @@ describe("other kitchens (books multiplayer)", () => {
     const userClaude = path.join(home, "user", ".claude");
     fs.mkdirSync(userClaude, { recursive: true });
     fs.writeFileSync(
-      path.join(userClaude, "yes-chef.config.json"),
+      path.join(userClaude, "hands.config.json"),
       JSON.stringify({ remote: { url: remote, handle: "michael", project: "proj" } }),
     );
     resetConfigCache();
-    const serveEnv = { YES_CHEF_HOME: home, YES_CHEF_TEST_HOME: path.join(home, "user") };
+    const serveEnv = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user") };
     handle = await serve({ port: 0, env: serveEnv, tickMs: 25, booksTickMs: 100 });
 
     const stream = sse(`${handle.url}api/events`);

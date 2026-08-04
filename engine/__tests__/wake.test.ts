@@ -5,7 +5,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { computeStateHash } from "../src/board.js";
-import { type YesChefConfig, DEFAULT_CONFIG } from "../src/config.js";
+import { type HandsConfig, DEFAULT_CONFIG } from "../src/config.js";
 import { buildServer } from "../src/server.js";
 import { Store } from "../src/store.js";
 
@@ -15,9 +15,9 @@ let stores: Store[];
 let cleanups: Array<() => Promise<void>>;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-wake-"));
-  env = { YES_CHEF_HOME: home };
-  process.env.YES_CHEF_HOME = home; // notify() reads process.env
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-wake-"));
+  env = { HANDS_HOME: home };
+  process.env.HANDS_HOME = home; // notify() reads process.env
   stores = [];
   cleanups = [];
 });
@@ -25,11 +25,11 @@ beforeEach(() => {
 afterEach(async () => {
   for (const c of cleanups) await c();
   for (const s of stores) s.close();
-  delete process.env.YES_CHEF_HOME;
+  delete process.env.HANDS_HOME;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-async function connect(agentId: string, config?: YesChefConfig): Promise<Client> {
+async function connect(agentId: string, config?: HandsConfig): Promise<Client> {
   const store = new Store({ env });
   stores.push(store);
   store.registerAgent({ id: agentId, cwd: "/", pid: 1 });
@@ -64,7 +64,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 describe("wake:false (non-waking FYI)", () => {
   it("stores the message and delivers on drain, but never touches .notify", async () => {
     const w1 = await connect("station-1");
-    const res = await call(w1, "yc_send", {
+    const res = await call(w1, "hands_send", {
       to: "expo",
       body: "parked X, moving on",
       wake: false,
@@ -74,7 +74,7 @@ describe("wake:false (non-waking FYI)", () => {
     expect(notifyLines("expo")).toHaveLength(0);
 
     const expo = await connect("expo");
-    const drained = await call(expo, "yc_receive", { wait_seconds: 0 });
+    const drained = await call(expo, "hands_receive", { wait_seconds: 0 });
     expect(drained.body.count).toBe(1);
     expect((drained.body.messages as Array<{ body: string }>)[0]!.body).toBe("parked X, moving on");
   });
@@ -84,24 +84,24 @@ describe("redundant-wake suppression", () => {
   it("a burst to an undrained recipient appends exactly ONE notify line; one drain returns all", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "yc_send", { to: "station-1", body: "first" });
-    await call(expo, "yc_send", { to: "station-1", body: "second" });
-    const third = await call(expo, "yc_send", { to: "station-1", body: "third" });
+    await call(expo, "hands_send", { to: "station-1", body: "first" });
+    await call(expo, "hands_send", { to: "station-1", body: "second" });
+    const third = await call(expo, "hands_send", { to: "station-1", body: "third" });
     expect(third.body.woken).toEqual([]); // suppressed — wake already pending
     expect(notifyLines("station-1")).toHaveLength(1);
 
     const w1 = await connect("station-1");
-    const drained = await call(w1, "yc_receive", { wait_seconds: 0 });
+    const drained = await call(w1, "hands_receive", { wait_seconds: 0 });
     expect(drained.body.count).toBe(3);
   });
 
   it("wakes again after the recipient drains", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "yc_send", { to: "station-1", body: "first" });
+    await call(expo, "hands_send", { to: "station-1", body: "first" });
     const w1 = await connect("station-1");
-    await call(w1, "yc_receive", { wait_seconds: 0 }); // drains + advances cursor
-    await call(expo, "yc_send", { to: "station-1", body: "second" });
+    await call(w1, "hands_receive", { wait_seconds: 0 }); // drains + advances cursor
+    await call(expo, "hands_send", { to: "station-1", body: "second" });
     expect(notifyLines("station-1")).toHaveLength(2);
   });
 
@@ -110,8 +110,8 @@ describe("redundant-wake suppression", () => {
     const store = stores[0]!;
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
     store.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
-    await call(expo, "yc_send", { to: "station-1", body: "just for you" });
-    const bc = await call(expo, "yc_send", { to: "*", body: "all hands" });
+    await call(expo, "hands_send", { to: "station-1", body: "just for you" });
+    const bc = await call(expo, "hands_send", { to: "*", body: "all hands" });
     // station-1 is behind (undrained DM) → suppressed; station-2 gets the wake
     expect(bc.body.woken).toEqual(["station-2"]);
     expect(notifyLines("station-1")).toHaveLength(1);
@@ -124,12 +124,12 @@ describe("board stateHash + full bundle", () => {
     const expo = await connect("expo");
     const store = stores[0]!;
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    const a = await call(expo, "yc_board", {});
-    const b = await call(expo, "yc_board", {});
+    const a = await call(expo, "hands_board", {});
+    const b = await call(expo, "hands_board", {});
     expect(a.body.stateHash).toBeTruthy();
     expect(a.body.stateHash).toBe(b.body.stateHash);
-    await call(expo, "yc_delegate", { title: "plan X", to: "station-1" });
-    const c = await call(expo, "yc_board", {});
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const c = await call(expo, "hands_board", {});
     expect(c.body.stateHash).not.toBe(a.body.stateHash);
   });
 
@@ -137,16 +137,16 @@ describe("board stateHash + full bundle", () => {
     const expo = await connect("expo");
     const store = stores[0]!;
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "yc_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
     store.askQuestion({ asker: "station-1", question: "ship it?" });
-    const res = await call(expo, "yc_board", { full: true });
+    const res = await call(expo, "hands_board", { full: true });
     const tasks = res.body.activeTasks as Array<{ title: string; assignee: string }>;
     expect(tasks).toHaveLength(1);
     expect(tasks[0]!.assignee).toBe("station-1");
     const questions = res.body.openQuestions as Array<{ question: string }>;
     expect(questions.map((q) => q.question)).toContain("ship it?");
     expect(res.body.priorities).toMatchObject({ set: false });
-    const plain = await call(expo, "yc_board", {});
+    const plain = await call(expo, "hands_board", {});
     expect(plain.body.activeTasks).toBeUndefined();
   });
 
@@ -166,20 +166,20 @@ describe("wake accounting (wake_log)", () => {
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
 
     // 2 FYIs → zero wakes recorded
-    await call(expo, "yc_send", { to: "station-1", body: "fyi 1", wake: false });
-    await call(expo, "yc_send", { to: "station-1", body: "fyi 2", wake: false });
+    await call(expo, "hands_send", { to: "station-1", body: "fyi 1", wake: false });
+    await call(expo, "hands_send", { to: "station-1", body: "fyi 2", wake: false });
     expect(store.wakeCounts().get("station-1")).toBeUndefined();
 
     // a 3-message burst → exactly 1 wake (suppression collapses the rest)
-    await call(expo, "yc_send", { to: "station-1", body: "real 1" });
-    await call(expo, "yc_send", { to: "station-1", body: "real 2" });
-    await call(expo, "yc_send", { to: "station-1", body: "real 3" });
+    await call(expo, "hands_send", { to: "station-1", body: "real 1" });
+    await call(expo, "hands_send", { to: "station-1", body: "real 2" });
+    await call(expo, "hands_send", { to: "station-1", body: "real 3" });
     expect(store.wakeCounts().get("station-1")).toMatchObject({ lastHour: 1, last24h: 1 });
 
     // drain, then another waking send → 2 total
     const w1 = await connect("station-1");
-    await call(w1, "yc_receive", { wait_seconds: 0 });
-    await call(expo, "yc_send", { to: "station-1", body: "again" });
+    await call(w1, "hands_receive", { wait_seconds: 0 });
+    await call(expo, "hands_send", { to: "station-1", body: "again" });
     expect(store.wakeCounts().get("station-1")).toMatchObject({ lastHour: 2, last24h: 2 });
   });
 
@@ -187,8 +187,8 @@ describe("wake accounting (wake_log)", () => {
     const expo = await connect("expo");
     const store = stores[0]!;
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "yc_delegate", { title: "plan X", to: "station-1" });
-    const board = await call(expo, "yc_board", {});
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const board = await call(expo, "hands_board", {});
     const w1 = (board.body.peers as Array<{ id: string; wakesLastHour: number }>).find(
       (p) => p.id === "station-1",
     );

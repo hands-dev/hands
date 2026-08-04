@@ -77,7 +77,7 @@ export function StationsGrid({
       <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2">
         {agents.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No stations yet — <span className="font-mono text-xs">yes-chef station add -n 2</span>
+            No stations yet — <span className="font-mono text-xs">hands station add -n 2</span>
           </p>
         ) : (
           agents.map((a) => <StationCell key={a.id} agent={a} now={now} />)

@@ -2,10 +2,10 @@
 const [maj, min] = process.versions.node.split(".").map(Number);
 if (maj < 22 || (maj === 22 && (min ?? 0) < 5)) {
   console.error(
-    `yes-chef: Node >= 22.5 is required (node:sqlite); found ${process.versions.node}. ` +
+    `hands: Node >= 22.5 is required (node:sqlite); found ${process.versions.node}. ` +
       "Install a current Node and make sure it is first on PATH for Claude Code.",
   );
   process.exit(1);
 }
-process.env.YES_CHEF_FORCE_MAIN = "1";
+process.env.HANDS_FORCE_MAIN = "1";
 await import("./server-impl.mjs");

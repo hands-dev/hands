@@ -47,7 +47,7 @@ describe("renderDigest", () => {
     const a = renderDigest(SAMPLE, { project: "p", handle: "h", date: DAY });
     const b = renderDigest([...SAMPLE], { project: "p", handle: "h", date: DAY });
     expect(a.body).toBe(b.body);
-    expect(a.body.startsWith(`<!-- yes-chef digest v${DIGEST_VERSION} -->`)).toBe(true);
+    expect(a.body.startsWith(`<!-- hands digest v${DIGEST_VERSION} -->`)).toBe(true);
     const expoIdx = a.body.indexOf("## expo");
     const stationIdx = a.body.indexOf("## station-2");
     const unattributedIdx = a.body.indexOf("## unattributed");
@@ -91,7 +91,7 @@ describe("renderDigest", () => {
 describe("regenerateDigests", () => {
   function journalWith(events: JournalEvent[], remote: string, home: string) {
     const j = openJournal({
-      env: { YES_CHEF_HOME: path.join(root, home) },
+      env: { HANDS_HOME: path.join(root, home) },
       cwd: root,
       config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "michael", project: "proj" } },
     })!;
@@ -128,7 +128,7 @@ describe("regenerateDigests", () => {
     expect(regenerateDigests(j)).toEqual([]);
     // a NEWER renderer's file is never downgraded
     const file = path.join(j.dir, "journal", "proj", "michael", `${DAY}.md`);
-    fs.writeFileSync(file, "<!-- yes-chef digest v999 -->\nfrom the future\n");
+    fs.writeFileSync(file, "<!-- hands digest v999 -->\nfrom the future\n");
     expect(regenerateDigests(j)).toEqual([]);
     expect(fs.readFileSync(file, "utf8")).toContain("from the future");
     const readme = fs.readFileSync(path.join(j.dir, "journal", "proj", "michael", "README.md"), "utf8");

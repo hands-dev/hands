@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type YesChefConfig, DEFAULT_CONFIG } from "../src/config.js";
+import { type HandsConfig, DEFAULT_CONFIG } from "../src/config.js";
 import { buildServer } from "../src/server.js";
 import { Store } from "../src/store.js";
 
@@ -14,9 +14,9 @@ let stores: Store[];
 let cleanups: Array<() => Promise<void>>;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-topo-"));
-  env = { YES_CHEF_HOME: home };
-  process.env.YES_CHEF_HOME = home; // notify() reads process.env
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-topo-"));
+  env = { HANDS_HOME: home };
+  process.env.HANDS_HOME = home; // notify() reads process.env
   stores = [];
   cleanups = [];
 });
@@ -24,11 +24,11 @@ beforeEach(() => {
 afterEach(async () => {
   for (const c of cleanups) await c();
   for (const s of stores) s.close();
-  delete process.env.YES_CHEF_HOME;
+  delete process.env.HANDS_HOME;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-async function connect(agentId: string, config?: YesChefConfig): Promise<Client> {
+async function connect(agentId: string, config?: HandsConfig): Promise<Client> {
   const store = new Store({ env });
   stores.push(store);
   store.registerAgent({ id: agentId, cwd: "/", pid: 1 });
@@ -63,7 +63,7 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 describe("strict-hub topology (server-enforced)", () => {
   it("rejects station→station sends with guidance and writes NO notify line", async () => {
     const w1 = await connect("station-1");
-    const res = await call(w1, "yc_send", { to: "station-2", body: "psst" });
+    const res = await call(w1, "hands_send", { to: "station-2", body: "psst" });
     expect(res.isError).toBe(true);
     expect(String(res.body.error)).toContain("Route via the expo");
     expect(notifyLines("station-2")).toHaveLength(0);
@@ -73,7 +73,7 @@ describe("strict-hub topology (server-enforced)", () => {
 
   it("rejects station broadcasts", async () => {
     const w1 = await connect("station-1");
-    const res = await call(w1, "yc_send", { to: "*", body: "hi all" });
+    const res = await call(w1, "hands_send", { to: "*", body: "hi all" });
     expect(res.isError).toBe(true);
     expect(String(res.body.error)).toContain("Only the expo may broadcast");
     expect(notifyLines("expo")).toHaveLength(0);
@@ -81,10 +81,10 @@ describe("strict-hub topology (server-enforced)", () => {
 
   it("allows station→expo and station→principal", async () => {
     const w1 = await connect("station-1");
-    const toExpo = await call(w1, "yc_send", { to: "expo", body: "done" });
+    const toExpo = await call(w1, "hands_send", { to: "expo", body: "done" });
     expect(toExpo.isError).toBe(false);
     expect(notifyLines("expo")).toHaveLength(1);
-    const toHuman = await call(w1, "yc_send", { to: "Michael", body: "fyi" });
+    const toHuman = await call(w1, "hands_send", { to: "Michael", body: "fyi" });
     expect(toHuman.isError).toBe(false);
   });
 
@@ -92,16 +92,16 @@ describe("strict-hub topology (server-enforced)", () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
     stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
-    const dm = await call(expo, "yc_send", { to: "station-2", body: "do X" });
+    const dm = await call(expo, "hands_send", { to: "station-2", body: "do X" });
     expect(dm.isError).toBe(false);
-    const bc = await call(expo, "yc_send", { to: "*", body: "all hands" });
+    const bc = await call(expo, "hands_send", { to: "*", body: "all hands" });
     expect(bc.isError).toBe(false);
     expect(notifyLines("station-1").length).toBeGreaterThan(0);
   });
 
   it("rejects station delegation (expo-only under strict-hub)", async () => {
     const w1 = await connect("station-1");
-    const res = await call(w1, "yc_delegate", { title: "do my chores", to: "station-2" });
+    const res = await call(w1, "hands_delegate", { title: "do my chores", to: "station-2" });
     expect(res.isError).toBe(true);
     expect(String(res.body.error)).toContain("the expo delegates");
     expect(stores[0]!.listTasks()).toHaveLength(0);
@@ -109,63 +109,63 @@ describe("strict-hub topology (server-enforced)", () => {
 
   it("still lets a station return/claim its own tasks", async () => {
     const expo = await connect("expo");
-    await call(expo, "yc_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
     const w1 = await connect("station-1", DEFAULT_CONFIG);
-    const start = await call(w1, "yc_task_update", { id: 1, state: "in_progress" });
+    const start = await call(w1, "hands_task_update", { id: 1, state: "in_progress" });
     expect(start.isError).toBe(false);
-    const ret = await call(w1, "yc_task_update", { id: 1, state: "returned", result: "plan" });
+    const ret = await call(w1, "hands_task_update", { id: 1, state: "returned", result: "plan" });
     expect(ret.isError).toBe(false);
   });
 });
 
 describe("open topology (opt-out)", () => {
-  const open: YesChefConfig = { ...DEFAULT_CONFIG, topology: "open" };
+  const open: HandsConfig = { ...DEFAULT_CONFIG, topology: "open" };
 
   it("restores station↔station sends and station broadcasts", async () => {
     const w1 = await connect("station-1", open);
     stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 2 });
-    const dm = await call(w1, "yc_send", { to: "station-2", body: "psst" });
+    const dm = await call(w1, "hands_send", { to: "station-2", body: "psst" });
     expect(dm.isError).toBe(false);
     expect(notifyLines("station-2").length).toBeGreaterThan(0);
-    const bc = await call(w1, "yc_send", { to: "*", body: "hi" });
+    const bc = await call(w1, "hands_send", { to: "*", body: "hi" });
     expect(bc.isError).toBe(false);
-    const del = await call(w1, "yc_delegate", { title: "task", to: "station-2" });
+    const del = await call(w1, "hands_delegate", { title: "task", to: "station-2" });
     expect(del.isError).toBe(false);
   });
 });
 
 describe("paths + gh-poll tools", () => {
-  it("yc_paths is available to every agent and reports identity", async () => {
+  it("hands_paths is available to every agent and reports identity", async () => {
     const w1 = await connect("station-1");
-    const res = await call(w1, "yc_paths", {});
+    const res = await call(w1, "hands_paths", {});
     expect(res.isError).toBe(false);
     expect(res.body.agentId).toBe("station-1");
     expect(res.body.journalSync).toBe("disabled"); // no remote configured
     expect(String(res.body.notify)).toContain("station-1.notify");
   });
 
-  it("yc_gh_poll registers for the expo only", async () => {
+  it("hands_gh_poll registers for the expo only", async () => {
     const expo = await connect("expo");
     const w1 = await connect("station-1");
     const expoTools = (await expo.listTools()).tools.map((t) => t.name);
     const stationTools = (await w1.listTools()).tools.map((t) => t.name);
-    expect(expoTools).toContain("yc_gh_poll");
-    expect(stationTools).not.toContain("yc_gh_poll");
-    expect(stationTools).toContain("yc_paths");
+    expect(expoTools).toContain("hands_gh_poll");
+    expect(stationTools).not.toContain("hands_gh_poll");
+    expect(stationTools).toContain("hands_paths");
   });
 });
 
 describe("focus labels", () => {
   it("a station sets its own focus; only the expo sets others'", async () => {
     const w1 = await connect("station-1");
-    const own = await call(w1, "yc_focus", { focus: "developer API" });
+    const own = await call(w1, "hands_focus", { focus: "developer API" });
     expect(own.isError).toBe(false);
-    const other = await call(w1, "yc_focus", { station: "station-2", focus: "billing" });
+    const other = await call(w1, "hands_focus", { station: "station-2", focus: "billing" });
     expect(other.isError).toBe(true);
     const expo = await connect("expo");
-    const assigned = await call(expo, "yc_focus", { station: "station-2", focus: "billing" });
+    const assigned = await call(expo, "hands_focus", { station: "station-2", focus: "billing" });
     expect(assigned.isError).toBe(false);
-    const peers = await call(expo, "yc_peers", {});
+    const peers = await call(expo, "hands_peers", {});
     const byId = Object.fromEntries((peers.body.peers as Array<{ id: string; focus?: string }>).map((p) => [p.id, p.focus]));
     expect(byId["station-1"]).toBe("developer API");
     expect(byId["station-2"]).toBe("billing");
@@ -176,13 +176,13 @@ describe("focus labels", () => {
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
     stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
     stores[0]!.setFocus("station-2", "developer API");
-    const byLabel = await call(expo, "yc_send", { to: "developer API", body: "rotate keys" });
+    const byLabel = await call(expo, "hands_send", { to: "developer API", body: "rotate keys" });
     expect(byLabel.isError).toBe(false);
     expect(byLabel.body.to).toBe("station-2");
     expect(notifyLines("station-2")).toHaveLength(1);
 
     stores[0]!.setFocus("station-1", "developer API");
-    const ambiguous = await call(expo, "yc_send", { to: "developer API", body: "x" });
+    const ambiguous = await call(expo, "hands_send", { to: "developer API", body: "x" });
     expect(ambiguous.isError).toBe(true);
     expect(String(ambiguous.body.error)).toContain("ambiguous");
   });

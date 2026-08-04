@@ -15,7 +15,7 @@ export interface MemoryEntry {
 
 /**
  * Directory holding this repo's Claude Code memory store. Overridable via
- * `YES_CHEF_MEMORY_DIR`; otherwise derived from the repo's MAIN checkout path
+ * `HANDS_MEMORY_DIR`; otherwise derived from the repo's MAIN checkout path
  * (Claude Code keys project memory as `~/.claude/projects/<path with / → ->`),
  * so every worktree of a repo shares one memory dir and memory journaling is
  * deduped globally (watermark agent '*').
@@ -24,7 +24,7 @@ export function memoryDir(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): string {
-  const override = env.YES_CHEF_MEMORY_DIR?.trim();
+  const override = env.HANDS_MEMORY_DIR?.trim();
   if (override) return override;
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   return path.join(os.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");

@@ -18,8 +18,8 @@ function tmpdir(prefix: string): string {
 }
 
 beforeEach(() => {
-  home = tmpdir("yes-chef-p1-home-");
-  env = { YES_CHEF_HOME: home };
+  home = tmpdir("hands-p1-home-");
+  env = { HANDS_HOME: home };
 });
 
 afterEach(() => {
@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 function gitRepo(): string {
-  const repo = tmpdir("yes-chef-p1-repo-");
+  const repo = tmpdir("hands-p1-repo-");
   const g = (args: string[]) => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
   g(["init", "-q", "-b", "work"]);
   g(["config", "user.email", "t@t.co"]);
@@ -99,14 +99,14 @@ describe("runPublish commit harvest", () => {
 
 describe("runPublish memory harvest", () => {
   it("baselines existing memories, then journals a changed one (deduped globally)", () => {
-    const memDir = tmpdir("yes-chef-p1-mem-");
+    const memDir = tmpdir("hands-p1-mem-");
     fs.writeFileSync(path.join(memDir, "MEMORY.md"), "index - ignored");
     fs.writeFileSync(
       path.join(memDir, "thing.md"),
       "---\nname: thing\ndescription: a first learning\n---\nbody",
     );
-    const menv = { ...env, YES_CHEF_MEMORY_DIR: memDir };
-    const nonGit = tmpdir("yes-chef-p1-nongit-");
+    const menv = { ...env, HANDS_MEMORY_DIR: memDir };
+    const nonGit = tmpdir("hands-p1-nongit-");
     const store = new Store({ env });
 
     const r1 = runPublish(store, { agentId: "wtA", cwd: nonGit, env: menv });

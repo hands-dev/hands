@@ -7,9 +7,9 @@ import { repoInfo } from "./paths.js";
 import { githubUsername } from "./remote.js";
 
 /**
- * `yes-chef init` — per-repo setup, run from inside the target repo. The
+ * `hands init` — per-repo setup, run from inside the target repo. The
  * PLUGIN owns MCP registration, hooks, and skills; this command scaffolds
- * what must stay per-repo: <repo>/yes-chef.config.json (principal + optional
+ * what must stay per-repo: <repo>/hands.config.json (principal + optional
  * books journal). Idempotent — an existing config is left untouched.
  */
 
@@ -59,7 +59,7 @@ export async function runInit(argv: string[]): Promise<void> {
       const configPath = path.join(info.repoRoot, CONFIG_BASENAME);
       if (fs.existsSync(configPath)) {
         out(`✔ ${configPath} already exists (left untouched)`);
-        out("  (to attach the books to an existing config: yes-chef books <url>)");
+        out("  (to attach the books to an existing config: hands books <url>)");
       } else {
         const principal =
           flags.principal ?? (await ask("Who is the principal (the human the expo reports to)?", "Michael"));
@@ -97,9 +97,9 @@ export async function runInit(argv: string[]): Promise<void> {
 
     out("");
     out("Done. Next steps:");
-    out("  1. main checkout: /yc:expo   (or /loop /yc:expo)");
-    out("  2. open stations: yes-chef station add -n 2");
-    out("  3. dashboard:     yes-chef serve   → http://localhost:4319");
+    out("  1. main checkout: /hands:expo   (or /loop /hands:expo)");
+    out("  2. open stations: hands station add -n 2");
+    out("  3. dashboard:     hands serve   → http://localhost:4319");
     out("  (restart running Claude Code sessions so the plugin's MCP server + hooks load)");
   } finally {
     rl?.close();

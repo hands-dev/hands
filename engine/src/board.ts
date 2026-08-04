@@ -99,7 +99,7 @@ export function buildBoard(
 
   // Direct messages addressed to me — shown for AWARENESS (by the board time
   // window), which is independent of the receive cursor. A station draining its
-  // inbox via yc_receive is what *handles* them; showing never consumes.
+  // inbox via hands_receive is what *handles* them; showing never consumes.
   const MAX_MSGS = 8;
   const inbox = store.messagesForSince(opts.agentId, since);
 
@@ -156,7 +156,7 @@ export function buildBoard(
     return { text: "", journalCount: 0, collisions: 0 };
   }
 
-  const lines: string[] = ["[yes-chef] update:"];
+  const lines: string[] = ["[hands] update:"];
   const shownMsgs = inbox.slice(-MAX_MSGS);
   for (const msg of shownMsgs) {
     const to = msg.to_id === null ? "all" : "you";
@@ -164,7 +164,7 @@ export function buildBoard(
     lines.push(`  ✉ ${msg.from_id} → ${to}: ${subject}${msg.body}`);
   }
   if (inbox.length > MAX_MSGS) {
-    lines.push(`  ✉ (+${inbox.length - MAX_MSGS} earlier — yc_history)`);
+    lines.push(`  ✉ (+${inbox.length - MAX_MSGS} earlier — hands_history)`);
   }
   for (const line of ghLines) lines.push(`  ${line}`);
   for (const q of answered) {
@@ -174,7 +174,7 @@ export function buildBoard(
     lines.push(`  ? ${q.asker} asks: "${q.question}" — adjudicate or escalate`);
   }
   for (const t of assignedToMe) {
-    lines.push(`  📋 ${t.created_by} fired: "${t.title}" — start with yc_task_update`);
+    lines.push(`  📋 ${t.created_by} fired: "${t.title}" — start with hands_task_update`);
   }
   for (const t of returnedToMe) {
     lines.push(`  📋 ${t.assignee ?? ""} returned: "${t.title}" — review it`);

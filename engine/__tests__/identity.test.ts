@@ -15,7 +15,7 @@ import { repoInfo, resetRepoInfoCache } from "../src/paths.js";
 
 describe("indexFromDirName", () => {
   it("parses the managed station-<n> dirs", () => {
-    expect(indexFromDirName("/Users/x/.yes-chef/worktrees/repo-abc/station-3")).toBe(3);
+    expect(indexFromDirName("/Users/x/.hands/worktrees/repo-abc/station-3")).toBe(3);
   });
 
   it("parses the generic worktree-N / -wtN conventions", () => {
@@ -61,8 +61,8 @@ describe("isStation / isExpo", () => {
 describe("resolveAgentId precedence (non-git cwds)", () => {
   const base = { cwd: "/Users/x/Development/ampersand-worktree-4", argv: ["node", "s"] as string[] };
 
-  it("prefers YES_CHEF_ID env", () => {
-    expect(resolveAgentId({ ...base, env: { YES_CHEF_ID: "explicit" } })).toBe("explicit");
+  it("prefers HANDS_ID env", () => {
+    expect(resolveAgentId({ ...base, env: { HANDS_ID: "explicit" } })).toBe("explicit");
   });
 
   it("falls back to --agent-id arg", () => {
@@ -79,7 +79,7 @@ describe("resolveAgentId precedence (non-git cwds)", () => {
     expect(
       resolveAgentId({
         cwd: "/Users/x/Development/ampersand",
-        env: { YES_CHEF_EXPO_BASENAME: "ampersand" },
+        env: { HANDS_EXPO_BASENAME: "ampersand" },
         argv: ["node", "s"],
       }),
     ).toBe("expo");
@@ -106,7 +106,7 @@ describe("resolveAgentId in a real repo (main-worktree autodetect)", () => {
   let linked: string;
 
   beforeAll(() => {
-    root = fs.mkdtempSync(path.join(os.tmpdir(), "yes-chef-idrepo-"));
+    root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-idrepo-"));
     main = path.join(root, "myproj");
     fs.mkdirSync(main);
     const git = (cwd: string, args: string[]) =>

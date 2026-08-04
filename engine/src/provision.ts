@@ -2,14 +2,14 @@ import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import { type YesChefConfig, loadConfig } from "./config.js";
+import { type HandsConfig, loadConfig } from "./config.js";
 import { type RepoInfo, repoInfo } from "./paths.js";
 
 /**
  * Station provisioning — the user thinks in STATIONS, never worktrees. Each
- * station is a Claude Code session launched with YES_CHEF_ID=station-<n>
+ * station is a Claude Code session launched with HANDS_ID=station-<n>
  * inside a managed git worktree (the hidden isolation primitive) under
- * `~/.yes-chef/worktrees/<slug>/station-<n>`. That root lives OUTSIDE the
+ * `~/.hands/worktrees/<slug>/station-<n>`. That root lives OUTSIDE the
  * repo tree so nested-repo tooling never sees it, and the worktree shares the
  * repo's git common-dir, so every station automatically lands on the expo's
  * bus.
@@ -54,18 +54,18 @@ function requireRepo(cwd: string): RepoInfo {
 }
 
 /** Where this repo's managed station worktrees live. */
-export function stationRoot(cwd: string = process.cwd(), config?: YesChefConfig): string {
+export function stationRoot(cwd: string = process.cwd(), config?: HandsConfig): string {
   const cfg = config ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path.join(os.homedir(), ".yes-chef", "worktrees", requireRepo(cwd).slug);
+  return path.join(os.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 
 export function stationBranch(index: number): string {
-  return `yc/station-${index}`;
+  return `hands/station-${index}`;
 }
 
 /** List managed stations (station-<n> dirs under the station root). */
-export function listStations(cwd: string = process.cwd(), config?: YesChefConfig): ManagedStation[] {
+export function listStations(cwd: string = process.cwd(), config?: HandsConfig): ManagedStation[] {
   const root = stationRoot(cwd, config);
   let names: string[] = [];
   try {
@@ -100,7 +100,7 @@ function branchExists(cwd: string, branch: string): boolean {
 
 /** Compose the paste-able launch command for a station (plugin-namespaced skill). */
 export function launchCommand(station: { id: string; dir: string; model: string }): string {
-  return `cd ${shellQuote(station.dir)} && YES_CHEF_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /yc:station")}`;
+  return `cd ${shellQuote(station.dir)} && HANDS_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /hands:station")}`;
 }
 
 function shellQuote(s: string): string {
@@ -123,7 +123,7 @@ function tmuxAvailable(): boolean {
  */
 function launch(
   plan: { id: string; dir: string; model: string },
-  launcher: YesChefConfig["stations"]["launcher"],
+  launcher: HandsConfig["stations"]["launcher"],
   env: NodeJS.ProcessEnv = process.env,
 ): { launcher: "tmux" | "iterm" | "manual"; launched: boolean } {
   const command = launchCommand(plan);
@@ -143,7 +143,7 @@ function launch(
         // a duplicate session name fails, which we surface)
         execFileSync(
           "tmux",
-          ["new-session", "-d", "-s", `yes-chef-${plan.id}`, command],
+          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
           { stdio: "ignore", timeout: 10_000 },
         );
       }
@@ -173,12 +173,12 @@ end tell`;
 
 /**
  * Provision the next N stations: create each managed worktree (branch
- * `yc/station-<n>` off the configured base) and launch its session.
+ * `hands/station-<n>` off the configured base) and launch its session.
  * The worktree is never surfaced to the user — only the station id is.
  */
 export function addStations(
   count: number,
-  opts?: { cwd?: string; config?: YesChefConfig; env?: NodeJS.ProcessEnv },
+  opts?: { cwd?: string; config?: HandsConfig; env?: NodeJS.ProcessEnv },
 ): LaunchPlan[] {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
@@ -223,7 +223,7 @@ export function addStations(
  */
 export function removeStation(
   id: string,
-  opts?: { cwd?: string; config?: YesChefConfig; force?: boolean },
+  opts?: { cwd?: string; config?: HandsConfig; force?: boolean },
 ): { id: string; removed: boolean } {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
@@ -244,7 +244,7 @@ export function removeStation(
   }
   // A tmux session we created ourselves is ours to kill.
   try {
-    execFileSync("tmux", ["kill-session", "-t", `yes-chef-station-${index}`], { stdio: "ignore", timeout: 5000 });
+    execFileSync("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5000 });
   } catch {
     // not tmux-launched / already gone — fine
   }
@@ -278,7 +278,7 @@ export function removeStation(
 /** Reconcile the pool to exactly `target` stations (adds low free indices, retires the highest first). */
 export function scaleStations(
   target: number,
-  opts?: { cwd?: string; config?: YesChefConfig; env?: NodeJS.ProcessEnv; force?: boolean },
+  opts?: { cwd?: string; config?: HandsConfig; env?: NodeJS.ProcessEnv; force?: boolean },
 ): { added: LaunchPlan[]; removed: string[] } {
   if (!Number.isInteger(target) || target < 0) throw new ProvisionError(`bad target: ${target}`);
   const cwd = opts?.cwd ?? process.cwd();

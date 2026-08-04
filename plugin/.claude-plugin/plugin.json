@@ -1,9 +1,9 @@
 {
-  "name": "yc",
-  "displayName": "Yes, Chef",
-  "description": "Yes, Chef \u2014 an expo/station agent fleet for Claude Code on a per-repo coordination bus: strict pass discipline (hub-and-spoke), wake-cost accounting, station provisioning with focus labels, and the books \u2014 an opt-in durable journal with browsable daily digests.",
+  "name": "hands",
+  "displayName": "Hands",
+  "description": "Hands — extra hands for your repo: an expo/station agent fleet for Claude Code on a per-repo coordination bus. Strict pass discipline (hub-and-spoke), wake-cost accounting, station provisioning with focus labels and self-managed prep books, a live SSE dashboard, and the books — an opt-in durable journal with browsable daily digests.",
   "author": {
     "name": "Michael Phillips"
   },
-  "homepage": "https://github.com/heymichaelp/yes-chef"
+  "homepage": "https://github.com/heymichaelp/hands"
 }

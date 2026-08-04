@@ -6949,13 +6949,13 @@ function repoInfo(cwd = process.cwd()) {
   return info;
 }
 function coordinationDir(env = process.env, cwd = process.cwd()) {
-  const override = env.YES_CHEF_HOME?.trim();
+  const override = env.HANDS_HOME?.trim();
   if (override) return override;
   const info = repoInfo(cwd);
   return path.join(os.homedir(), ".claude", "coordination", info?.slug ?? "_global");
 }
 function dbPath(env = process.env, cwd = process.cwd()) {
-  return path.join(coordinationDir(env, cwd), "yes-chef.db");
+  return path.join(coordinationDir(env, cwd), "hands.db");
 }
 function notifyPath(agentId, env = process.env, cwd = process.cwd()) {
   return path.join(coordinationDir(env, cwd), `${agentId}.notify`);
@@ -7003,12 +7003,12 @@ function resolveAgentId(options) {
   const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? process.env;
   const argv = options?.argv ?? process.argv;
-  const fromEnv = env.YES_CHEF_ID?.trim();
+  const fromEnv = env.HANDS_ID?.trim();
   if (fromEnv) return resolveAgentRef(fromEnv);
   const fromArg = agentIdFromArgv(argv)?.trim();
   if (fromArg) return resolveAgentRef(fromArg);
   const base = path2.basename(cwd);
-  const expoBasename = env.YES_CHEF_EXPO_BASENAME?.trim() || options?.expoBasename;
+  const expoBasename = env.HANDS_EXPO_BASENAME?.trim() || options?.expoBasename;
   if (expoBasename && base === expoBasename) return "expo";
   if (repoInfo(cwd)?.isMainWorktree) return "expo";
   const index = indexFromDirName(cwd);
@@ -8024,7 +8024,7 @@ function buildBoard(store, opts) {
   if (journal.length === 0 && collisionLines.length === 0 && answered.length === 0 && openForExpo.length === 0 && inbox.length === 0 && ghLines.length === 0 && assignedToMe.length === 0 && returnedToMe.length === 0) {
     return { text: "", journalCount: 0, collisions: 0 };
   }
-  const lines = ["[yes-chef] update:"];
+  const lines = ["[hands] update:"];
   const shownMsgs = inbox.slice(-MAX_MSGS);
   for (const msg of shownMsgs) {
     const to = msg.to_id === null ? "all" : "you";
@@ -8032,7 +8032,7 @@ function buildBoard(store, opts) {
     lines.push(`  \u2709 ${msg.from_id} \u2192 ${to}: ${subject}${msg.body}`);
   }
   if (inbox.length > MAX_MSGS) {
-    lines.push(`  \u2709 (+${inbox.length - MAX_MSGS} earlier \u2014 yc_history)`);
+    lines.push(`  \u2709 (+${inbox.length - MAX_MSGS} earlier \u2014 hands_history)`);
   }
   for (const line of ghLines) lines.push(`  ${line}`);
   for (const q of answered) {
@@ -8042,7 +8042,7 @@ function buildBoard(store, opts) {
     lines.push(`  ? ${q.asker} asks: "${q.question}" \u2014 adjudicate or escalate`);
   }
   for (const t of assignedToMe) {
-    lines.push(`  \u{1F4CB} ${t.created_by} fired: "${t.title}" \u2014 start with yc_task_update`);
+    lines.push(`  \u{1F4CB} ${t.created_by} fired: "${t.title}" \u2014 start with hands_task_update`);
   }
   for (const t of returnedToMe) {
     lines.push(`  \u{1F4CB} ${t.assignee ?? ""} returned: "${t.title}" \u2014 review it`);
@@ -8094,7 +8094,7 @@ function readJson(file2) {
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : null;
   } catch (err) {
-    process.stderr.write(`[yes-chef] ignoring malformed config ${file2}: ${String(err)}
+    process.stderr.write(`[hands] ignoring malformed config ${file2}: ${String(err)}
 `);
     return null;
   }
@@ -8131,7 +8131,7 @@ function merge2(base, layer) {
   };
 }
 function userConfigPath(env = process.env) {
-  const home = env.YES_CHEF_TEST_HOME?.trim() || os2.homedir();
+  const home = env.HANDS_TEST_HOME?.trim() || os2.homedir();
   return path4.join(home, ".claude", CONFIG_BASENAME);
 }
 function repoConfigPath(cwd = process.cwd()) {
@@ -8141,7 +8141,7 @@ function repoConfigPath(cwd = process.cwd()) {
 function loadConfig(options) {
   const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? process.env;
-  const key = `${cwd}\0${env.YES_CHEF_TEST_HOME ?? ""}`;
+  const key = `${cwd}\0${env.HANDS_TEST_HOME ?? ""}`;
   const hit = cache.get(key);
   if (hit) return hit;
   let cfg = merge2(DEFAULT_CONFIG, readJson(userConfigPath(env)));
@@ -8171,7 +8171,7 @@ var init_config = __esm({
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
-    CONFIG_BASENAME = "yes-chef.config.json";
+    CONFIG_BASENAME = "hands.config.json";
     cache = /* @__PURE__ */ new Map();
   }
 });
@@ -8391,9 +8391,9 @@ var init_digest = __esm({
     "use strict";
     init_remote();
     DIGEST_VERSION = 1;
-    STAMP_PREFIX = "<!-- yes-chef digest v";
+    STAMP_PREFIX = "<!-- hands digest v";
     STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
-    STAMP_RE = /^<!-- yes-chef digest v(\d+) -->/;
+    STAMP_RE = /^<!-- hands digest v(\d+) -->/;
     RESULT_MAX = 120;
   }
 });
@@ -8467,8 +8467,8 @@ function ensureRepo(dir, url2) {
     fs8.mkdirSync(dir, { recursive: true, mode: 448 });
     if (!fs8.existsSync(path8.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
-      git3(dir, ["config", "user.name", "yes-chef"]);
-      git3(dir, ["config", "user.email", "yes-chef@localhost"]);
+      git3(dir, ["config", "user.name", "hands"]);
+      git3(dir, ["config", "user.email", "hands@localhost"]);
     }
     if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
       git3(dir, ["remote", "add", "origin", url2]);
@@ -8525,7 +8525,7 @@ function validateJournal(dir, opts) {
     if (marker.journal > JOURNAL_LAYOUT) {
       return {
         ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer yes-chef \u2014 update the plugin`
+        reason: `journal layout v${marker.journal} was written by a newer hands \u2014 update the plugin`
       };
     }
     if (marker.journal < JOURNAL_LAYOUT) {
@@ -8548,7 +8548,7 @@ function validateJournal(dir, opts) {
     return {
       ok: false,
       needsAdopt: true,
-      reason: "the configured remote.url is not an yes-chef journal (no yes-chef.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `yes-chef sync --adopt` once to initialize the journal structure alongside the existing content."
+      reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
   fs8.writeFileSync(path8.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
@@ -8556,10 +8556,10 @@ function validateJournal(dir, opts) {
   return { ok: true, bootstrapped: true };
 }
 function debounceMarkerPath(dir) {
-  return path8.join(dir, ".git", "yes-chef-last-push");
+  return path8.join(dir, ".git", "hands-last-push");
 }
 function syncStatusPath(dir) {
-  return path8.join(dir, ".git", "yes-chef-sync-status");
+  return path8.join(dir, ".git", "hands-sync-status");
 }
 function writeSyncStatus(dir, result, now) {
   try {
@@ -8815,7 +8815,7 @@ var init_remote = __esm({
     init_priorities();
     JOURNAL_VERSION = 1;
     JOURNAL_LAYOUT = 2;
-    MARKER_FILE = "yes-chef.json";
+    MARKER_FILE = "hands.json";
     PUSH_DEBOUNCE_MS = 6e4;
     GIT_TIMEOUT_MS = 2e4;
     projectCache = /* @__PURE__ */ new Map();
@@ -8855,10 +8855,10 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path9.join(os5.homedir(), ".yes-chef", "worktrees", requireRepo(cwd).slug);
+  return path9.join(os5.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
-  return `yc/station-${index}`;
+  return `hands/station-${index}`;
 }
 function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
@@ -8892,7 +8892,7 @@ function branchExists(cwd, branch) {
   }
 }
 function launchCommand(station) {
-  return `cd ${shellQuote(station.dir)} && YES_CHEF_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /yc:station")}`;
+  return `cd ${shellQuote(station.dir)} && HANDS_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /hands:station")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
@@ -8918,7 +8918,7 @@ function launch(plan, launcher, env = process.env) {
       } else {
         execFileSync5(
           "tmux",
-          ["new-session", "-d", "-s", `yes-chef-${plan.id}`, command],
+          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
           { stdio: "ignore", timeout: 1e4 }
         );
       }
@@ -8992,7 +8992,7 @@ function removeStation(id, opts) {
   } catch {
   }
   try {
-    execFileSync5("tmux", ["kill-session", "-t", `yes-chef-station-${index}`], { stdio: "ignore", timeout: 5e3 });
+    execFileSync5("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
   } catch {
   }
   let removed = false;
@@ -9227,7 +9227,7 @@ function snapshotKey(snapshot) {
 function serve(opts) {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
-  const port = opts?.port ?? Number(env.YES_CHEF_PORT ?? 4319);
+  const port = opts?.port ?? Number(env.HANDS_PORT ?? 4319);
   const tickMs = opts?.tickMs ?? 1e3;
   const booksTickMs = opts?.booksTickMs ?? 6e4;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
@@ -9394,7 +9394,7 @@ var init_serve = __esm({
     };
     SHELL = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="icon" href="data:,"/><title>yes-chef</title>
+<link rel="icon" href="data:,"/><title>hands</title>
 <link rel="stylesheet" href="/assets/dashboard.css"/>
 </head><body><div id="root"></div>
 <script type="module" src="/assets/dashboard.js"></script></body></html>
@@ -32707,7 +32707,7 @@ import * as fs6 from "node:fs";
 import * as os3 from "node:os";
 import * as path6 from "node:path";
 function memoryDir(env = process.env, cwd = process.cwd()) {
-  const override = env.YES_CHEF_MEMORY_DIR?.trim();
+  const override = env.HANDS_MEMORY_DIR?.trim();
   if (override) return override;
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   return path6.join(os3.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
@@ -32864,16 +32864,16 @@ function buildServer(store, agentId, config2) {
     store.markWakePending(recipients);
   };
   const server = new McpServer(
-    { name: "yes-chef", version: "0.1.0" },
+    { name: "hands", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see yc_peers). Use yc_peers to discover the team, yc_send to message one, and yc_receive to read messages addressed to you. Call yc_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with yc_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run yc_questions, yc_priorities to read/set the ranked priorities, yc_answer to resolve, yc_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: yc_todo_add concrete things only they can do (idempotent via dedupKey), and yc_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " Keep your station files current (paths in yc_paths): your PREP BOOK (distilled beat knowledge \u2014 rewrite, don't append; \u2264150 lines) and your STATION SKILL (your own operating manual). Update them on idle wakes and before any /compact \u2014 they are how your expertise survives reboots and machine moves." : "") + stationContext(agentId)
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " Keep your station files current (paths in hands_paths): your PREP BOOK (distilled beat knowledge \u2014 rewrite, don't append; \u2264150 lines) and your STATION SKILL (your own operating manual). Update them on idle wakes and before any /compact \u2014 they are how your expertise survives reboots and machine moves." : "") + stationContext(agentId)
     }
   );
   server.registerTool(
-    "yc_send",
+    "hands_send",
     {
       title: "Send a message to another agent",
-      description: `Enqueue a message to another agent on this repo's bus. \`to\` is a peer agent id (expo, station-2, \u2026 \u2014 see yc_peers), the principal ("${principal}"), or "*" to broadcast to everyone. Do not include secrets. Waking the recipient costs a full model turn \u2014 for an FYI / status update that needs no immediate action, pass wake:false so it is delivered on their next natural drain instead.`,
+      description: `Enqueue a message to another agent on this repo's bus. \`to\` is a peer agent id (expo, station-2, \u2026 \u2014 see hands_peers), the principal ("${principal}"), or "*" to broadcast to everyone. Do not include secrets. Waking the recipient costs a full model turn \u2014 for an FYI / status update that needs no immediate action, pass wake:false so it is delivered on their next natural drain instead.`,
       inputSchema: {
         to: external_exports3.string().describe('recipient agent id, or "*" for broadcast'),
         body: external_exports3.string(),
@@ -32905,7 +32905,7 @@ function buildServer(store, agentId, config2) {
           return {
             ...asToolResult({
               ok: false,
-              error: "Direct station-to-station messaging is disabled. Route via the expo \u2014 use yc_ask for a decision, or yc_send({to:'expo'}) for a handoff."
+              error: "Direct station-to-station messaging is disabled. Route via the expo \u2014 use hands_ask for a decision, or hands_send({to:'expo'}) for a handoff."
             }),
             isError: true
           };
@@ -32932,7 +32932,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_receive",
+    "hands_receive",
     {
       title: "Receive messages addressed to me",
       description: "Return messages addressed to you (directed + broadcast) since your read cursor. Long-polls up to wait_seconds, returning as soon as a message lands. Advances your cursor when mark_read is true.",
@@ -32967,7 +32967,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_peers",
+    "hands_peers",
     {
       title: "List registered worktree agents",
       description: "List every agent registered on this machine's bus and whether it is online (heartbeat within the last 60s).",
@@ -32989,7 +32989,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_history",
+    "hands_history",
     {
       title: "Read past messages",
       description: "Read past messages (audit). Optionally filter by peer (messages to/from that agent) or thread id. Returns up to `limit` most-recent messages in chronological order.",
@@ -33011,7 +33011,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_board",
+    "hands_board",
     {
       title: "Read the standup board",
       description: "Snapshot of every agent: who's active (branch + last-active age), recent learnings (commits + memory writes), and any file/ticket collisions with you. Always includes a cheap `stateHash` fingerprint \u2014 if it matches your last pass, nothing moved and you can skip a deeper re-scan. Pass full:true to bundle active tasks + open questions + the priorities digest into this ONE read (instead of separate tasks/questions/priorities calls).",
@@ -33087,7 +33087,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_paths",
+    "hands_paths",
     {
       title: "Where does this agent resolve? (paths + identity + journal health)",
       description: "Your canonical identity and this repo's bus locations: agentId, coordinationDir, db, your .notify file (arm your Monitor on it), repo root/slug, and the durable-journal sync health. The bus is scoped per repo \u2014 always read paths from here, never guess them.",
@@ -33100,7 +33100,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_ask",
+    "hands_ask",
     {
       title: "Escalate an open question to the expo",
       description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them.`,
@@ -33118,7 +33118,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_questions",
+    "hands_questions",
     {
       title: "List questions on the bus",
       description: "List questions. Expo inbox = state 'open'. States: open | needs_human | answered. Omit state for all recent.",
@@ -33149,7 +33149,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_answer",
+    "hands_answer",
     {
       title: "Answer a question (resolve it)",
       description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'expo' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
@@ -33176,10 +33176,10 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_escalate",
+    "hands_escalate",
     {
       title: "Bubble a question up to the principal",
-      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). Include your recommendation and the priority it touches. Then present it to him and, once he decides, call yc_answer with by='human'.`,
+      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). Include your recommendation and the priority it touches. Then present it to him and, once he decides, call hands_answer with by='human'.`,
       inputSchema: {
         id: external_exports3.number().int(),
         recommendation: external_exports3.string().optional(),
@@ -33200,7 +33200,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_rec_outcome",
+    "hands_rec_outcome",
     {
       title: "Record a recommendation's hindsight outcome (expo self-audit)",
       description: `The expo's introspection. After one of your recommendations has played out, record whether it HELD UP ('validated') or was OVERTURNED by a later finding ('contradicted'), with a short reason. This grades YOUR OWN judgment in hindsight \u2014 not whether ${principal} accepted the advice \u2014 and feeds the expo-effectiveness score on the dashboard. Run it as part of your routine: revisit recent recommendations, and when a station's later finding overturns a call you made, mark it 'contradicted' honestly (that is the signal ${principal} wants to see degrade the score).`,
@@ -33220,7 +33220,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_priorities",
+    "hands_priorities",
     {
       title: "Read or set the menu \u2014 the expo's ranked priorities",
       description: `No args: read the current ranked priorities (+ whether they're stale/unset). Pass \`set\` to replace them (ranked, most-important first). Pass confirm=true to mark the existing list still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
@@ -33254,7 +33254,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_delegate",
+    "hands_delegate",
     {
       title: "Fire a ticket to a station (delegate a task)",
       description: 'Hand a ticket (a unit of real work) to a station \u2014 expo use. `to` = a station agent id (station-1, station-2, \u2026), or omit for the unassigned rail ("any available station"). The first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.',
@@ -33273,7 +33273,7 @@ function buildServer(store, agentId, config2) {
         return {
           ...asToolResult({
             ok: false,
-            error: "Stations don't fire tickets. Hand work upward instead: yc_ask for a decision, or yc_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
+            error: "Stations don't fire tickets. Hand work upward instead: hands_ask for a decision, or hands_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
           }),
           isError: true
         };
@@ -33299,7 +33299,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_tasks",
+    "hands_tasks",
     {
       title: "List delegated tasks",
       description: "List tickets (tasks). A station checks its own with assignee=<me>; the expo omits filters or uses active=true. States: open | assigned | in_progress | returned | done | cancelled.",
@@ -33337,7 +33337,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_task_update",
+    "hands_task_update",
     {
       title: "Advance a ticket (fire / plate / serve / 86)",
       description: "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), 'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it.",
@@ -33366,10 +33366,10 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_todos",
+    "hands_todos",
     {
       title: "Read the principal's to-do list",
-      description: `List the personal to-do items the expo is tracking for ${principal}. No args: everything (open first). Pass state to filter: open | done | dismissed. Read-only \u2014 the expo manages the list via yc_todo_add / yc_todo_update.`,
+      description: `List the personal to-do items the expo is tracking for ${principal}. No args: everything (open first). Pass state to filter: open | done | dismissed. Read-only \u2014 the expo manages the list via hands_todo_add / hands_todo_update.`,
       inputSchema: {
         state: external_exports3.enum(["open", "done", "dismissed"]).optional(),
         limit: external_exports3.number().int().min(1).max(200).optional()
@@ -33399,7 +33399,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_todo_add",
+    "hands_todo_add",
     {
       title: "Add an item to the principal's to-do list",
       description: `Add a concrete thing only ${principal} can personally do (a decision, a merge/review click, a reply he owes) to his to-do list. Expo-managed. Idempotent while open: pass a stable \`dedupKey\` (e.g. the PR#, question id, or a normalized title) so re-deriving the same item each pass never duplicates it \u2014 an existing open match is returned untouched. Set \`origin\` (what surfaced it) and \`priority\` (which ranked priority it maps to) for provenance.`,
@@ -33427,7 +33427,7 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_todo_update",
+    "hands_todo_update",
     {
       title: "Cross off / dismiss / re-open a to-do",
       description: "Change a to-do's state. 'done' crosses it off \u2014 pass `doneSignal` describing HOW you inferred completion (e.g. 'PR #2354 merged', 'commit abc123', 'escalation #7 answered') so the auto-cross-off stays transparent and reversible. 'dismissed' drops an item that's no longer relevant; 'open' re-opens one.",
@@ -33447,10 +33447,10 @@ function buildServer(store, agentId, config2) {
     }
   );
   server.registerTool(
-    "yc_focus",
+    "hands_focus",
     {
       title: "Set a station's focus (its evolving specialization)",
-      description: `Label a station with its current specialization ("developer API", "billing") \u2014 shown on the board and in the books, and addressable in yc_send/delegate as a convenience (the station-<n> id stays the durable key). A station may set its own focus; the expo may set anyone's. Pass focus: null to clear.`,
+      description: `Label a station with its current specialization ("developer API", "billing") \u2014 shown on the board and in the books, and addressable in hands_send/delegate as a convenience (the station-<n> id stays the durable key). A station may set its own focus; the expo may set anyone's. Pass focus: null to clear.`,
       inputSchema: {
         station: external_exports3.string().optional().describe("target station id (default: yourself)"),
         focus: external_exports3.string().min(1).max(80).nullable()
@@ -33478,7 +33478,7 @@ function buildServer(store, agentId, config2) {
   );
   if (isExpo(agentId)) {
     server.registerTool(
-      "yc_digest_note",
+      "hands_digest_note",
       {
         title: "Add a prose note to today's journal digest (expo only)",
         description: "Record a short narrative note (2\u20135 lines) into the durable journal's daily digest \u2014 the end-of-day wrap-up a human reads when browsing the journal repo. Renders under 'Notes' in journal/<project>/<handle>/<date>.md on the next sync. No-op guidance: requires remote journaling (config remote.url); notes are plaintext in the journal repo.",
@@ -33498,7 +33498,7 @@ function buildServer(store, agentId, config2) {
       }
     );
     server.registerTool(
-      "yc_gh_poll",
+      "hands_gh_poll",
       {
         title: "Poll GitHub for other engineers' PRs (expo only)",
         description: "Record what OTHER engineers are shipping (open + recently-merged PRs on this repo, excluding the principal's) for the dashboard team lane and per-station relevance matching. Network call \u2014 run once every few passes, not every tick" + (cfg.gh.poll ? "." : ". NOTE: gh.poll is disabled in this repo's config \u2014 skip it."),
@@ -33529,7 +33529,7 @@ function buildServer(store, agentId, config2) {
       pasteCommand: p.launched ? void 0 : p.command
     }));
     server.registerTool(
-      "yc_station_add",
+      "hands_station_add",
       {
         title: "Open more stations (expo only)",
         description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu (ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
@@ -33547,7 +33547,7 @@ function buildServer(store, agentId, config2) {
       }
     );
     server.registerTool(
-      "yc_station_remove",
+      "hands_station_remove",
       {
         title: "Close a station (expo only)",
         description: "Stop a station's session and remove its managed workspace. Refuses if the station has uncommitted work unless force:true. Idempotent.",
@@ -33568,7 +33568,7 @@ function buildServer(store, agentId, config2) {
       }
     );
     server.registerTool(
-      "yc_scale",
+      "hands_scale",
       {
         title: "Scale the station line (expo only)",
         description: "Reconcile the line to exactly `target` stations \u2014 adds or opens/closes as needed (highest index retired first; refuses to discard uncommitted work unless force:true).",
@@ -33653,7 +33653,7 @@ function runCli(subcommand, argv) {
       );
       return 0;
     }
-    process.stderr.write(`[yes-chef] unknown subcommand: ${subcommand}
+    process.stderr.write(`[hands] unknown subcommand: ${subcommand}
 `);
     return 2;
   } finally {
@@ -33668,7 +33668,7 @@ async function main() {
   if (subcommand === "serve") {
     const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
     const handle = await serve2();
-    process.stdout.write(`yes-chef dashboard \u2192 ${handle.url}
+    process.stdout.write(`hands dashboard \u2192 ${handle.url}
 (Ctrl-C to stop)
 `);
     if (!process.argv.includes("--no-open") && process.platform === "darwin") {
@@ -33689,7 +33689,7 @@ async function main() {
   await server.connect(new StdioServerTransport());
 }
 var invokedDirectly = (() => {
-  if (process.env.YES_CHEF_FORCE_MAIN === "1") return true;
+  if (process.env.HANDS_FORCE_MAIN === "1") return true;
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
@@ -33702,7 +33702,7 @@ var invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   main().catch((err) => {
-    console.error("[yes-chef] fatal:", err);
+    console.error("[hands] fatal:", err);
     process.exit(1);
   });
 }

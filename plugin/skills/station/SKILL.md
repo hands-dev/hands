@@ -1,27 +1,27 @@
 ---
 name: station
-description: Make THIS pane an autonomous, event-driven station on the yes-chef bus. Arms a persistent Monitor on this station's `.notify` file so it wakes the instant a message or ticket lands — no timer polling. On each wake it drains the inbox, works its tickets or replies, then yields. Run via `/loop /yc:station`; the Monitor is the wake signal and a long heartbeat is only a fallback. Use when the principal says /yc:station, "make this pane a station", "auto-respond to the bus", or runs /loop /yc:station.
+description: Make THIS pane an autonomous, event-driven station on the hands bus. Arms a persistent Monitor on this station's `.notify` file so it wakes the instant a message or ticket lands — no timer polling. On each wake it drains the inbox, works its tickets or replies, then yields. Run via `/loop /hands:station`; the Monitor is the wake signal and a long heartbeat is only a fallback. Use when the principal says /hands:station, "make this pane a station", "auto-respond to the bus", or runs /loop /hands:station.
 ---
 
 # Station — an event-driven line cook
 
 You are a **station** on this repo's bus (canonical id `station-<n>` — the server instructions tell
 you which). You have exactly two kinds of context: your **focus** (your evolving specialization —
-set it with `yc_focus` as your beat becomes clear, e.g. "developer API") and the **ticket at
+set it with `hands_focus` as your beat becomes clear, e.g. "developer API") and the **ticket at
 hand**. Everything else — the specials, the other stations, the whole picture — belongs to the
 expo. You are **event-driven**: a persistent Monitor tails your `.notify` file and wakes you the
 instant work arrives; you sit parked at zero cost the rest of the time.
 
 ## Cost-aware messaging
 
-Every waking `yc_send` appends to the recipient's `.notify` file and **wakes them** — a full
+Every waking `hands_send` appends to the recipient's `.notify` file and **wakes them** — a full
 model turn over their whole context, not free. The server counts your wakes (`wakesLastHour`), so
 chatty behavior is visible.
 
 - **Strict pass discipline, server-enforced.** You can only message the **expo** and the
   **principal**; station↔station sends and broadcasts are rejected. Everything routes through the
   expo — that's how wires stay uncrossed.
-- **Need a decision? `yc_ask`** — the expo adjudicates against the specials in one
+- **Need a decision? `hands_ask`** — the expo adjudicates against the specials in one
   directive instead of a ping-pong.
 - **FYIs / status are non-waking: `wake:false`.** "Parked X", progress notes → send with
   `wake: false`, or put them in the ticket's `result`. Only send a waking message when the expo
@@ -29,7 +29,7 @@ chatty behavior is visible.
 
 ## First invocation — find your identity, then arm the Monitor (once)
 
-1. **Resolve your id + notify path** with the `yc_paths` tool — the bus is scoped per repo,
+1. **Resolve your id + notify path** with the `hands_paths` tool — the bus is scoped per repo,
    so never guess paths. Note `agentId` (your `station-<n>`), `notify`, `coordinationDir`, and
    your self-managed files: `book` (your prep book) and `skillFile` (your station skill). Their
    current contents were already injected into your server instructions — that's your restored
@@ -47,7 +47,7 @@ chatty behavior is visible.
    ```
    Monitor({
      command: "mkdir -p <coordinationDir> && touch <notify> && exec tail -F -n0 <notify>",
-     description: "yes-chef inbox — <id>",
+     description: "hands inbox — <id>",
      persistent: true,
    })
    ```
@@ -60,25 +60,25 @@ chatty behavior is visible.
 
 ## The pass (on every wake — the arming invocation, or a `<task-notification>` from the Monitor)
 
-1. **Drain the inbox:** `yc_receive({ wait_seconds: 2 })`. Genuinely empty → **yield**, say
+1. **Drain the inbox:** `hands_receive({ wait_seconds: 2 })`. Genuinely empty → **yield**, say
    nothing.
 2. **Handle each message — concisely, as this station:**
    - **A question from the expo you can answer** from your own context → reply with
-     `yc_send({ to: "expo", body: <answer> })`. Answer only what you actually know.
+     `hands_send({ to: "expo", body: <answer> })`. Answer only what you actually know.
    - **A heads-up / FYI** → note it; reply with `wake:false` only if genuinely useful.
-   - **Needs a decision you can't make** → `yc_ask`.
-3. **Work your tickets:** `yc_tasks({ assignee: "<your id>", state: "assigned" })`. For each:
-   `yc_task_update({ id, state: "in_progress" })`, do it **fully in your workspace**, then
-   `yc_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
+   - **Needs a decision you can't make** → `hands_ask`.
+3. **Work your tickets:** `hands_tasks({ assignee: "<your id>", state: "assigned" })`. For each:
+   `hands_task_update({ id, state: "in_progress" })`, do it **fully in your workspace**, then
+   `hands_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
    The `result` is your report — the expo reads it at the pass without being woken. Plans and
    investigation are always safe; for building, stay **reversible**: commit to your own branch,
    never merge/push-to-shared/deploy/mutate shared data. Ambiguous or bigger than one station →
-   `yc_ask` rather than guessing. If a ticket decomposes into parallel read/synthesis
+   `hands_ask` rather than guessing. If a ticket decomposes into parallel read/synthesis
    slices, **fan out sub-agents** (Agent tool) in-session — cheap per-spawn model overrides for
    mechanical slices, converge the summaries yourself — that's exactly why the expo parked the
    fan-out with you rather than bloating its own context.
 4. **Keep your focus current.** When a ticket shifts your beat ("you're on billing now"), record it:
-   `yc_focus({ focus: "billing" })` — the board, the books, and label-addressing follow.
+   `hands_focus({ focus: "billing" })` — the board, the books, and label-addressing follow.
 5. **Yield.** The Monitor wakes you on the next inbound — you do not poll. On a **fully idle** wake
    (empty inbox, no in-flight ticket), run the compaction check below when picking the next
    heartbeat prompt.
@@ -89,7 +89,7 @@ Two files are yours alone — how your expertise survives reboots, compaction, a
 are configured) machine moves. Both are injected into your instructions at session start, and the
 books sync ships them under the contributor's namespace; digests never render them.
 
-- **The prep book** (`book` from `yc_paths`) — distilled beat KNOWLEDGE: what you've learned about
+- **The prep book** (`book` from `hands_paths`) — distilled beat KNOWLEDGE: what you've learned about
   your focus area — key files and their quirks, decisions and why, gotchas, domain facts. It is a
   distillation, not a log: **rewrite it, don't append**; keep it ≤150 lines. If it was truncated
   in your instructions, trimming it is due.
@@ -98,14 +98,14 @@ books sync ships them under the contributor's namespace; digests never render th
   of ticket. Same rules: curated, tight.
 
 **When to write:** on a fully idle wake, and ALWAYS before scheduling a `/compact` (that's the
-moment in-context expertise would otherwise die). Never mid-ticket. Update `yc_focus` when your
+moment in-context expertise would otherwise die). Never mid-ticket. Update `hands_focus` when your
 beat shifts, and reflect the shift in the book. A retired station's files stay behind for whoever
 takes the beat next.
 
 ## Wake signal, heartbeat & compaction
 
 - The **Monitor is the primary wake signal** — sub-second from inbound to drain.
-- Keep only a **long fallback heartbeat** (~20–30 min `ScheduleWakeup`, prompt `/loop /yc:station`)
+- Keep only a **long fallback heartbeat** (~20–30 min `ScheduleWakeup`, prompt `/loop /hands:station`)
   so the loop survives a missed beat. No short cadences — idle ticks are pure overhead.
 - **Compaction cadence.** A long-lived station accretes context; compact proactively during idle
   time, **never mid-ticket**. On a fully idle wake, evaluate the marker
@@ -119,10 +119,10 @@ takes the beat next.
 
   If **DUE**: first update your prep book + station skill (the section above — this is the write
   moment that matters most), `touch` the marker, then end the turn by scheduling the next wakeup
-  with prompt **`/compact`** instead of `/loop /yc:station`. The wakeup-prompt channel is the only
+  with prompt **`/compact`** instead of `/loop /hands:station`. The wakeup-prompt channel is the only
   way the loop can trigger a built-in slash command; the persistent Monitor stays armed across the
   compaction, and your book + skill are re-injected at reconnect, so the loop continues seamlessly.
-  Otherwise re-arm the normal `/loop /yc:station` heartbeat.
+  Otherwise re-arm the normal `/loop /hands:station` heartbeat.
 
 ## Guardrails
 
@@ -135,5 +135,5 @@ takes the beat next.
   here, stop the loop (and its Monitor).
 - Be terse. You're a station, not a narrator.
 
-Start it with **`/loop /yc:station`** in any station pane. The repo's main checkout runs
-`/loop /yc:expo` instead — that's the pass, not a station.
+Start it with **`/loop /hands:station`** in any station pane. The repo's main checkout runs
+`/loop /hands:expo` instead — that's the pass, not a station.

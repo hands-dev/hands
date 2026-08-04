@@ -1,17 +1,17 @@
 #!/usr/bin/env tsx
 /**
- * yes-chef — a local stdio MCP coordination server for expo/station Claude
+ * hands — a local stdio MCP coordination server for expo/station Claude
  * Code messaging.
  *
  * One process per Claude Code instance. State is a shared SQLite DB (WAL) under
- * `~/.claude/coordination/<repo-slug>/yes-chef.db` — auto-scoped per git repo,
+ * `~/.claude/coordination/<repo-slug>/hands.db` — auto-scoped per git repo,
  * so two projects on one machine never share a bus. No daemon — the DB file is
  * the single source of truth. Identity is derived at runtime from env + cwd
  * (the MCP registration is shared machine-wide): the repo's main checkout is
  * `expo` (the expeditor), provisioned stations are `station-<n>`.
  *
  * Known limitation: MCP cannot wake an idle interactive Claude Code. Delivery
- * is: the model calls `yc_receive` at natural checkpoints (optionally a
+ * is: the model calls `hands_receive` at natural checkpoints (optionally a
  * parked long-poll), or a Monitor tails the per-agent `.notify` file. See README.
  */
 import * as fs from "node:fs";
@@ -20,7 +20,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { buildBoard, computeStateHash, IDLE_THRESHOLD_MS } from "./board.js";
-import { type YesChefConfig, loadConfig } from "./config.js";
+import { type HandsConfig, loadConfig } from "./config.js";
 import { pollGithub } from "./github.js";
 import { isExpo, isStation, resolveAgentId, resolveAgentRef } from "./identity.js";
 import { notify } from "./notify.js";
@@ -94,7 +94,7 @@ export function stationContext(
   );
 }
 
-export function buildServer(store: Store, agentId: string, config?: YesChefConfig): McpServer {
+export function buildServer(store: Store, agentId: string, config?: HandsConfig): McpServer {
   const cfg = config ?? loadConfig();
   const principal = cfg.principal.name;
   // Resolve a recipient ref: canonical/legacy ids pass through; anything else
@@ -121,29 +121,29 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
     store.markWakePending(recipients);
   };
   const server = new McpServer(
-    { name: "yes-chef", version: "0.1.0" },
+    { name: "hands", version: "0.1.0" },
     {
       instructions:
         `Per-repo agent message bus. You are agent "${agentId}". ` +
-        "Refer to teammates by their canonical id (expo, station-1, …; see yc_peers). " +
-        "Use yc_peers to discover the team, yc_send to message one, and " +
-        "yc_receive to read messages addressed to you. Call yc_receive at natural " +
+        "Refer to teammates by their canonical id (expo, station-1, …; see hands_peers). " +
+        "Use hands_peers to discover the team, hands_send to message one, and " +
+        "hands_receive to read messages addressed to you. Call hands_receive at natural " +
         "checkpoints — MCP cannot wake you unprompted. Never put secrets in message bodies (the " +
         "shared DB stores them in plaintext). When you hit an open question or decision you can't " +
-        "resolve alone, escalate it with yc_ask — the expo (the main checkout) adjudicates " +
+        "resolve alone, escalate it with hands_ask — the expo (the main checkout) adjudicates " +
         `against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the ` +
         "expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) " +
         "call rather than deciding it yourself." +
         (isExpo(agentId)
-          ? " You ARE the expo — the expeditor at the pass / command center: run yc_questions, " +
-            "yc_priorities to read/set the ranked priorities, yc_answer to resolve, " +
-            `yc_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal ` +
-            "to-do list: yc_todo_add concrete things only they can do (idempotent via dedupKey), " +
-            "and yc_todo_update state='done' with a doneSignal when a strong signal (merged PR, " +
+          ? " You ARE the expo — the expeditor at the pass / command center: run hands_questions, " +
+            "hands_priorities to read/set the ranked priorities, hands_answer to resolve, " +
+            `hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal ` +
+            "to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), " +
+            "and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, " +
             "commit, memory write, answered escalation) shows they finished one."
           : "") +
         (isStation(agentId)
-          ? " Keep your station files current (paths in yc_paths): your PREP BOOK (distilled beat " +
+          ? " Keep your station files current (paths in hands_paths): your PREP BOOK (distilled beat " +
             "knowledge — rewrite, don't append; ≤150 lines) and your STATION SKILL (your own " +
             "operating manual). Update them on idle wakes and before any /compact — they are how " +
             "your expertise survives reboots and machine moves."
@@ -153,12 +153,12 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_send",
+    "hands_send",
     {
       title: "Send a message to another agent",
       description:
         "Enqueue a message to another agent on this repo's bus. `to` is a peer agent id " +
-        `(expo, station-2, … — see yc_peers), the principal ("${principal}"), or "*" to ` +
+        `(expo, station-2, … — see hands_peers), the principal ("${principal}"), or "*" to ` +
         "broadcast to everyone. Do not include secrets. Waking the recipient costs a full model " +
         "turn — for an FYI / status update that needs no immediate action, pass wake:false so it is " +
         "delivered on their next natural drain instead.",
@@ -201,8 +201,8 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
             ...asToolResult({
               ok: false,
               error:
-                "Direct station-to-station messaging is disabled. Route via the expo — use yc_ask " +
-                "for a decision, or yc_send({to:'expo'}) for a handoff.",
+                "Direct station-to-station messaging is disabled. Route via the expo — use hands_ask " +
+                "for a decision, or hands_send({to:'expo'}) for a handoff.",
             }),
             isError: true,
           };
@@ -236,7 +236,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_receive",
+    "hands_receive",
     {
       title: "Receive messages addressed to me",
       description:
@@ -280,7 +280,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_peers",
+    "hands_peers",
     {
       title: "List registered worktree agents",
       description:
@@ -305,7 +305,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_history",
+    "hands_history",
     {
       title: "Read past messages",
       description:
@@ -330,7 +330,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_board",
+    "hands_board",
     {
       title: "Read the standup board",
       description:
@@ -418,7 +418,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_paths",
+    "hands_paths",
     {
       title: "Where does this agent resolve? (paths + identity + journal health)",
       description:
@@ -437,7 +437,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   // --- expo / questions ---
 
   server.registerTool(
-    "yc_ask",
+    "hands_ask",
     {
       title: "Escalate an open question to the expo",
       description:
@@ -459,7 +459,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_questions",
+    "hands_questions",
     {
       title: "List questions on the bus",
       description:
@@ -493,7 +493,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_answer",
+    "hands_answer",
     {
       title: "Answer a question (resolve it)",
       description:
@@ -523,13 +523,13 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_escalate",
+    "hands_escalate",
     {
       title: "Bubble a question up to the principal",
       description:
         `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). ` +
         "Include your recommendation and the priority it touches. Then present it to him and, once " +
-        "he decides, call yc_answer with by='human'.",
+        "he decides, call hands_answer with by='human'.",
       inputSchema: {
         id: z.number().int(),
         recommendation: z.string().optional(),
@@ -551,7 +551,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_rec_outcome",
+    "hands_rec_outcome",
     {
       title: "Record a recommendation's hindsight outcome (expo self-audit)",
       description:
@@ -578,7 +578,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_priorities",
+    "hands_priorities",
     {
       title: "Read or set the menu — the expo's ranked priorities",
       description:
@@ -619,7 +619,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   // --- tickets (expo → station delegation) ---
 
   server.registerTool(
-    "yc_delegate",
+    "hands_delegate",
     {
       title: "Fire a ticket to a station (delegate a task)",
       description:
@@ -646,8 +646,8 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
           ...asToolResult({
             ok: false,
             error:
-              "Stations don't fire tickets. Hand work upward instead: yc_ask for a decision, or " +
-              "yc_send({to:'expo'}) to propose the ticket — the expo delegates it.",
+              "Stations don't fire tickets. Hand work upward instead: hands_ask for a decision, or " +
+              "hands_send({to:'expo'}) to propose the ticket — the expo delegates it.",
           }),
           isError: true,
         };
@@ -674,7 +674,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_tasks",
+    "hands_tasks",
     {
       title: "List delegated tasks",
       description:
@@ -715,7 +715,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_task_update",
+    "hands_task_update",
     {
       title: "Advance a ticket (fire / plate / serve / 86)",
       description:
@@ -750,13 +750,13 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   // --- todos (expo-managed personal to-do list for the principal) ---
 
   server.registerTool(
-    "yc_todos",
+    "hands_todos",
     {
       title: "Read the principal's to-do list",
       description:
         `List the personal to-do items the expo is tracking for ${principal}. No args: everything ` +
         "(open first). Pass state to filter: open | done | dismissed. Read-only — the expo " +
-        "manages the list via yc_todo_add / yc_todo_update.",
+        "manages the list via hands_todo_add / hands_todo_update.",
       inputSchema: {
         state: z.enum(["open", "done", "dismissed"]).optional(),
         limit: z.number().int().min(1).max(200).optional(),
@@ -788,7 +788,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_todo_add",
+    "hands_todo_add",
     {
       title: "Add an item to the principal's to-do list",
       description:
@@ -822,7 +822,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_todo_update",
+    "hands_todo_update",
     {
       title: "Cross off / dismiss / re-open a to-do",
       description:
@@ -847,12 +847,12 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   );
 
   server.registerTool(
-    "yc_focus",
+    "hands_focus",
     {
       title: "Set a station's focus (its evolving specialization)",
       description:
         'Label a station with its current specialization ("developer API", "billing") — shown on ' +
-        "the board and in the books, and addressable in yc_send/delegate as a convenience " +
+        "the board and in the books, and addressable in hands_send/delegate as a convenience " +
         "(the station-<n> id stays the durable key). A station may set its own focus; the expo may " +
         "set anyone's. Pass focus: null to clear.",
       inputSchema: {
@@ -884,7 +884,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
   // --- expo-only: team-awareness GitHub poll + digest notes ---
   if (isExpo(agentId)) {
     server.registerTool(
-      "yc_digest_note",
+      "hands_digest_note",
       {
         title: "Add a prose note to today's journal digest (expo only)",
         description:
@@ -909,7 +909,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
     );
 
     server.registerTool(
-      "yc_gh_poll",
+      "hands_gh_poll",
       {
         title: "Poll GitHub for other engineers' PRs (expo only)",
         description:
@@ -950,7 +950,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
       }));
 
     server.registerTool(
-      "yc_station_add",
+      "hands_station_add",
       {
         title: "Open more stations (expo only)",
         description:
@@ -973,7 +973,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
     );
 
     server.registerTool(
-      "yc_station_remove",
+      "hands_station_remove",
       {
         title: "Close a station (expo only)",
         description:
@@ -997,7 +997,7 @@ export function buildServer(store: Store, agentId: string, config?: YesChefConfi
     );
 
     server.registerTool(
-      "yc_scale",
+      "hands_scale",
       {
         title: "Scale the station line (expo only)",
         description:
@@ -1032,10 +1032,10 @@ function resolveSelf(): string {
 
 /**
  * Where does this process resolve? Shared by the `paths` CLI subcommand, the
- * `yes-chef paths` CLI, and the yc_paths MCP tool — the one authority
+ * `hands paths` CLI, and the hands_paths MCP tool — the one authority
  * agents consult instead of guessing per-repo paths.
  */
-export function pathsReport(agentId: string, cfg: YesChefConfig) {
+export function pathsReport(agentId: string, cfg: HandsConfig) {
   const info = repoInfo();
   const enabled = Boolean(cfg.remote.url?.trim());
   const journal = enabled ? readSyncStatus(journalDir()) : null;
@@ -1098,7 +1098,7 @@ function runCli(subcommand: string, argv: string[]): number {
       );
       return 0;
     }
-    process.stderr.write(`[yes-chef] unknown subcommand: ${subcommand}\n`);
+    process.stderr.write(`[hands] unknown subcommand: ${subcommand}\n`);
     return 2;
   } finally {
     store.close();
@@ -1118,7 +1118,7 @@ async function main(): Promise<void> {
   if (subcommand === "serve") {
     const { serve } = await import("./serve.js");
     const handle = await serve();
-    process.stdout.write(`yes-chef dashboard → ${handle.url}\n(Ctrl-C to stop)\n`);
+    process.stdout.write(`hands dashboard → ${handle.url}\n(Ctrl-C to stop)\n`);
     if (!process.argv.includes("--no-open") && process.platform === "darwin") {
       const { spawn } = await import("node:child_process");
       try {
@@ -1142,9 +1142,9 @@ async function main(): Promise<void> {
 // URLs with realpath'd sides — a raw string compare breaks on spaces
 // (percent-encoding) and symlinks, both possible in plugin install paths.
 // The plugin bundle runs behind a version-gate wrapper (argv[1] = wrapper,
-// not this module), which signals through YES_CHEF_FORCE_MAIN instead.
+// not this module), which signals through HANDS_FORCE_MAIN instead.
 const invokedDirectly = (() => {
-  if (process.env.YES_CHEF_FORCE_MAIN === "1") return true;
+  if (process.env.HANDS_FORCE_MAIN === "1") return true;
   const argv1 = process.argv[1];
   if (argv1 === undefined) return false;
   try {
@@ -1158,7 +1158,7 @@ const invokedDirectly = (() => {
 if (invokedDirectly) {
   main().catch((err) => {
     // stderr is safe — stdout is the MCP protocol channel.
-    console.error("[yes-chef] fatal:", err);
+    console.error("[hands] fatal:", err);
     process.exit(1);
   });
 }
