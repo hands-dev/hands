@@ -17,7 +17,13 @@ let handle: ServeHandle | null = null;
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-serve-"));
-  env = { HANDS_HOME: home };
+  // This suite never creates its own fixture repo, so a real hands.config.json
+  // in whatever repo the test process happens to run from (a worktree of this
+  // very repo, when dogfooded) must not bleed in — see config.ts repoConfigPath.
+  // Also matters for loadConfig's cache key, which is keyed on cwd (constant
+  // across this whole file) — without this, the FIRST test to populate that
+  // cache entry pollutes every later test that shares the same default cwd.
+  env = { HANDS_HOME: home, HANDS_NO_REPO_CONFIG: "1" };
 });
 afterEach(() => {
   handle?.close();
@@ -170,7 +176,7 @@ describe("other kitchens (books multiplayer)", () => {
       JSON.stringify({ remote: { url: remote, handle: "michael", project: "proj" } }),
     );
     resetConfigCache();
-    const serveEnv = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user") };
+    const serveEnv = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user"), HANDS_NO_REPO_CONFIG: "1" };
     handle = await serve({ port: 0, env: serveEnv, tickMs: 25, booksTickMs: 100 });
 
     const stream = sse(`${handle.url}api/events`);
@@ -229,7 +235,7 @@ describe("other kitchens' crafts (books multiplayer)", () => {
       JSON.stringify({ remote: { url: remote, handle: "michael", project: "proj" } }),
     );
     resetConfigCache();
-    const serveEnv = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user") };
+    const serveEnv = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user"), HANDS_NO_REPO_CONFIG: "1" };
     handle = await serve({ port: 0, env: serveEnv, tickMs: 25, booksTickMs: 100 });
 
     const stream = sse(`${handle.url}api/events`);
