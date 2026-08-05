@@ -4,7 +4,14 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { dbPath } from "./paths.js";
-import { openJournal, type OtherKitchen, readOtherKitchens, syncPull } from "./remote.js";
+import {
+  openJournal,
+  type OtherCraft,
+  type OtherKitchen,
+  readOtherCrafts,
+  readOtherKitchens,
+  syncPull,
+} from "./remote.js";
 import { buildSnapshot, type Snapshot } from "./snapshot.js";
 import { Store } from "./store.js";
 import { TokenSampler, type TokenSeries } from "./tokens.js";
@@ -15,6 +22,8 @@ export type DashboardPayload = Snapshot & {
   principal: string;
   /** other handles' recent books activity (empty when the books are off) */
   kitchens: OtherKitchen[];
+  /** other handles' craft books/skills in this project's books (empty when the books are off) */
+  crafts: OtherCraft[];
   /** per-pane token burn from Claude Code transcripts (null until first sample) */
   tokens: TokenSeries | null;
   /** approximate output-token cost per rail ticket (assignee's spend over the working interval) */
@@ -100,6 +109,7 @@ export function serve(opts?: {
   // it only pulls (best-effort, on the slow tick) and reads the clone.
   const journal = openJournal({ env });
   let kitchens: OtherKitchen[] = [];
+  let crafts: OtherCraft[] = [];
   const tokensTickMs = opts?.tokensTickMs ?? 60_000;
   const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : undefined);
   let tokens: TokenSeries | null = null;
@@ -130,6 +140,7 @@ export function serve(opts?: {
     try {
       syncPull(journal.dir); // best-effort — offline or a concurrent sync just means stale
       kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
+      crafts = readOtherCrafts(journal.dir, journal.project, journal.handle);
     } catch {
       // keep the previous read
     }
@@ -138,10 +149,11 @@ export function serve(opts?: {
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens, taskCosts }),
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, tokens, taskCosts }),
       key:
         snapshotKey(snapshot) +
         JSON.stringify(kitchens) +
+        JSON.stringify(crafts) +
         JSON.stringify(tokens?.totals24h ?? null) +
         JSON.stringify(taskCosts),
     };
