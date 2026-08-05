@@ -9533,6 +9533,7 @@ var init_tokens = __esm({
 // src/serve.ts
 var serve_exports = {};
 __export(serve_exports, {
+  kitchenName: () => kitchenName,
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
@@ -9540,6 +9541,24 @@ import * as fs11 from "node:fs";
 import { createServer } from "node:http";
 import * as path12 from "node:path";
 import { fileURLToPath } from "node:url";
+function escapeHtml(s) {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+  );
+}
+function kitchenName(db) {
+  return path12.basename(path12.dirname(db)) || "kitchen";
+}
+function shellHtml(kitchen) {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<link rel="icon" href="data:,"/><title>hands \xB7 ${escapeHtml(kitchen)}</title>
+<link rel="stylesheet" href="/assets/dashboard.css"/>
+</head><body><div id="root"></div>
+<script type="module" src="/assets/dashboard.js"></script></body></html>
+`;
+}
 function defaultAssetsDir() {
   const here = path12.dirname(fileURLToPath(import.meta.url));
   return [
@@ -9562,6 +9581,7 @@ function serve(opts) {
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
   const store = new Store({ env });
   const db = dbPath(env);
+  const shell = shellHtml(kitchenName(db));
   const principal = loadConfig({ env }).principal.name;
   const journal = openJournal({ env });
   let kitchens = [];
@@ -9628,7 +9648,7 @@ function serve(opts) {
     const url2 = req.url ?? "/";
     if (url2 === "/" || url2.startsWith("/index")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      res.end(SHELL);
+      res.end(shell);
       return;
     }
     if (url2.startsWith("/assets/")) {
@@ -9741,7 +9761,7 @@ function serve(opts) {
     });
   });
 }
-var ASSETS, SHELL;
+var ASSETS;
 var init_serve = __esm({
   "src/serve.ts"() {
     "use strict";
@@ -9755,13 +9775,6 @@ var init_serve = __esm({
       "dashboard.js": "text/javascript; charset=utf-8",
       "dashboard.css": "text/css; charset=utf-8"
     };
-    SHELL = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="icon" href="data:,"/><title>hands</title>
-<link rel="stylesheet" href="/assets/dashboard.css"/>
-</head><body><div id="root"></div>
-<script type="module" src="/assets/dashboard.js"></script></body></html>
-`;
   }
 });
 

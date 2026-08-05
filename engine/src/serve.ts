@@ -46,14 +46,32 @@ const ASSETS: Record<string, string> = {
   "dashboard.css": "text/css; charset=utf-8",
 };
 
-/** Static shell; all data (including the principal) arrives via SSE/JSON. */
-const SHELL = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+function escapeHtml(s: string): string {
+  return s.replace(
+    /[&<>"']/g,
+    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] as string,
+  );
+}
+
+/** Repo/kitchen name for the browser tab — same derivation as the sidebar label. */
+export function kitchenName(db: string): string {
+  return path.basename(path.dirname(db)) || "kitchen";
+}
+
+/**
+ * Static shell; all data (including the principal) arrives via SSE/JSON. The
+ * tab title is namespaced to the kitchen so multiple hands dashboards (one
+ * per repo) are distinguishable at a glance.
+ */
+function shellHtml(kitchen: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="icon" href="data:,"/><title>hands</title>
+<link rel="icon" href="data:,"/><title>hands · ${escapeHtml(kitchen)}</title>
 <link rel="stylesheet" href="/assets/dashboard.css"/>
 </head><body><div id="root"></div>
 <script type="module" src="/assets/dashboard.js"></script></body></html>
 `;
+}
 
 function defaultAssetsDir(): string | null {
   const here = path.dirname(fileURLToPath(import.meta.url));
@@ -104,6 +122,7 @@ export function serve(opts?: {
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
   const store = new Store({ env });
   const db = dbPath(env);
+  const shell = shellHtml(kitchenName(db));
   const principal = loadConfig({ env }).principal.name;
   // Multiplayer read: other handles in the books. The viewer never appends —
   // it only pulls (best-effort, on the slow tick) and reads the clone.
@@ -186,7 +205,7 @@ export function serve(opts?: {
 
     if (url === "/" || url.startsWith("/index")) {
       res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      res.end(SHELL);
+      res.end(shell);
       return;
     }
 
