@@ -3237,8 +3237,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path13) {
-      let input = path13;
+    function removeDotSegments(path14) {
+      let input = path14;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3490,8 +3490,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path13, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path13 && path13 !== "/" ? path13 : void 0;
+        const [path14, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path14 && path14 !== "/" ? path14 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6890,12 +6890,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs13, exportName) {
+    function addFormats(ajv, list, fs14, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs13[f]);
+        ajv.addFormat(f, fs14[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8104,14 +8104,42 @@ var init_board = __esm({
   }
 });
 
-// src/config.ts
+// src/credentials.ts
 import * as fs3 from "node:fs";
 import * as os2 from "node:os";
 import * as path4 from "node:path";
+function credentialsPath(env = process.env) {
+  const home = env.HANDS_TEST_HOME?.trim() || os2.homedir();
+  return path4.join(home, ".hands", "credentials.json");
+}
+function readCredentials(env = process.env) {
+  try {
+    const raw = fs3.readFileSync(credentialsPath(env), "utf8");
+    const parsed = JSON.parse(raw);
+    return isHandsCredentials(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+function isHandsCredentials(value) {
+  if (!value || typeof value !== "object") return false;
+  const v = value;
+  return typeof v.accessToken === "string" && typeof v.expiresAt === "number" && typeof v.githubLogin === "string" && typeof v.tier === "string";
+}
+var init_credentials = __esm({
+  "src/credentials.ts"() {
+    "use strict";
+  }
+});
+
+// src/config.ts
+import * as fs4 from "node:fs";
+import * as os3 from "node:os";
+import * as path5 from "node:path";
 function readJson(file2) {
   let raw;
   try {
-    raw = fs3.readFileSync(file2, "utf8");
+    raw = fs4.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -8156,13 +8184,19 @@ function merge2(base, layer) {
   };
 }
 function userConfigPath(env = process.env) {
-  const home = env.HANDS_TEST_HOME?.trim() || os2.homedir();
-  return path4.join(home, ".claude", CONFIG_BASENAME);
+  const home = env.HANDS_TEST_HOME?.trim() || os3.homedir();
+  return path5.join(home, ".claude", CONFIG_BASENAME);
 }
 function repoConfigPath(cwd = process.cwd(), env = process.env) {
   if (env.HANDS_NO_REPO_CONFIG?.trim()) return null;
   const info = repoInfo(cwd);
-  return info ? path4.join(info.repoRoot, CONFIG_BASENAME) : null;
+  return info ? path5.join(info.repoRoot, CONFIG_BASENAME) : null;
+}
+function readLoginDerivedLayer(env) {
+  const creds = readCredentials(env);
+  if (!creds?.cloudBooksUrl) return null;
+  const url2 = creds.cloudBooksUrl.endsWith(".git") ? creds.cloudBooksUrl : `${creds.cloudBooksUrl}.git`;
+  return { remote: { url: url2, handle: creds.githubLogin, project: null } };
 }
 function loadConfig(options) {
   const cwd = options?.cwd ?? process.cwd();
@@ -8170,7 +8204,8 @@ function loadConfig(options) {
   const key = `${cwd} ${env.HANDS_TEST_HOME ?? ""} ${env.HANDS_NO_REPO_CONFIG ?? ""}`;
   const hit = cache.get(key);
   if (hit) return hit;
-  let cfg = merge2(DEFAULT_CONFIG, readJson(userConfigPath(env)));
+  let cfg = merge2(DEFAULT_CONFIG, readLoginDerivedLayer(env));
+  cfg = merge2(cfg, readJson(userConfigPath(env)));
   const repoFile = repoConfigPath(cwd, env);
   if (repoFile) cfg = merge2(cfg, readJson(repoFile));
   cache.set(key, cfg);
@@ -8181,6 +8216,7 @@ var init_config = __esm({
   "src/config.ts"() {
     "use strict";
     init_paths();
+    init_credentials();
     DEFAULT_CONFIG = {
       principal: { name: "Michael" },
       topology: "strict-hub",
@@ -8203,10 +8239,10 @@ var init_config = __esm({
 });
 
 // src/priorities.ts
-import * as fs5 from "node:fs";
-import * as path5 from "node:path";
+import * as fs6 from "node:fs";
+import * as path6 from "node:path";
 function prioritiesPath(env = process.env) {
-  return path5.join(coordinationDir(env), "priorities.md");
+  return path6.join(coordinationDir(env), "priorities.md");
 }
 function stripMarker(line) {
   return line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim();
@@ -8215,7 +8251,7 @@ function readPriorities(env = process.env) {
   const file2 = prioritiesPath(env);
   let raw;
   try {
-    raw = fs5.readFileSync(file2, "utf8");
+    raw = fs6.readFileSync(file2, "utf8");
   } catch {
     return { items: [], raw: "", exists: false };
   }
@@ -8224,15 +8260,15 @@ function readPriorities(env = process.env) {
 }
 function writePriorities(items, env = process.env) {
   const dir = coordinationDir(env);
-  fs5.mkdirSync(dir, { recursive: true, mode: 448 });
+  fs6.mkdirSync(dir, { recursive: true, mode: 448 });
   const body = `# Today's priorities (ranked \u2014 the expo adjudicates against these)
 
 ${items.map((it, i) => `${i + 1}. ${it}`).join("\n")}
 `;
   const file2 = prioritiesPath(env);
-  fs5.writeFileSync(file2, body, { mode: 384 });
+  fs6.writeFileSync(file2, body, { mode: 384 });
   try {
-    fs5.chmodSync(file2, 384);
+    fs6.chmodSync(file2, 384);
   } catch {
   }
 }
@@ -8244,8 +8280,8 @@ var init_priorities = __esm({
 });
 
 // src/digest.ts
-import * as fs7 from "node:fs";
-import * as path7 from "node:path";
+import * as fs8 from "node:fs";
+import * as path8 from "node:path";
 function dayOf(ts) {
   return new Date(ts).toISOString().slice(0, 10);
 }
@@ -8376,7 +8412,7 @@ function renderIndex(days, opts) {
 function writeIfOwn(file2, content) {
   let existing = null;
   try {
-    existing = fs7.readFileSync(file2, "utf8");
+    existing = fs8.readFileSync(file2, "utf8");
   } catch {
   }
   if (existing !== null) {
@@ -8384,14 +8420,14 @@ function writeIfOwn(file2, content) {
     const stamped = existing.match(STAMP_RE);
     if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
   }
-  fs7.writeFileSync(file2, content);
+  fs8.writeFileSync(file2, content);
   return true;
 }
 function regenerateDigests(journal, dates) {
   const events = readEvents(journal.dir, journal.project, journal.handle);
   if (events.length === 0) return [];
-  const handleDir = path7.join(journal.dir, "journal", journal.project, journal.handle);
-  fs7.mkdirSync(handleDir, { recursive: true });
+  const handleDir = path8.join(journal.dir, "journal", journal.project, journal.handle);
+  fs8.mkdirSync(handleDir, { recursive: true });
   const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
   const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
   const changed = [];
@@ -8400,14 +8436,14 @@ function regenerateDigests(journal, dates) {
     const digest = renderDigest(events, { project: journal.project, handle: journal.handle, date: date5 });
     index.push({ date: date5, summary: digest.summary });
     if (!target.includes(date5)) continue;
-    const file2 = path7.join(handleDir, `${date5}.md`);
+    const file2 = path8.join(handleDir, `${date5}.md`);
     if (writeIfOwn(file2, digest.body)) {
-      changed.push(path7.join("journal", journal.project, journal.handle, `${date5}.md`));
+      changed.push(path8.join("journal", journal.project, journal.handle, `${date5}.md`));
     }
   }
   const readme = renderIndex(index, { project: journal.project, handle: journal.handle });
-  if (writeIfOwn(path7.join(handleDir, "README.md"), readme)) {
-    changed.push(path7.join("journal", journal.project, journal.handle, "README.md"));
+  if (writeIfOwn(path8.join(handleDir, "README.md"), readme)) {
+    changed.push(path8.join("journal", journal.project, journal.handle, "README.md"));
   }
   return changed;
 }
@@ -8425,7 +8461,7 @@ var init_digest = __esm({
 });
 
 // src/snapshot.ts
-import * as path8 from "node:path";
+import * as path9 from "node:path";
 function activity(raw) {
   if (!raw) return { files: [], ticket: null };
   try {
@@ -8466,7 +8502,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       const b = online[j];
       const shared = a.files.find((f) => b.files.includes(f));
       if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path8.basename(shared) });
+        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path9.basename(shared) });
       } else if (a.ticket && a.ticket === b.ticket) {
         collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
       }
@@ -8606,9 +8642,9 @@ var init_snapshot = __esm({
 
 // src/remote.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs8 from "node:fs";
-import * as os4 from "node:os";
-import * as path9 from "node:path";
+import * as fs9 from "node:fs";
+import * as os5 from "node:os";
+import * as path10 from "node:path";
 function git3(cwd, args) {
   return execFileSync4("git", args, {
     cwd,
@@ -8652,7 +8688,7 @@ function resolveProject(config2, cwd = process.cwd()) {
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   const origin = tryGit(root, ["remote", "get-url", "origin"]);
   if (origin) project = projectFromOrigin(origin);
-  if (!project) project = sanitizeSegment(path9.basename(root));
+  if (!project) project = sanitizeSegment(path10.basename(root));
   projectCache.set(cwd, project);
   return project;
 }
@@ -8660,18 +8696,18 @@ function resolveHandle(config2) {
   const h = config2.remote.handle?.trim();
   if (h) return sanitizeSegment(h, "local");
   try {
-    return sanitizeSegment(os4.userInfo().username, "local");
+    return sanitizeSegment(os5.userInfo().username, "local");
   } catch {
     return "local";
   }
 }
 function journalDir(env = process.env, cwd = process.cwd()) {
-  return path9.join(coordinationDir(env, cwd), "remote");
+  return path10.join(coordinationDir(env, cwd), "remote");
 }
 function ensureRepo(dir, url2) {
   try {
-    fs8.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs8.existsSync(path9.join(dir, ".git"))) {
+    fs9.mkdirSync(dir, { recursive: true, mode: 448 });
+    if (!fs9.existsSync(path10.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
       git3(dir, ["config", "user.name", "hands"]);
       git3(dir, ["config", "user.email", "hands@localhost"]);
@@ -8710,10 +8746,10 @@ function syncPull(dir) {
   return { ok: false, reason: "conflict" };
 }
 function readMarker(dir) {
-  const file2 = path9.join(dir, MARKER_FILE);
+  const file2 = path10.join(dir, MARKER_FILE);
   let raw;
   try {
-    raw = fs8.readFileSync(file2, "utf8");
+    raw = fs9.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -8747,7 +8783,7 @@ function validateJournal(dir, opts) {
   if (!opts?.write) return { ok: true };
   let entries = [];
   try {
-    entries = fs8.readdirSync(dir).filter((e) => e !== ".git");
+    entries = fs9.readdirSync(dir).filter((e) => e !== ".git");
   } catch {
     return { ok: false, reason: `journal dir unreadable: ${dir}` };
   }
@@ -8759,26 +8795,26 @@ function validateJournal(dir, opts) {
       reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
-  fs8.writeFileSync(path9.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+  fs9.writeFileSync(path10.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
   return { ok: true, bootstrapped: true };
 }
 function debounceMarkerPath(dir) {
-  return path9.join(dir, ".git", "hands-last-push");
+  return path10.join(dir, ".git", "hands-last-push");
 }
 function syncStatusPath(dir) {
-  return path9.join(dir, ".git", "hands-sync-status");
+  return path10.join(dir, ".git", "hands-sync-status");
 }
 function writeSyncStatus(dir, result, now) {
   try {
-    fs8.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
+    fs9.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
 `);
   } catch {
   }
 }
 function readSyncStatus(dir) {
   try {
-    return JSON.parse(fs8.readFileSync(syncStatusPath(dir), "utf8"));
+    return JSON.parse(fs9.readFileSync(syncStatusPath(dir), "utf8"));
   } catch {
     return null;
   }
@@ -8790,22 +8826,22 @@ function changedLogDates(dir, head0, journal) {
     "--name-only",
     `${head0}..HEAD`,
     "--",
-    path9.join("journal", journal.project, journal.handle, "log")
+    path10.join("journal", journal.project, journal.handle, "log")
   ]);
   if (diff === null) return void 0;
   const dates = /* @__PURE__ */ new Set();
   for (const line of diff.split("\n")) {
-    const m = path9.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
+    const m = path10.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
     if (m) dates.add(m[1]);
   }
   return dates;
 }
 function writeIfChanged(file2, content) {
   try {
-    if (fs8.readFileSync(file2, "utf8") === content) return false;
+    if (fs9.readFileSync(file2, "utf8") === content) return false;
   } catch {
   }
-  fs8.writeFileSync(file2, content);
+  fs9.writeFileSync(file2, content);
   return true;
 }
 function syncPush(journal, opts) {
@@ -8814,7 +8850,7 @@ function syncPush(journal, opts) {
   const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
     try {
-      if (now - fs8.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
+      if (now - fs9.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
     } catch {
     }
   }
@@ -8824,8 +8860,8 @@ function syncPush(journal, opts) {
   };
   try {
     const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
-    const ownPaths = [path9.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs8.existsSync(path9.join(dir, p)));
+    const ownPaths = [path10.join("journal", project, handle), MARKER_FILE];
+    const own = ownPaths.filter((p) => fs9.existsSync(path10.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
     let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
@@ -8848,14 +8884,14 @@ function syncPush(journal, opts) {
     const digestDates = changedLogDates(dir, head0, journal);
     const changedDigests = regenerateDigests(journal, digestDates);
     if (changedDigests.length > 0) {
-      git3(dir, ["add", "--", path9.join("journal", project, handle)]);
+      git3(dir, ["add", "--", path10.join("journal", project, handle)]);
       git3(dir, ["commit", "-q", "-m", "journal: digests"]);
       dirty = true;
     }
     if (opts?.store) {
-      const handleDir = path9.join(dir, "journal", project, handle);
-      fs8.mkdirSync(handleDir, { recursive: true });
-      const snapshotFile = path9.join(handleDir, "dashboard.json");
+      const handleDir = path10.join(dir, "journal", project, handle);
+      fs9.mkdirSync(handleDir, { recursive: true });
+      const snapshotFile = path10.join(handleDir, "dashboard.json");
       const pub = buildPublicSnapshot(opts.store, { handle, project, now });
       if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}
 `)) {
@@ -8866,11 +8902,11 @@ function syncPush(journal, opts) {
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
     if (!dirty && ahead === "0") {
-      fs8.writeFileSync(marker, "");
+      fs9.writeFileSync(marker, "");
       return finish({ status: "clean" });
     }
     git3(dir, ["push", "-q", "-u", "origin", "main"]);
-    fs8.writeFileSync(marker, "");
+    fs9.writeFileSync(marker, "");
     return finish({ status: "pushed" });
   } catch (err) {
     return finish({
@@ -8890,7 +8926,7 @@ function openJournal(options) {
   const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
   const agentId = options?.agentId ?? null;
-  const logDir = path9.join(dir, "journal", project, handle, "log");
+  const logDir = path10.join(dir, "journal", project, handle, "log");
   return {
     dir,
     project,
@@ -8900,7 +8936,7 @@ function openJournal(options) {
     append(type, data) {
       if (type === "cursor") return;
       try {
-        fs8.mkdirSync(logDir, { recursive: true });
+        fs9.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const event = {
           v: JOURNAL_VERSION,
@@ -8909,7 +8945,7 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs8.appendFileSync(path9.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+        fs9.appendFileSync(path10.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
 `, {
           mode: 384
         });
@@ -8921,7 +8957,7 @@ function openJournal(options) {
 function readEventsFromDir(logDir, into, onlyFile) {
   let files = [];
   try {
-    files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
+    files = fs9.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
     return;
   }
@@ -8929,7 +8965,7 @@ function readEventsFromDir(logDir, into, onlyFile) {
   for (const file2 of files) {
     let body;
     try {
-      body = fs8.readFileSync(path9.join(logDir, file2), "utf8");
+      body = fs9.readFileSync(path10.join(logDir, file2), "utf8");
     } catch {
       continue;
     }
@@ -8945,25 +8981,25 @@ function readEventsFromDir(logDir, into, onlyFile) {
 }
 function readEvents(dir, project, handle) {
   const events = [];
-  readEventsFromDir(path9.join(dir, "journal", project, handle, "log"), events);
+  readEventsFromDir(path10.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
   const enabled = Boolean(config2.remote.url?.trim());
-  const dir = enabled ? path9.join(
+  const dir = enabled ? path10.join(
     journalDir(env, cwd),
     "journal",
     resolveProject(config2, cwd),
     resolveHandle(config2),
     "crafts"
-  ) : path9.join(coordinationDir(env, cwd), "crafts");
+  ) : path10.join(coordinationDir(env, cwd), "crafts");
   const slug = sanitizeSegment(craft, "unnamed");
   return {
     dir,
     slug,
-    book: path9.join(dir, `${slug}.md`),
-    skill: path9.join(dir, `${slug}.skill.md`),
+    book: path10.join(dir, `${slug}.md`),
+    skill: path10.join(dir, `${slug}.skill.md`),
     durable: enabled
   };
 }
@@ -9007,16 +9043,16 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
   const limit = opts?.limitPerHandle ?? 15;
   let handles = [];
   try {
-    handles = fs8.readdirSync(path9.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs9.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const kitchens = [];
   for (const handle of handles) {
-    const logDir = path9.join(dir, "journal", project, handle, "log");
+    const logDir = path10.join(dir, "journal", project, handle, "log");
     let files = [];
     try {
-      files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
+      files = fs9.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
     } catch {
     }
     const events = [];
@@ -9039,23 +9075,23 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
 function readOtherCrafts(dir, project, ownHandle) {
   let handles = [];
   try {
-    handles = fs8.readdirSync(path9.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs9.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const read = (file2) => {
     try {
-      return fs8.readFileSync(file2, "utf8");
+      return fs9.readFileSync(file2, "utf8");
     } catch {
       return null;
     }
   };
   const crafts = [];
   for (const handle of handles) {
-    const craftsDir = path9.join(dir, "journal", project, handle, "crafts");
+    const craftsDir = path10.join(dir, "journal", project, handle, "crafts");
     let files = [];
     try {
-      files = fs8.readdirSync(craftsDir);
+      files = fs9.readdirSync(craftsDir);
     } catch {
       continue;
     }
@@ -9066,8 +9102,8 @@ function readOtherCrafts(dir, project, ownHandle) {
       crafts.push({
         handle,
         slug,
-        book: read(path9.join(craftsDir, `${slug}.md`)),
-        skill: read(path9.join(craftsDir, `${slug}.skill.md`))
+        book: read(path10.join(craftsDir, `${slug}.md`)),
+        skill: read(path10.join(craftsDir, `${slug}.skill.md`))
       });
     }
   }
@@ -9105,9 +9141,9 @@ __export(provision_exports, {
   stationRoot: () => stationRoot
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
-import * as fs9 from "node:fs";
-import * as os5 from "node:os";
-import * as path10 from "node:path";
+import * as fs10 from "node:fs";
+import * as os6 from "node:os";
+import * as path11 from "node:path";
 function git4(cwd, args) {
   return execFileSync5("git", args, {
     cwd,
@@ -9124,7 +9160,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path10.join(os5.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path11.join(os6.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -9133,7 +9169,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs9.readdirSync(root);
+    names = fs10.readdirSync(root);
   } catch {
     return [];
   }
@@ -9145,7 +9181,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path10.join(root, name),
+      dir: path11.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -9217,14 +9253,14 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs9.mkdirSync(root, { recursive: true });
+  fs10.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path10.join(root, id);
+    const dir = path11.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -9255,7 +9291,7 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path10.join(root, `station-${index}`);
+  const dir = path11.join(root, `station-${index}`);
   try {
     execFileSync5("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
   } catch {
@@ -9265,7 +9301,7 @@ function removeStation(id, opts) {
   } catch {
   }
   let removed = false;
-  if (fs9.existsSync(dir)) {
+  if (fs10.existsSync(dir)) {
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
     try {
@@ -9314,9 +9350,9 @@ var init_provision = __esm({
 });
 
 // src/tokens.ts
-import * as fs10 from "node:fs";
-import * as os6 from "node:os";
-import * as path11 from "node:path";
+import * as fs11 from "node:fs";
+import * as os7 from "node:os";
+import * as path12 from "node:path";
 function encodeProjectDir(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
@@ -9335,17 +9371,17 @@ var init_tokens = __esm({
       /** agentId → messageId → final usage (last write wins — the dedupe) */
       messages = /* @__PURE__ */ new Map();
       constructor(opts) {
-        this.projectsDir = opts?.projectsDir ?? path11.join(os6.homedir(), ".claude", "projects");
+        this.projectsDir = opts?.projectsDir ?? path12.join(os7.homedir(), ".claude", "projects");
         this.now = opts?.now ?? (() => Date.now());
       }
       sample(agents) {
         const now = this.now();
         for (const agent of agents) {
           if (!agent.cwd) continue;
-          const dir = path11.join(this.projectsDir, encodeProjectDir(agent.cwd));
+          const dir = path12.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
-            names = fs10.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+            names = fs11.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
           } catch {
             continue;
           }
@@ -9355,9 +9391,9 @@ var init_tokens = __esm({
             this.messages.set(agent.id, byMsg);
           }
           for (const name of names) {
-            const file2 = path11.join(dir, name);
+            const file2 = path12.join(dir, name);
             try {
-              const stat = fs10.statSync(file2);
+              const stat = fs11.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
               this.readAppended(file2, stat.size, byMsg);
             } catch {
@@ -9365,21 +9401,21 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs10.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path11.join(dir, e.name, "subagents"));
+            sessionDirs = fs11.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path12.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
           for (const subDir of sessionDirs) {
             let subNames = [];
             try {
-              subNames = fs10.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+              subNames = fs11.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
             } catch {
               continue;
             }
             for (const name of subNames) {
-              const file2 = path11.join(subDir, name);
+              const file2 = path12.join(subDir, name);
               try {
-                const stat = fs10.statSync(file2);
+                const stat = fs11.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
                 this.readAppended(file2, stat.size, byMsg, file2);
               } catch {
@@ -9407,11 +9443,11 @@ var init_tokens = __esm({
         if (size <= state.offset) return;
         const length = size - state.offset;
         const buffer = Buffer.alloc(length);
-        const fd = fs10.openSync(file2, "r");
+        const fd = fs11.openSync(file2, "r");
         try {
-          fs10.readSync(fd, buffer, 0, length, state.offset);
+          fs11.readSync(fd, buffer, 0, length, state.offset);
         } finally {
-          fs10.closeSync(fd);
+          fs11.closeSync(fd);
         }
         state.offset = size;
         let text = state.partial + buffer.toString("utf8");
@@ -9468,10 +9504,10 @@ var init_tokens = __esm({
       callLabel(callFile) {
         const cached2 = this.metaLabels.get(callFile);
         if (cached2) return cached2;
-        let label = path11.basename(callFile, ".jsonl");
+        let label = path12.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
-            fs10.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
+            fs11.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
           );
           if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
           else if (meta3.agentType) label = meta3.agentType;
@@ -9537,9 +9573,9 @@ __export(serve_exports, {
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
-import * as fs11 from "node:fs";
+import * as fs12 from "node:fs";
 import { createServer } from "node:http";
-import * as path12 from "node:path";
+import * as path13 from "node:path";
 import { fileURLToPath } from "node:url";
 function escapeHtml(s) {
   return s.replace(
@@ -9548,7 +9584,7 @@ function escapeHtml(s) {
   );
 }
 function kitchenName(db) {
-  return path12.basename(path12.dirname(db)) || "kitchen";
+  return path13.basename(path13.dirname(db)) || "kitchen";
 }
 function shellHtml(kitchen) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
@@ -9560,13 +9596,13 @@ function shellHtml(kitchen) {
 `;
 }
 function defaultAssetsDir() {
-  const here = path12.dirname(fileURLToPath(import.meta.url));
+  const here = path13.dirname(fileURLToPath(import.meta.url));
   return [
-    path12.join(here, "assets"),
+    path13.join(here, "assets"),
     // plugin/dist/server-impl.mjs → sibling assets/
-    path12.join(here, "..", "..", "plugin", "dist", "assets")
+    path13.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs11.existsSync(d)) ?? null;
+  ].find((d) => fs12.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -9675,7 +9711,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs11.readFileSync(path12.join(assetsDir, name));
+        const body = fs12.readFileSync(path13.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -9794,7 +9830,7 @@ var init_serve = __esm({
 });
 
 // src/server.ts
-import * as fs12 from "node:fs";
+import * as fs13 from "node:fs";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -10156,8 +10192,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path13, errorMaps, issueData } = params;
-  const fullPath = [...path13, ...issueData.path || []];
+  const { data, path: path14, errorMaps, issueData } = params;
+  const fullPath = [...path14, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -10272,11 +10308,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path13, key) {
+  constructor(parent, value, path14, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path13;
+    this._path = path14;
     this._key = key;
   }
   get path() {
@@ -14199,10 +14235,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path13) {
-  if (!path13)
+function getElementAtPath(obj, path14) {
+  if (!path14)
     return obj;
-  return path13.reduce((acc, key) => acc?.[key], obj);
+  return path14.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -14585,11 +14621,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path13, issues) {
+function prefixIssues(path14, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path13);
+    iss.path.unshift(path14);
     return iss;
   });
 }
@@ -14772,7 +14808,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path13 = []) => {
+  const processError = (error49, path14 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -14782,7 +14818,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path13, ...issue2.path];
+        const fullpath = [...path14, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -14814,8 +14850,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path13 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path13) {
+  const path14 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path14) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -27221,13 +27257,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path13 = ref.slice(1).split("/").filter(Boolean);
-  if (path13.length === 0) {
+  const path14 = ref.slice(1).split("/").filter(Boolean);
+  if (path14.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path13[0] === defsKey) {
-    const key = path13[1];
+  if (path14[0] === defsKey) {
+    const key = path14[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -33072,7 +33108,7 @@ init_identity();
 
 // src/notify.ts
 init_paths();
-import * as fs4 from "node:fs";
+import * as fs5 from "node:fs";
 function notify(recipients, meta3, env = process.env) {
   const iso = new Date(meta3.now ?? Date.now()).toISOString();
   const subject = (meta3.subject ?? "").replace(/[\t\n\r]/g, " ");
@@ -33080,8 +33116,8 @@ function notify(recipients, meta3, env = process.env) {
 `;
   for (const recipient of recipients) {
     try {
-      fs4.appendFileSync(notifyPath(recipient, env), line, { mode: 384 });
-      fs4.chmodSync(notifyPath(recipient, env), 384);
+      fs5.appendFileSync(notifyPath(recipient, env), line, { mode: 384 });
+      fs5.chmodSync(notifyPath(recipient, env), 384);
     } catch {
     }
   }
@@ -33094,14 +33130,14 @@ init_priorities();
 // src/memory.ts
 init_paths();
 import { createHash as createHash3 } from "node:crypto";
-import * as fs6 from "node:fs";
-import * as os3 from "node:os";
-import * as path6 from "node:path";
+import * as fs7 from "node:fs";
+import * as os4 from "node:os";
+import * as path7 from "node:path";
 function memoryDir(env = process.env, cwd = process.cwd()) {
   const override = env.HANDS_MEMORY_DIR?.trim();
   if (override) return override;
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
-  return path6.join(os3.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
+  return path7.join(os4.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
 }
 function descriptionOf(body) {
   const m = body.match(/^description:\s*(.+)$/m);
@@ -33111,7 +33147,7 @@ function scanMemory(env = process.env) {
   const dir = memoryDir(env);
   let names;
   try {
-    names = fs6.readdirSync(dir);
+    names = fs7.readdirSync(dir);
   } catch {
     return [];
   }
@@ -33119,7 +33155,7 @@ function scanMemory(env = process.env) {
   for (const file2 of names) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md") continue;
     try {
-      const body = fs6.readFileSync(path6.join(dir, file2), "utf8");
+      const body = fs7.readFileSync(path7.join(dir, file2), "utf8");
       entries.push({
         name: file2.replace(/\.md$/, ""),
         hash: createHash3("sha1").update(body).digest("hex").slice(0, 12),
@@ -33218,7 +33254,7 @@ function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
   const files = craftFiles(craft, env, cwd);
   const read = (file2, cap = 6e3) => {
     try {
-      const body = fs12.readFileSync(file2, "utf8").trim();
+      const body = fs13.readFileSync(file2, "utf8").trim();
       if (!body) return null;
       const points = Array.from(body);
       return points.length <= cap ? body : `${points.slice(0, cap).join("")}
@@ -34030,7 +34066,7 @@ function runCli(subcommand, argv) {
   if (subcommand === "paths") {
     const id = resolveSelf();
     let focus = null;
-    if (fs12.existsSync(dbPath())) {
+    if (fs13.existsSync(dbPath())) {
       const s = new Store();
       try {
         focus = s.getFocus(id);
@@ -34114,8 +34150,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs12.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs12.realpathSync(fileURLToPath2(import.meta.url))).href;
+    const entry = pathToFileURL(fs13.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs13.realpathSync(fileURLToPath2(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;

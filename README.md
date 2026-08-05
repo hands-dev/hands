@@ -19,7 +19,7 @@ Distributed as a Claude Code plugin (this repo is its own marketplace).
 
 That registers everything: the MCP server (`hands_*` tools), the passive-standup hooks
 (`Stop → publish`, `UserPromptSubmit → board`), the `/hands:expo` · `/hands:station` · `/hands:init` ·
-`/hands:crafts` · `/hands:dashboard` · `/hands:feedback` skills, and the `hands` CLI on your
+`/hands:crafts` · `/hands:dashboard` · `/hands:feedback` · `/hands:login` skills, and the `hands` CLI on your
 Bash PATH. Requires Node ≥ 22.5.
 
 Then, per repo (from its main checkout) — one slash command:
@@ -137,6 +137,22 @@ or git, which matters because Desktop launches it from nowhere near your repo. T
 `books_list_projects`, `books_list_handles`, `books_list_days`, `books_read_index`,
 `books_read_digest`, `books_sync` (pulls the clone; never pushes). Independent of the live bus —
 no `node:sqlite`, no Node ≥ 22.5 requirement, no side effect on start.
+
+## Signing in (optional)
+
+`hands login` connects the local plugin to your GitHub identity via the hands cloud — entirely
+opt-in; free tier needs no account, and every command behaves identically whether or not you're
+signed in.
+
+```bash
+hands login     # browser-handoff OAuth; ~/.hands/credentials.json (0600), never committed
+hands whoami    # local-only identity check, no network call
+hands logout    # clear the local sign-in
+```
+
+Once signed in, `hands.config.json`'s `remote.url`/`handle` get a login-derived default when a
+repo hasn't set them explicitly — a hand-edited config always wins; login only fills a gap.
+`/hands:login` wraps the same flow conversationally.
 
 ## Configuration
 
