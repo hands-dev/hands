@@ -506,6 +506,24 @@ export class Store {
   }
 
   /**
+   * Directed messages from expo to `agentId` still past its receive cursor —
+   * "pending/unacked commands" for the dashboard (hands#55). Unlike
+   * messagesForSince, this DOES use the cursor: a station that's read a
+   * command (even without acting on it) shouldn't keep showing as pending
+   * forever, and a station that's simply behind shows every command it
+   * hasn't drained yet, however old.
+   */
+  pendingFromExpo(agentId: string): MessageRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM messages
+         WHERE to_id = ? AND from_id = 'expo' AND id > ?
+         ORDER BY id ASC`,
+      )
+      .all(agentId, this.getCursor(agentId)) as unknown as MessageRow[];
+  }
+
+  /**
    * Messages addressed to `agentId` created after `sinceTs` — for the board's
    * awareness view. Independent of the receive cursor (which is how a station
    * *handles* messages), so showing a message never marks it handled.
