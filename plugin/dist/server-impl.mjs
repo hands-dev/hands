@@ -9667,7 +9667,17 @@ function serve(opts) {
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, booksSync, tokens, taskCosts }),
+      json: JSON.stringify({
+        ...snapshot,
+        mode: "local",
+        db,
+        principal,
+        kitchens,
+        crafts,
+        booksSync,
+        tokens,
+        taskCosts
+      }),
       key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
     };
   };

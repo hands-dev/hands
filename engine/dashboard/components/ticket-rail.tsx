@@ -77,11 +77,12 @@ function Chit({ task, now, cost }: { task: SnapshotTask; now: number; cost?: num
 
 export function TicketRail({
   tasks,
-  taskCosts,
+  taskCosts = {},
   now,
 }: {
   tasks: SnapshotTask[];
-  taskCosts: Record<number, number>;
+  /** absent in hosted mode — token/cost telemetry never leaves the machine */
+  taskCosts?: Record<number, number>;
   now: number;
 }) {
   const byDish = new Map<string, SnapshotTask[]>();
