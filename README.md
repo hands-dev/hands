@@ -13,7 +13,7 @@ Distributed as a Claude Code plugin (this repo is its own marketplace).
 ## Install
 
 ```
-/plugin marketplace add heymichaelp/hands
+/plugin marketplace add hands-dev/hands
 /plugin install hands@hands
 ```
 
