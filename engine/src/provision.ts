@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { type HandsConfig, loadConfig } from "./config.js";
 import { type RepoInfo, repoInfo } from "./paths.js";
+import { seedStationPermissions } from "./seed-permissions.js";
 
 /**
  * Station provisioning — the user thinks in STATIONS, never worktrees. Each
@@ -98,9 +99,25 @@ function branchExists(cwd: string, branch: string): boolean {
   }
 }
 
-/** Compose the paste-able launch command for a station (plugin-namespaced skill). */
-export function launchCommand(station: { id: string; dir: string; model: string }): string {
-  return `cd ${shellQuote(station.dir)} && HANDS_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /hands:station")}`;
+/** Which skill loop a spawned session comes up in. */
+export type LaunchMode = "expo" | "station";
+
+/**
+ * Compose the paste-able launch command for a session (plugin-namespaced skill).
+ * Defaults to `station` so existing callers are unaffected; `expo` is what the
+ * `hands <project>` launcher uses to bring up a kitchen's pass.
+ */
+export function launchCommand(
+  target: { id: string; dir: string; model?: string },
+  mode: LaunchMode = "station",
+): string {
+  const skill = mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  // No model → omit the flag entirely and inherit the principal's own default.
+  // Stations get a configured tier (stations.model); the expo has no such
+  // config field, and picking one on the principal's behalf would silently
+  // downgrade the pass.
+  const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
+  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
 }
 
 function shellQuote(s: string): string {
@@ -121,12 +138,13 @@ function tmuxAvailable(): boolean {
  * launcher + whether a session was actually spawned. `manual` never spawns —
  * it's the zero-assumption fallback where the human pastes the command.
  */
-function launch(
-  plan: { id: string; dir: string; model: string },
+export function launch(
+  plan: { id: string; dir: string; model?: string },
   launcher: HandsConfig["stations"]["launcher"],
   env: NodeJS.ProcessEnv = process.env,
+  launchMode: LaunchMode = "station",
 ): { launcher: "tmux" | "iterm" | "manual"; launched: boolean } {
-  const command = launchCommand(plan);
+  const command = launchCommand(plan, launchMode);
   const mode =
     launcher === "auto" ? (env.TMUX || tmuxAvailable() ? "tmux" : "manual") : launcher;
 
@@ -202,6 +220,10 @@ export function addStations(
       git(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
     }
     const model = cfg.stations.overrides[id] ?? cfg.stations.model;
+    // Seed BEFORE spawning: a station that comes up without a permission
+    // allowlist stalls on a prompt before it can read its own files. See
+    // seed-permissions.ts for what that cost us once already.
+    seedStationPermissions(dir);
     const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,

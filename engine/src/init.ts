@@ -4,6 +4,7 @@ import * as path from "node:path";
 import * as readline from "node:readline/promises";
 import { CONFIG_BASENAME } from "./config.js";
 import { repoInfo } from "./paths.js";
+import { registerProject } from "./projects.js";
 import { githubUsername } from "./remote.js";
 
 /**
@@ -57,6 +58,11 @@ export async function runInit(argv: string[]): Promise<void> {
       out(`⚠ not inside a git repo — skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
       const configPath = path.join(info.repoRoot, CONFIG_BASENAME);
+      // Register in BOTH branches. The already-configured branch returns early,
+      // so registering only on scaffold would leave every kitchen that was
+      // initialized before the launcher existed unreachable by name.
+      const entry = registerProject(info.repoRoot);
+      if (entry) out(`✔ registered "${entry.name}" — open it from anywhere with: hands ${entry.name}`);
       if (fs.existsSync(configPath)) {
         out(`✔ ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: hands books <url>)");

@@ -562,10 +562,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path17) {
-  if (!path17)
+function getElementAtPath(obj, path19) {
+  if (!path19)
     return obj;
-  return path17.reduce((acc, key) => acc?.[key], obj);
+  return path19.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -877,11 +877,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path17, issues) {
+function prefixIssues(path19, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path17);
+    iss.path.unshift(path19);
     return iss;
   });
 }
@@ -1123,7 +1123,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path17 = []) => {
+  const processError = (error49, path19 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1133,7 +1133,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path17, ...issue2.path];
+        const fullpath = [...path19, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1165,8 +1165,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path17 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path17) {
+  const path19 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path19) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13860,13 +13860,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path17 = ref.slice(1).split("/").filter(Boolean);
-  if (path17.length === 0) {
+  const path19 = ref.slice(1).split("/").filter(Boolean);
+  if (path19.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path17[0] === defsKey) {
-    const key = path17[1];
+  if (path19[0] === defsKey) {
+    const key = path19[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17829,8 +17829,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path17) {
-      let input = path17;
+    function removeDotSegments(path19) {
+      let input = path19;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18082,8 +18082,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path17, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path17 && path17 !== "/" ? path17 : void 0;
+        const [path19, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path19 && path19 !== "/" ? path19 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -21482,12 +21482,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats2(ajv, list, fs17, exportName) {
+    function addFormats2(ajv, list, fs19, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs17[f]);
+        ajv.addFormat(f, fs19[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -23508,11 +23508,80 @@ var init_remote = __esm({
   }
 });
 
+// src/seed-permissions.ts
+import * as fs10 from "node:fs";
+import * as path11 from "node:path";
+function stationSettings() {
+  return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
+}
+function seedStationPermissions(dir) {
+  const file2 = path11.join(dir, ".claude", "settings.local.json");
+  if (fs10.existsSync(file2)) return { path: file2, written: false };
+  fs10.mkdirSync(path11.dirname(file2), { recursive: true });
+  fs10.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+`);
+  return { path: file2, written: true };
+}
+var ALLOW, DENY;
+var init_seed_permissions = __esm({
+  "src/seed-permissions.ts"() {
+    "use strict";
+    ALLOW = [
+      "Read",
+      "Glob",
+      "Grep",
+      "Monitor",
+      "Bash(git log *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git blame *)",
+      "Bash(git branch *)",
+      "Bash(git rev-list *)",
+      "Bash(git rev-parse *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue list *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(rg *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(find *)",
+      "Bash(hands paths *)",
+      "Bash(hands station ls *)",
+      "mcp__plugin_hands_hands__hands_paths",
+      "mcp__plugin_hands_hands__hands_receive",
+      "mcp__plugin_hands_hands__hands_send",
+      "mcp__plugin_hands_hands__hands_tasks",
+      "mcp__plugin_hands_hands__hands_task_update",
+      "mcp__plugin_hands_hands__hands_focus",
+      "mcp__plugin_hands_hands__hands_ask",
+      "mcp__plugin_hands_hands__hands_peers",
+      "mcp__plugin_hands_hands__hands_board",
+      "mcp__plugin_hands_hands__hands_history",
+      "mcp__plugin_hands_hands__hands_priorities",
+      "mcp__plugin_hands_hands__hands_questions",
+      "mcp__plugin_hands_hands__hands_todos"
+    ];
+    DENY = [
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(gh pr merge *)",
+      "mcp__plugin_hands_hands__hands_scale",
+      "mcp__plugin_hands_hands__hands_station_remove"
+    ];
+  }
+});
+
 // src/provision.ts
 var provision_exports = {};
 __export(provision_exports, {
   ProvisionError: () => ProvisionError,
   addStations: () => addStations,
+  launch: () => launch,
   launchCommand: () => launchCommand,
   listStations: () => listStations,
   removeStation: () => removeStation,
@@ -23521,9 +23590,9 @@ __export(provision_exports, {
   stationRoot: () => stationRoot
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
-import * as fs10 from "node:fs";
+import * as fs11 from "node:fs";
 import * as os6 from "node:os";
-import * as path11 from "node:path";
+import * as path12 from "node:path";
 function git4(cwd, args) {
   return execFileSync5("git", args, {
     cwd,
@@ -23540,7 +23609,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path11.join(os6.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path12.join(os6.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -23549,7 +23618,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs10.readdirSync(root);
+    names = fs11.readdirSync(root);
   } catch {
     return [];
   }
@@ -23561,7 +23630,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path11.join(root, name),
+      dir: path12.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -23576,8 +23645,10 @@ function branchExists(cwd, branch) {
     return false;
   }
 }
-function launchCommand(station) {
-  return `cd ${shellQuote(station.dir)} && HANDS_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /hands:station")}`;
+function launchCommand(target, mode = "station") {
+  const skill = mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
+  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
@@ -23590,8 +23661,8 @@ function tmuxAvailable() {
     return false;
   }
 }
-function launch(plan, launcher, env = process.env) {
-  const command = launchCommand(plan);
+function launch(plan, launcher, env = process.env, launchMode = "station") {
+  const command = launchCommand(plan, launchMode);
   const mode = launcher === "auto" ? env.TMUX || tmuxAvailable() ? "tmux" : "manual" : launcher;
   if (mode === "tmux") {
     try {
@@ -23633,14 +23704,14 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs10.mkdirSync(root, { recursive: true });
+  fs11.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path11.join(root, id);
+    const dir = path12.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -23649,6 +23720,7 @@ function addStations(count, opts) {
       git4(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
     }
     const model = cfg.stations.overrides[id] ?? cfg.stations.model;
+    seedStationPermissions(dir);
     const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,
@@ -23671,7 +23743,7 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path11.join(root, `station-${index}`);
+  const dir = path12.join(root, `station-${index}`);
   try {
     execFileSync5("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
   } catch {
@@ -23681,7 +23753,7 @@ function removeStation(id, opts) {
   } catch {
   }
   let removed = false;
-  if (fs10.existsSync(dir)) {
+  if (fs11.existsSync(dir)) {
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
     try {
@@ -23724,15 +23796,16 @@ var init_provision = __esm({
     "use strict";
     init_config();
     init_paths();
+    init_seed_permissions();
     ProvisionError = class extends Error {
     };
   }
 });
 
 // src/tokens.ts
-import * as fs11 from "node:fs";
+import * as fs12 from "node:fs";
 import * as os7 from "node:os";
-import * as path12 from "node:path";
+import * as path13 from "node:path";
 function encodeProjectDir(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
@@ -23751,17 +23824,17 @@ var init_tokens = __esm({
       /** agentId → messageId → final usage (last write wins — the dedupe) */
       messages = /* @__PURE__ */ new Map();
       constructor(opts) {
-        this.projectsDir = opts?.projectsDir ?? path12.join(os7.homedir(), ".claude", "projects");
+        this.projectsDir = opts?.projectsDir ?? path13.join(os7.homedir(), ".claude", "projects");
         this.now = opts?.now ?? (() => Date.now());
       }
       sample(agents) {
         const now = this.now();
         for (const agent of agents) {
           if (!agent.cwd) continue;
-          const dir = path12.join(this.projectsDir, encodeProjectDir(agent.cwd));
+          const dir = path13.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
-            names = fs11.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+            names = fs12.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
           } catch {
             continue;
           }
@@ -23771,9 +23844,9 @@ var init_tokens = __esm({
             this.messages.set(agent.id, byMsg);
           }
           for (const name of names) {
-            const file2 = path12.join(dir, name);
+            const file2 = path13.join(dir, name);
             try {
-              const stat = fs11.statSync(file2);
+              const stat = fs12.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
               this.readAppended(file2, stat.size, byMsg);
             } catch {
@@ -23781,21 +23854,21 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs11.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path12.join(dir, e.name, "subagents"));
+            sessionDirs = fs12.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path13.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
           for (const subDir of sessionDirs) {
             let subNames = [];
             try {
-              subNames = fs11.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+              subNames = fs12.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
             } catch {
               continue;
             }
             for (const name of subNames) {
-              const file2 = path12.join(subDir, name);
+              const file2 = path13.join(subDir, name);
               try {
-                const stat = fs11.statSync(file2);
+                const stat = fs12.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
                 this.readAppended(file2, stat.size, byMsg, file2);
               } catch {
@@ -23823,11 +23896,11 @@ var init_tokens = __esm({
         if (size <= state.offset) return;
         const length = size - state.offset;
         const buffer = Buffer.alloc(length);
-        const fd = fs11.openSync(file2, "r");
+        const fd = fs12.openSync(file2, "r");
         try {
-          fs11.readSync(fd, buffer, 0, length, state.offset);
+          fs12.readSync(fd, buffer, 0, length, state.offset);
         } finally {
-          fs11.closeSync(fd);
+          fs12.closeSync(fd);
         }
         state.offset = size;
         let text = state.partial + buffer.toString("utf8");
@@ -23884,10 +23957,10 @@ var init_tokens = __esm({
       callLabel(callFile) {
         const cached2 = this.metaLabels.get(callFile);
         if (cached2) return cached2;
-        let label = path12.basename(callFile, ".jsonl");
+        let label = path13.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
-            fs11.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
+            fs12.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
           );
           if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
           else if (meta3.agentType) label = meta3.agentType;
@@ -23953,9 +24026,9 @@ __export(serve_exports, {
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
-import * as fs12 from "node:fs";
+import * as fs13 from "node:fs";
 import { createServer } from "node:http";
-import * as path13 from "node:path";
+import * as path14 from "node:path";
 import { fileURLToPath } from "node:url";
 function escapeHtml(s) {
   return s.replace(
@@ -23964,7 +24037,7 @@ function escapeHtml(s) {
   );
 }
 function kitchenName(db) {
-  return path13.basename(path13.dirname(db)) || "kitchen";
+  return path14.basename(path14.dirname(db)) || "kitchen";
 }
 function shellHtml(kitchen) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
@@ -23976,13 +24049,13 @@ function shellHtml(kitchen) {
 `;
 }
 function defaultAssetsDir() {
-  const here = path13.dirname(fileURLToPath(import.meta.url));
+  const here = path14.dirname(fileURLToPath(import.meta.url));
   return [
-    path13.join(here, "assets"),
+    path14.join(here, "assets"),
     // plugin/dist/server-impl.mjs → sibling assets/
-    path13.join(here, "..", "..", "plugin", "dist", "assets")
+    path14.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs12.existsSync(d)) ?? null;
+  ].find((d) => fs13.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -24091,7 +24164,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs12.readFileSync(path13.join(assetsDir, name));
+        const body = fs13.readFileSync(path14.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -24206,6 +24279,75 @@ var init_serve = __esm({
       "dashboard.js": "text/javascript; charset=utf-8",
       "dashboard.css": "text/css; charset=utf-8"
     };
+  }
+});
+
+// src/projects.ts
+import * as fs15 from "node:fs";
+import * as os8 from "node:os";
+import * as path15 from "node:path";
+function registryPath(env = process.env) {
+  const home = env.HANDS_TEST_HOME?.trim() || os8.homedir();
+  return path15.join(home, ".hands", "projects.json");
+}
+function readRegistry(env = process.env) {
+  try {
+    const raw = fs15.readFileSync(registryPath(env), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return { projects: [] };
+    const list = parsed.projects;
+    if (!Array.isArray(list)) return { projects: [] };
+    return { projects: list.filter(isProjectEntry) };
+  } catch {
+    return { projects: [] };
+  }
+}
+function isProjectEntry(value) {
+  if (!value || typeof value !== "object") return false;
+  const v = value;
+  return typeof v.name === "string" && typeof v.repoRoot === "string" && typeof v.slug === "string" && typeof v.registeredAt === "number";
+}
+function writeRegistry(registry2, env = process.env) {
+  const file2 = registryPath(env);
+  fs15.mkdirSync(path15.dirname(file2), { recursive: true, mode: 448 });
+  fs15.writeFileSync(file2, `${JSON.stringify(registry2, null, 2)}
+`, { mode: 384 });
+}
+function registerProject(cwd = process.cwd(), opts) {
+  const info = repoInfo(cwd);
+  if (!info) return null;
+  const env = opts?.env ?? process.env;
+  const entry = {
+    name: opts?.name?.trim() || path15.basename(info.repoRoot),
+    repoRoot: info.repoRoot,
+    slug: info.slug,
+    registeredAt: opts?.now ?? Date.now()
+  };
+  const registry2 = readRegistry(env);
+  const others = registry2.projects.filter((p) => p.name !== entry.name);
+  writeRegistry({ projects: [...others, entry] }, env);
+  return entry;
+}
+function resolveProject2(name, env = process.env) {
+  const match = readRegistry(env).projects.find((p) => p.name === name);
+  if (!match) return null;
+  if (!fs15.existsSync(match.repoRoot)) {
+    pruneMissing(env);
+    return null;
+  }
+  return match;
+}
+function pruneMissing(env = process.env) {
+  const registry2 = readRegistry(env);
+  const live = registry2.projects.filter((p) => fs15.existsSync(p.repoRoot));
+  const dropped = registry2.projects.length - live.length;
+  if (dropped > 0) writeRegistry({ projects: live }, env);
+  return dropped;
+}
+var init_projects = __esm({
+  "src/projects.ts"() {
+    "use strict";
+    init_paths();
   }
 });
 
@@ -27488,7 +27630,7 @@ function convertStandardElicitationSchema(schema) {
 function isAnnotationOnlyJsonSchemaKeyword(key) {
   return ANNOTATION_ONLY_JSON_SCHEMA_KEYWORDS.has(key) || key.startsWith("x-");
 }
-function walkProperty(node, path17, vendor, unsupported) {
+function walkProperty(node, path19, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -27496,8 +27638,8 @@ function walkProperty(node, path17, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path17}.${key}`);
-  } else unsupported.push(`${path17}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path19}.${key}`);
+  } else unsupported.push(`${path19}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -27514,11 +27656,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema2, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path17 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path17}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path19 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path19}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path17 ? `${path17}.${key}` : key;
+    const childPath = path19 ? `${path19}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -28131,9 +28273,9 @@ var init_src_D_zzAWoS = __esm({
         });
         const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
         if (!parsed.success) for (const issue2 of parsed.error.issues) {
-          const path17 = issue2.path.map(String);
-          const key = path17.length > 0 ? path17.join(".") : "_meta";
-          if (path17.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+          const path19 = issue2.path.map(String);
+          const key = path19.length > 0 ? path19.join(".") : "_meta";
+          if (path19.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
           issues.push({
             key,
             problem: issue2.message
@@ -32288,8 +32430,8 @@ var init_ajvProvider_97rDpkRx = __esm({
         for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
         return ind;
       }
-      function removeDotSegments(path17) {
-        let input = path17;
+      function removeDotSegments(path19) {
+        let input = path19;
         const output = [];
         let nextSlash = -1;
         let len = 0;
@@ -32442,8 +32584,8 @@ var init_ajvProvider_97rDpkRx = __esm({
           wsComponent.secure = void 0;
         }
         if (wsComponent.resourceName) {
-          const [path17, query] = wsComponent.resourceName.split("?");
-          wsComponent.path = path17 && path17 !== "/" ? path17 : void 0;
+          const [path19, query] = wsComponent.resourceName.split("?");
+          wsComponent.path = path19 && path19 !== "/" ? path19 : void 0;
           wsComponent.query = query;
           wsComponent.resourceName = void 0;
         }
@@ -36431,11 +36573,11 @@ var init_ajvProvider_97rDpkRx = __esm({
         if (!f) throw new Error(`Unknown format "${name}"`);
         return f;
       };
-      function addFormats2(ajv, list, fs17, exportName) {
+      function addFormats2(ajv, list, fs19, exportName) {
         var _a2;
         var _b;
         (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
-        for (const f of list) ajv.addFormat(f, fs17[f]);
+        for (const f of list) ajv.addFormat(f, fs19[f]);
       }
       module.exports = exports = formatsPlugin;
       Object.defineProperty(exports, "__esModule", { value: true });
@@ -37460,9 +37602,9 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs15 from "node:fs";
-import * as os9 from "node:os";
-import * as path15 from "node:path";
+import * as fs17 from "node:fs";
+import * as os10 from "node:os";
+import * as path17 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -37496,8 +37638,10 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path15.join(info.repoRoot, CONFIG_BASENAME);
-      if (fs15.existsSync(configPath)) {
+      const configPath = path17.join(info.repoRoot, CONFIG_BASENAME);
+      const entry = registerProject(info.repoRoot);
+      if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
+      if (fs17.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: hands books <url>)");
       } else {
@@ -37521,11 +37665,11 @@ async function runInit(argv) {
         if (journalUrl.trim()) {
           const handle = flags.handle ?? await ask(
             "Books handle (your fleet's namespace)?",
-            githubUsername() ?? os9.userInfo().username
+            githubUsername() ?? os10.userInfo().username
           );
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs15.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs17.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
@@ -37545,6 +37689,7 @@ var init_init = __esm({
     "use strict";
     init_config();
     init_paths();
+    init_projects();
     init_remote();
   }
 });
@@ -37553,10 +37698,10 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import * as os10 from "node:os";
+import * as os11 from "node:os";
 
 // src/server.ts
-import * as fs13 from "node:fs";
+import * as fs14 from "node:fs";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -37918,8 +38063,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path17, errorMaps, issueData } = params;
-  const fullPath = [...path17, ...issueData.path || []];
+  const { data, path: path19, errorMaps, issueData } = params;
+  const fullPath = [...path19, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -38034,11 +38179,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path17, key) {
+  constructor(parent, value, path19, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path17;
+    this._path = path19;
     this._key = key;
   }
   get path() {
@@ -47239,7 +47384,7 @@ function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
   const files = craftFiles(craft, env, cwd);
   const read = (file2, cap = 6e3) => {
     try {
-      const body = fs13.readFileSync(file2, "utf8").trim();
+      const body = fs14.readFileSync(file2, "utf8").trim();
       if (!body) return null;
       const points = Array.from(body);
       return points.length <= cap ? body : `${points.slice(0, cap).join("")}
@@ -48051,7 +48196,7 @@ function runCli(subcommand, argv) {
   if (subcommand === "paths") {
     const id = resolveSelf();
     let focus = null;
-    if (fs13.existsSync(dbPath())) {
+    if (fs14.existsSync(dbPath())) {
       const s = new Store();
       try {
         focus = s.getFocus(id);
@@ -48135,8 +48280,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs13.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs13.realpathSync(fileURLToPath2(import.meta.url))).href;
+    const entry = pathToFileURL(fs14.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs14.realpathSync(fileURLToPath2(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
@@ -48151,6 +48296,8 @@ if (invokedDirectly) {
 
 // src/cli.ts
 init_provision();
+init_projects();
+init_seed_permissions();
 init_digest();
 init_remote();
 
@@ -48158,9 +48305,9 @@ init_remote();
 init_config();
 init_paths();
 init_remote();
-import * as fs14 from "node:fs";
-import * as os8 from "node:os";
-import * as path14 from "node:path";
+import * as fs16 from "node:fs";
+import * as os9 from "node:os";
+import * as path16 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var NO_BOOKS_REASON = "no books attached \u2014 run: hands books <path-or-url> to enable books first";
 function resolveBooksTarget(opts) {
@@ -48173,7 +48320,7 @@ function resolveBooksTarget(opts) {
   if (!config2.remote.url?.trim()) return { ok: false, reason: NO_BOOKS_REASON };
   const j = openJournal({ cwd, env, config: config2 });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
-  if (!fs14.existsSync(path14.join(j.dir, ".git"))) {
+  if (!fs16.existsSync(path16.join(j.dir, ".git"))) {
     return { ok: false, reason: `could not set up the journal clone at ${j.dir}` };
   }
   syncPull(j.dir);
@@ -48181,25 +48328,25 @@ function resolveBooksTarget(opts) {
   if (!shape.ok) return { ok: false, reason: shape.reason ?? "journal repo failed validation" };
   return { ok: true, target: { dir: j.dir, project: j.project, handle: j.handle, url: j.url } };
 }
-function resolveBooksServerEntry(here = path14.dirname(fileURLToPath3(import.meta.url))) {
-  const bundled = path14.join(here, "books-server.mjs");
-  if (fs14.existsSync(bundled)) return bundled;
-  const devFallback = path14.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
-  if (fs14.existsSync(devFallback)) return devFallback;
+function resolveBooksServerEntry(here = path16.dirname(fileURLToPath3(import.meta.url))) {
+  const bundled = path16.join(here, "books-server.mjs");
+  if (fs16.existsSync(bundled)) return bundled;
+  const devFallback = path16.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
+  if (fs16.existsSync(devFallback)) return devFallback;
   return null;
 }
 function desktopConfigPath(env = process.env) {
   const override = env.HANDS_TEST_DESKTOP_CONFIG?.trim();
   if (override) return override;
-  const home = os8.homedir();
+  const home = os9.homedir();
   if (process.platform === "darwin") {
-    return path14.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+    return path16.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
   }
   if (process.platform === "win32") {
-    const appData = env.APPDATA?.trim() || path14.join(home, "AppData", "Roaming");
-    return path14.join(appData, "Claude", "claude_desktop_config.json");
+    const appData = env.APPDATA?.trim() || path16.join(home, "AppData", "Roaming");
+    return path16.join(appData, "Claude", "claude_desktop_config.json");
   }
-  return path14.join(home, ".config", "Claude", "claude_desktop_config.json");
+  return path16.join(home, ".config", "Claude", "claude_desktop_config.json");
 }
 function serverName(project) {
   return `hands-books-${project}`;
@@ -48214,7 +48361,7 @@ function booksMcpEntry(serverEntryPath, target) {
 function writeDesktopConfig(configPath, name, entry) {
   let parsed = {};
   try {
-    parsed = JSON.parse(fs14.readFileSync(configPath, "utf8"));
+    parsed = JSON.parse(fs16.readFileSync(configPath, "utf8"));
   } catch (err) {
     if (err.code !== "ENOENT") {
       return { ok: false, reason: `${configPath} is not valid JSON \u2014 fix or remove it, then retry (${String(err)})` };
@@ -48223,16 +48370,16 @@ function writeDesktopConfig(configPath, name, entry) {
   const servers = parsed.mcpServers && typeof parsed.mcpServers === "object" ? parsed.mcpServers : {};
   servers[name] = entry;
   parsed.mcpServers = servers;
-  fs14.mkdirSync(path14.dirname(configPath), { recursive: true });
-  fs14.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
+  fs16.mkdirSync(path16.dirname(configPath), { recursive: true });
+  fs16.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
 `);
   return { ok: true };
 }
 
 // src/cli.ts
 init_store();
-import * as fs16 from "node:fs";
-import * as path16 from "node:path";
+import * as fs18 from "node:fs";
+import * as path18 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -48302,11 +48449,11 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path16.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs16.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
+  const configPath = path18.join(info.repoRoot, CONFIG_BASENAME);
+  if (!fs18.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
-    cfg = JSON.parse(fs16.readFileSync(configPath, "utf8"));
+    cfg = JSON.parse(fs18.readFileSync(configPath, "utf8"));
   } catch (err) {
     fail(`${configPath} is not valid JSON: ${String(err)}`);
   }
@@ -48314,7 +48461,7 @@ function cmdBooks(argv) {
   const url2 = argv.find((a) => !a.startsWith("--"));
   if (!url2) {
     if (typeof remote.url === "string" && remote.url) {
-      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os10.userInfo().username)}")`);
+      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os11.userInfo().username)}")`);
     } else {
       out2("no books attached \u2014 attach with: hands books <private-git-url> [--handle <name>]");
     }
@@ -48325,9 +48472,9 @@ function cmdBooks(argv) {
   cfg.remote = {
     ...remote,
     url: url2,
-    handle: handleArg ?? remote.handle ?? githubUsername() ?? os10.userInfo().username
+    handle: handleArg ?? remote.handle ?? githubUsername() ?? os11.userInfo().username
   };
-  fs16.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs18.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
   out2("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
@@ -48338,7 +48485,7 @@ function requireRemote() {
   if (!j) {
     fail("no books attached \u2014 run: hands books git@github.com:you/hands-books.git");
   }
-  if (!fs16.existsSync(path16.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs18.existsSync(path18.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -48450,7 +48597,7 @@ function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
   let focus = null;
-  if (fs16.existsSync(dbPath())) {
+  if (fs18.existsSync(dbPath())) {
     const store = new Store();
     try {
       focus = store.getFocus(agentId);
@@ -48459,6 +48606,79 @@ function cmdPaths() {
     }
   }
   out2(JSON.stringify(pathsReport(agentId, cfg, focus), null, 2));
+}
+var STATION_ID2 = /^station-\d+$/;
+function launchAt(dir, mode, id, model) {
+  const cfg = loadConfig({ cwd: dir });
+  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, mode);
+  if (res.launched) {
+    out2(`\u2714 ${id} \u2192 ${dir} (${res.launcher})`);
+    return;
+  }
+  out2(`launcher unavailable \u2014 paste this into a terminal:
+
+  ${launchCommand({ id, dir, model }, mode)}
+`);
+}
+function launchStation(repoRoot, stationId) {
+  const cfg = loadConfig({ cwd: repoRoot });
+  const stations = listStations(repoRoot, cfg);
+  const match = stations.find((s) => s.id === stationId);
+  if (!match) {
+    const known = stations.map((s) => s.id).join(", ") || "none open";
+    fail(`no ${stationId} in ${repoRoot} \u2014 stations: ${known}`);
+  }
+  if (!match.present) fail(`${stationId}'s worktree is missing (${match.dir}) \u2014 re-open it with \`hands station add\``);
+  launchStationSeat(repoRoot, match.id, match.dir, cfg);
+}
+function launchStationSeat(_repoRoot, id, dir, cfg) {
+  seedStationPermissions(dir);
+  launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model);
+}
+function tryLaunch(cmd, rest) {
+  if (!cmd) {
+    const info = repoInfo(process.cwd());
+    if (!info || !fs18.existsSync(path18.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    launchAt(info.repoRoot, "expo", "expo");
+    return true;
+  }
+  if (STATION_ID2.test(cmd)) {
+    const info = repoInfo(process.cwd());
+    if (!info) fail(`not inside a git repo \u2014 use \`hands <project> ${cmd}\``);
+    launchStation(info.repoRoot, cmd);
+    return true;
+  }
+  const project = resolveProject2(cmd);
+  if (!project) return false;
+  const seat = rest[0];
+  if (seat && STATION_ID2.test(seat)) launchStation(project.repoRoot, seat);
+  else launchAt(project.repoRoot, "expo", "expo");
+  return true;
+}
+function cmdGo(argv) {
+  const [name, ...rest] = argv;
+  if (!name) fail("usage: hands go <project> [station-N]");
+  if (!tryLaunch(name, rest)) {
+    fail(`no project named "${name}" \u2014 register it with \`hands register\` from its main checkout`);
+  }
+}
+function cmdRegister(argv) {
+  let name;
+  const positional = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === void 0) continue;
+    if (arg === "--name") {
+      name = argv[++i];
+      continue;
+    }
+    if (!arg.startsWith("-")) positional.push(arg);
+  }
+  const target = positional[0] ?? process.cwd();
+  const entry = registerProject(target, { name });
+  if (!entry) fail(`not a git repo: ${target}`);
+  out2(`\u2714 registered "${entry.name}" \u2192 ${entry.repoRoot}`);
+  out2(`  open it from anywhere with: hands ${entry.name}`);
 }
 async function main2() {
   const [cmd, ...rest] = process.argv.slice(2);
@@ -48499,8 +48719,23 @@ async function main2() {
       }
       case "paths":
         return cmdPaths();
+      case "go":
+        return cmdGo(rest);
+      case "register":
+        return cmdRegister(rest);
       default: {
+        if (tryLaunch(cmd, rest)) return;
+        if (cmd) {
+          fail(
+            `no project or station named "${cmd}" \u2014 register this repo with \`hands register\`, or see \`hands\` for commands`
+          );
+        }
         out2("hands \u2014 an expo/station agent fleet for Claude Code");
+        out2("");
+        out2("  hands [<project>]         open the pass (expo) here, or in <project>");
+        out2("  hands [<project>] station-N  open a station's seat");
+        out2("  hands go <project> [station-N]  same, explicit (for scripts / name collisions)");
+        out2("  hands register [path]     enroll a kitchen so it resolves by name");
         out2("");
         out2(`  hands init                scaffold ${CONFIG_BASENAME}`);
         out2("  hands books [<url>]       attach the books (durable journal) to this repo's config");

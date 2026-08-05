@@ -31,6 +31,10 @@ claude plugin validate .            # marketplace sanity
 - `hands.config.json` scaffold at the repo root — principal, topology, station tiers/launcher,
   optional books journal (`remote.url` + `remote.handle`). Full reference in README. Attach the
   books to an existing config later with `hands books <url>`.
+- An entry in the launcher registry (`~/.hands/projects.json`, 0600) so `hands <project>` resolves
+  this repo from anywhere. Machine-wide, not per-repo — it has to work from outside any git repo.
+  Repos set up before the launcher existed enrol with `hands register`; re-running it after a move
+  re-points the entry rather than duplicating it.
 
 ## Optional extras (not plugin-managed)
 
@@ -51,3 +55,7 @@ Or just answer the expo when it asks for the day's ranked priorities.
 Nothing to do — each repo's bus auto-scopes by git common-dir. Run `hands init` in each repo
 for its config; the plugin registration is machine-wide. `HANDS_HOME` pins a bus location
 explicitly if you ever need to.
+
+Because init also registers each kitchen by name, moving between them is `hands <project>` from
+wherever you happen to be — no `cd`, no remembering paths. Names default to the repo's directory
+basename; `hands register --name <short>` overrides that when two repos share a basename.

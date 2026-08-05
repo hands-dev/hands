@@ -34,12 +34,31 @@ Then, per repo (from its main checkout) — one slash command:
 ## Run the kitchen
 
 ```bash
-/hands:expo               # main checkout — or /loop /hands:expo for always-on
+hands                     # open the pass here (expo) — the launcher does the rest
 hands station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
 /hands:dashboard          # live admin dashboard (SSE) → http://localhost:4319  (or: hands serve)
                           # incl. per-pane token burn, read from Claude Code's own transcripts
 /hands:feedback           # hit a rough edge? files your note as a GitHub issue for the maintainer
 ```
+
+**Reaching a kitchen from anywhere.** `hands init` enrolls a repo by name, so you never have to
+remember where it lives:
+
+```bash
+hands ampersand              # cd there and open the pass, from any directory
+hands ampersand station-2    # open that station's seat instead
+hands station-2              # same, when you're already in the kitchen
+hands register               # enroll a repo that was set up before the launcher existed
+```
+
+An unrecognized word is an error naming that word, not a usage dump — and `hands go <project>` is
+the explicit form for scripts, or for a project whose name collides with a subcommand.
+
+Sessions the launcher opens come up **ready to work**: each station worktree is seeded with a
+permission allowlist (reads, read-only shell, the bus tools) before its session spawns, so a
+station never stalls on a permission prompt before it can read its own files. `Edit`/`Write` still
+prompt, and pushing, force-resetting, and merging are denied outright — a station proposes on its
+own branch; a human ships.
 
 The expo asks for **today's specials** (the ranked priorities — they change day to day with what's
 available and what the day calls for), then works the pass: fires **tickets** to stations, reviews
