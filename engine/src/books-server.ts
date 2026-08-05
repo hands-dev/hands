@@ -204,9 +204,14 @@ export function buildBooksServer(cfg: BooksConfig | null): McpServer {
       const p = requireProject(cfg, project);
       if (typeof p !== "string") return errorResult(p.error);
       const h = sanitizeSegment(handle);
-      const file = journalPath(cfg.dir, p, h, "README.md");
+      // journalPath sanitizes EVERY segment (lowercases among other things),
+      // which is right for user-controlled path/handle but corrupts a
+      // hardcoded literal filename with real uppercase letters — resolve the
+      // handle dir through the traversal guard, then join the literal name.
+      const handleDir = journalPath(cfg.dir, p, h);
       try {
-        if (!file) throw new Error("path escaped the journal root");
+        if (!handleDir) throw new Error("path escaped the journal root");
+        const file = path.join(handleDir, "README.md");
         return asToolResult({ project: p, handle: h, markdown: fs.readFileSync(file, "utf8") });
       } catch {
         return errorResult(`no index for ${p}/${h} — check books_list_handles`);

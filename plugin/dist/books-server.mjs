@@ -3229,8 +3229,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path11) {
-      let input = path11;
+    function removeDotSegments(path10) {
+      let input = path10;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3482,8 +3482,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path11, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path11 && path11 !== "/" ? path11 : void 0;
+        const [path10, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path10 && path10 !== "/" ? path10 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6882,12 +6882,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs9, exportName) {
+    function addFormats(ajv, list, fs8, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs9[f]);
+        ajv.addFormat(f, fs8[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -6896,8 +6896,8 @@ var require_dist = __commonJS({
 });
 
 // src/books-server.ts
-import * as fs8 from "node:fs";
-import * as path10 from "node:path";
+import * as fs7 from "node:fs";
+import * as path9 from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -7259,8 +7259,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path11, errorMaps, issueData } = params;
-  const fullPath = [...path11, ...issueData.path || []];
+  const { data, path: path10, errorMaps, issueData } = params;
+  const fullPath = [...path10, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7375,11 +7375,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path11, key) {
+  constructor(parent, value, path10, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path11;
+    this._path = path10;
     this._key = key;
   }
   get path() {
@@ -11302,10 +11302,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path11) {
-  if (!path11)
+function getElementAtPath(obj, path10) {
+  if (!path10)
     return obj;
-  return path11.reduce((acc, key) => acc?.[key], obj);
+  return path10.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11688,11 +11688,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path11, issues) {
+function prefixIssues(path10, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path11);
+    iss.path.unshift(path10);
     return iss;
   });
 }
@@ -11875,7 +11875,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path11 = []) => {
+  const processError = (error49, path10 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -11885,7 +11885,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path11, ...issue2.path];
+        const fullpath = [...path10, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -11917,8 +11917,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path11 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path11) {
+  const path10 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path10) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -24324,13 +24324,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path11 = ref.slice(1).split("/").filter(Boolean);
-  if (path11.length === 0) {
+  const path10 = ref.slice(1).split("/").filter(Boolean);
+  if (path10.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path11[0] === defsKey) {
-    const key = path11[1];
+  if (path10[0] === defsKey) {
+    const key = path10[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -30039,14 +30039,14 @@ var StdioServerTransport = class {
 
 // src/remote.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import * as fs7 from "node:fs";
-import * as os4 from "node:os";
-import * as path9 from "node:path";
+import * as fs6 from "node:fs";
+import * as os3 from "node:os";
+import * as path8 from "node:path";
 
 // src/config.ts
-import * as fs3 from "node:fs";
-import * as os3 from "node:os";
-import * as path3 from "node:path";
+import * as fs2 from "node:fs";
+import * as os2 from "node:os";
+import * as path2 from "node:path";
 
 // src/paths.ts
 import { execFileSync } from "node:child_process";
@@ -30055,36 +30055,31 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 
-// src/credentials.ts
-import * as fs2 from "node:fs";
-import * as os2 from "node:os";
-import * as path2 from "node:path";
-
 // src/digest.ts
-import * as fs4 from "node:fs";
-import * as path4 from "node:path";
+import * as fs3 from "node:fs";
+import * as path3 from "node:path";
 var DIGEST_VERSION = 1;
 var STAMP_PREFIX = "<!-- hands digest v";
 var STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
 
 // src/priorities.ts
-import * as fs5 from "node:fs";
-import * as path5 from "node:path";
+import * as fs4 from "node:fs";
+import * as path4 from "node:path";
 
 // src/snapshot.ts
-import * as path8 from "node:path";
+import * as path7 from "node:path";
 
 // src/board.ts
 import { createHash as createHash2 } from "node:crypto";
 
 // src/identity.ts
-import * as path6 from "node:path";
+import * as path5 from "node:path";
 
 // src/board.ts
-import * as path7 from "node:path";
+import * as path6 from "node:path";
 
 // src/store.ts
-import * as fs6 from "node:fs";
+import * as fs5 from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 var ONLINE_WINDOW_MS = 15 * 6e4;
 
@@ -30137,7 +30132,7 @@ function syncPull(dir) {
 }
 function listProjects(dir) {
   try {
-    return fs7.readdirSync(path9.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs6.readdirSync(path8.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -30162,16 +30157,16 @@ function requireProject(cfg, input) {
   return sanitizeSegment(project);
 }
 function journalPath(dir, ...segments) {
-  const root = path10.resolve(dir, "journal");
-  const full = path10.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
-  if (full !== root && !full.startsWith(`${root}${path10.sep}`)) return null;
+  const root = path9.resolve(dir, "journal");
+  const full = path9.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
+  if (full !== root && !full.startsWith(`${root}${path9.sep}`)) return null;
   return full;
 }
 function listHandles(dir, project) {
   const p = journalPath(dir, project);
   if (!p) return [];
   try {
-    return fs8.readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs7.readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -30180,7 +30175,7 @@ function listDigestDates(dir, project, handle) {
   const p = journalPath(dir, project, handle);
   if (!p) return [];
   try {
-    return fs8.readdirSync(p).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
+    return fs7.readdirSync(p).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
   } catch {
     return [];
   }
@@ -30189,7 +30184,7 @@ function listCraftSlugs(dir, project, handle) {
   const p = journalPath(dir, project, handle, "crafts");
   if (!p) return [];
   try {
-    const files = fs8.readdirSync(p);
+    const files = fs7.readdirSync(p);
     const slugs = new Set(
       files.filter((f) => f.endsWith(".md")).map((f) => f.endsWith(".skill.md") ? f.slice(0, -".skill.md".length) : f.slice(0, -".md".length))
     );
@@ -30200,7 +30195,7 @@ function listCraftSlugs(dir, project, handle) {
 }
 function readCraftFile(file2) {
   try {
-    return fs8.readFileSync(file2, "utf8");
+    return fs7.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -30275,10 +30270,11 @@ function buildBooksServer(cfg) {
       const p = requireProject(cfg, project);
       if (typeof p !== "string") return errorResult(p.error);
       const h = sanitizeSegment(handle);
-      const file2 = journalPath(cfg.dir, p, h, "README.md");
+      const handleDir = journalPath(cfg.dir, p, h);
       try {
-        if (!file2) throw new Error("path escaped the journal root");
-        return asToolResult({ project: p, handle: h, markdown: fs8.readFileSync(file2, "utf8") });
+        if (!handleDir) throw new Error("path escaped the journal root");
+        const file2 = path9.join(handleDir, "README.md");
+        return asToolResult({ project: p, handle: h, markdown: fs7.readFileSync(file2, "utf8") });
       } catch {
         return errorResult(`no index for ${p}/${h} \u2014 check books_list_handles`);
       }
@@ -30305,7 +30301,7 @@ function buildBooksServer(cfg) {
       const file2 = journalPath(cfg.dir, p, h, `${date5}.md`);
       try {
         if (!file2) throw new Error("path escaped the journal root");
-        return asToolResult({ project: p, handle: h, date: date5, markdown: fs8.readFileSync(file2, "utf8") });
+        return asToolResult({ project: p, handle: h, date: date5, markdown: fs7.readFileSync(file2, "utf8") });
       } catch {
         return errorResult(`no digest for ${p}/${h}/${date5} \u2014 check books_list_days`);
       }
@@ -30349,8 +30345,8 @@ function buildBooksServer(cfg) {
       const s = sanitizeSegment(slug);
       const craftsDir = journalPath(cfg.dir, p, h, "crafts");
       if (!craftsDir) return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
-      const book = readCraftFile(path10.join(craftsDir, `${s}.md`));
-      const skill = readCraftFile(path10.join(craftsDir, `${s}.skill.md`));
+      const book = readCraftFile(path9.join(craftsDir, `${s}.md`));
+      const skill = readCraftFile(path9.join(craftsDir, `${s}.skill.md`));
       if (book === null && skill === null) {
         return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
       }
@@ -30381,8 +30377,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs8.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs8.realpathSync(fileURLToPath(import.meta.url))).href;
+    const entry = pathToFileURL(fs7.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs7.realpathSync(fileURLToPath(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
