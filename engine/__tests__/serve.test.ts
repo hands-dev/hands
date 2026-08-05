@@ -192,6 +192,14 @@ describe("other kitchens (books multiplayer)", () => {
     expect(caseyKitchen).toBeDefined();
     expect(caseyKitchen!.updates.map((u) => u.summary)).toContain("ticket #1 fired: casey's ticket");
 
+    // a successful pull tick reports it, not just silence (hands#59)
+    const withBooksSync = JSON.parse(await get(`${handle.url}api/state`).then((r) => r.body)) as {
+      booksSync: { ok: boolean; lastAttempt: number | null; lastSuccess: number | null; reason: string | null } | null;
+    };
+    expect(withBooksSync.booksSync?.ok).toBe(true);
+    expect(withBooksSync.booksSync?.lastSuccess).not.toBeNull();
+    expect(withBooksSync.booksSync?.reason).toBeNull();
+
     // a NEW casey push shows up via the periodic pull, no reconnect
     casey.append("task.update", { id: 1, state: "returned", result: "done", at: Date.now() });
     expect(syncPush(casey, { force: true }).status).toBe("pushed");
@@ -207,6 +215,44 @@ describe("other kitchens (books multiplayer)", () => {
     stream.close();
     resetConfigCache();
   }, 20_000);
+});
+
+describe("books sync status (hands#59)", () => {
+  it("surfaces a failed pull instead of silently discarding it", async () => {
+    // never created — `git fetch` against it fails deterministically (PullResult reason "offline").
+    // Passed via the `config` test hook (bypasses loadConfig's real repo/user
+    // file lookup entirely) — this project's own real hands.config.json is
+    // itself remote-configured, so relying on env-based isolation alone would
+    // leak the real remote.url in on this exact machine/repo combination.
+    const remote = path.join(home, "nonexistent-remote.git");
+    handle = await serve({
+      port: 0,
+      env: { HANDS_HOME: home },
+      config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "michael", project: "proj" } },
+      tickMs: 25,
+      booksTickMs: 100,
+    });
+
+    type BooksSyncFrame = { ok: boolean; reason: string | null; lastAttempt: number | null } | null;
+    const stream = sse(`${handle.url}api/events`);
+    let booksSync: BooksSyncFrame = null;
+    for (let i = 0; i < 20 && !(booksSync && booksSync.lastAttempt != null); i++) {
+      const frame = JSON.parse(await stream.next(3000)) as { booksSync: BooksSyncFrame };
+      booksSync = frame.booksSync;
+    }
+    expect(booksSync?.ok).toBe(false);
+    expect(booksSync?.reason).toBe("offline");
+    expect(booksSync?.lastAttempt).not.toBeNull();
+
+    stream.close();
+  }, 20_000);
+
+  it("reports null (not an unattempted status) when the books aren't configured at all", async () => {
+    handle = await serve({ port: 0, env: { HANDS_HOME: home }, config: DEFAULT_CONFIG });
+    const state = await get(`${handle.url}api/state`);
+    const payload = JSON.parse(state.body) as { booksSync: unknown };
+    expect(payload.booksSync).toBeNull();
+  });
 });
 
 describe("other kitchens' crafts (books multiplayer)", () => {

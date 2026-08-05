@@ -124,7 +124,11 @@ export function App() {
                 <JournalFeed journal={snapshot.journal} now={snapshot.now} />
               </div>
               <div id="kitchens">
-                <OtherKitchens kitchens={snapshot.kitchens} now={snapshot.now} />
+                <OtherKitchens
+                  kitchens={snapshot.kitchens}
+                  booksSync={snapshot.booksSync}
+                  now={snapshot.now}
+                />
               </div>
               <div id="crafts">
                 <OtherCrafts crafts={snapshot.crafts} />

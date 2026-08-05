@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "./config.js";
+import { type HandsConfig, loadConfig } from "./config.js";
 import { dbPath } from "./paths.js";
 import {
   openJournal,
@@ -16,6 +16,21 @@ import { buildSnapshot, type Snapshot } from "./snapshot.js";
 import { Store } from "./store.js";
 import { TokenSampler, type TokenSeries } from "./tokens.js";
 
+/**
+ * Liveness of the books pull-and-reread tick (readOtherKitchens/readOtherCrafts
+ * are purely local reads — this is the only signal that the pull feeding them
+ * is actually succeeding). `syncPull` failures were previously discarded
+ * entirely (hands#59) — a stuck sync looked identical to "no other kitchens."
+ */
+export interface BooksSyncStatus {
+  /** when refreshKitchens last ran, regardless of outcome */
+  lastAttempt: number | null;
+  /** when a pull last succeeded — the age of what kitchens/crafts actually reflect */
+  lastSuccess: number | null;
+  ok: boolean;
+  reason: "offline" | "conflict" | "error" | null;
+}
+
 /** The one wire shape — served by /api/state and pushed on /api/events. */
 export type DashboardPayload = Snapshot & {
   db: string;
@@ -24,6 +39,8 @@ export type DashboardPayload = Snapshot & {
   kitchens: OtherKitchen[];
   /** other handles' craft books/skills in this project's books (empty when the books are off) */
   crafts: OtherCraft[];
+  /** null when the books aren't configured at all; otherwise the pull tick's liveness */
+  booksSync: BooksSyncStatus | null;
   /** per-pane token burn from Claude Code transcripts (null until first sample) */
   tokens: TokenSeries | null;
   /** approximate output-token cost per rail ticket (assignee's spend over the working interval) */
@@ -113,6 +130,8 @@ export function serve(opts?: {
   projectsDir?: string;
   /** where dashboard.js/.css live (test hook) */
   assetsDir?: string;
+  /** bypass loadConfig's real repo/user file lookup entirely (test hook) */
+  config?: HandsConfig;
 }): Promise<ServeHandle> {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
@@ -123,12 +142,16 @@ export function serve(opts?: {
   const store = new Store({ env });
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
-  const principal = loadConfig({ env }).principal.name;
+  const config = opts?.config ?? loadConfig({ env });
+  const principal = config.principal.name;
   // Multiplayer read: other handles in the books. The viewer never appends —
   // it only pulls (best-effort, on the slow tick) and reads the clone.
-  const journal = openJournal({ env });
+  const journal = openJournal({ env, config });
   let kitchens: OtherKitchen[] = [];
   let crafts: OtherCraft[] = [];
+  let booksSync: BooksSyncStatus | null = journal
+    ? { lastAttempt: null, lastSuccess: null, ok: true, reason: null }
+    : null;
   const tokensTickMs = opts?.tokensTickMs ?? 60_000;
   const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : undefined);
   let tokens: TokenSeries | null = null;
@@ -156,23 +179,40 @@ export function serve(opts?: {
 
   const refreshKitchens = (): void => {
     if (!journal) return;
+    const now = Date.now();
     try {
-      syncPull(journal.dir); // best-effort — offline or a concurrent sync just means stale
+      // best-effort — a failed pull leaves kitchens/crafts stale rather than
+      // empty (still worth showing), but the failure itself must not vanish
+      // silently (hands#59) — booksSync surfaces it either way.
+      const pulled = syncPull(journal.dir);
       kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
       crafts = readOtherCrafts(journal.dir, journal.project, journal.handle);
+      booksSync = {
+        lastAttempt: now,
+        lastSuccess: pulled.ok ? now : (booksSync?.lastSuccess ?? null),
+        ok: pulled.ok,
+        reason: pulled.ok ? null : (pulled.reason ?? "error"),
+      };
     } catch {
-      // keep the previous read
+      // keep the previous kitchens/crafts read, but the attempt still counts
+      booksSync = {
+        lastAttempt: now,
+        lastSuccess: booksSync?.lastSuccess ?? null,
+        ok: false,
+        reason: "error",
+      };
     }
   };
 
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, tokens, taskCosts }),
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, booksSync, tokens, taskCosts }),
       key:
         snapshotKey(snapshot) +
         JSON.stringify(kitchens) +
         JSON.stringify(crafts) +
+        JSON.stringify(booksSync) +
         JSON.stringify(tokens?.totals24h ?? null) +
         JSON.stringify(taskCosts),
     };
