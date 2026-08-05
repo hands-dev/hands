@@ -64,6 +64,15 @@ jobs:
           npm run bundle
           node scripts/extract-public-types.mjs ../../vendor-out/hands-dashboard-snapshot.d.ts
 
+      - name: Validate the extracted .d.ts actually compiles
+        # hands-website has no PR CI, so a truncated/malformed extraction
+        # (the brace-depth counter has a known latent gap around braces
+        # inside doc comments) would otherwise first surface as a broken
+        # production Vercel build, post-merge. Catch it here instead, before
+        # anything is vendored anywhere.
+        working-directory: hands/engine
+        run: npx tsc --noEmit --skipLibCheck --strict ../../vendor-out/hands-dashboard-snapshot.d.ts
+
       - name: Collect the built assets
         run: |
           mkdir -p vendor-out

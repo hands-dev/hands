@@ -33,9 +33,14 @@ const INTERFACES = ["PublicCraft", "SnapshotQuestion", "SnapshotTask", "Snapshot
 
 /** Extracts one `export interface Name { ... }` block by brace-depth, not a single-line regex — PublicSnapshot's `counts` field is itself a nested object type. */
 function extractInterface(source, name) {
-  const marker = `export interface ${name}`;
-  const start = source.indexOf(marker);
-  if (start === -1) throw new Error(`extract-public-types: "${marker}" not found in snapshot.ts — has it moved or been renamed?`);
+  // A plain substring search on "export interface SnapshotTask" would also
+  // match "export interface SnapshotTaskExtra" — require a non-identifier
+  // char (or end of file) right after the name so a future sibling
+  // interface can't be grabbed by mistake.
+  const marker = new RegExp(`export interface ${name}(?![\\w$])`);
+  const match = marker.exec(source);
+  if (!match) throw new Error(`extract-public-types: "export interface ${name}" not found in snapshot.ts — has it moved or been renamed?`);
+  const start = match.index;
   const braceStart = source.indexOf("{", start);
   if (braceStart === -1) throw new Error(`extract-public-types: no opening brace found for ${name}`);
   let depth = 0;

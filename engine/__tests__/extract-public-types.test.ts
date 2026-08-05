@@ -1,6 +1,16 @@
-import { describe, expect, it } from "vitest";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 // @ts-expect-error plain-JS build script, no types
 import { extractPublicTypes } from "../scripts/extract-public-types.mjs";
+
+let tmpFile: string | undefined;
+
+afterEach(() => {
+  if (tmpFile) fs.rmSync(tmpFile, { force: true });
+  tmpFile = undefined;
+});
 
 describe("extractPublicTypes", () => {
   it("emits the 5 public interfaces with SnapshotQuestion/Task/Todo renamed to their Public* form", () => {
@@ -34,5 +44,26 @@ describe("extractPublicTypes", () => {
     expect(() => extractPublicTypes(new URL("../src/store.ts", import.meta.url).pathname)).toThrow(
       /not found in snapshot\.ts/,
     );
+  });
+
+  it("doesn't grab a sibling interface whose name shares a prefix (e.g. a future SnapshotTaskExtra)", () => {
+    tmpFile = path.join(os.tmpdir(), `extract-public-types-boundary-${Date.now()}.ts`);
+    fs.writeFileSync(
+      tmpFile,
+      `
+export interface PublicCraft { station: string; focus: string | null; }
+export interface SnapshotTaskExtra { decoyOnlyField: string; }
+export interface SnapshotQuestion { id: number; }
+export interface SnapshotTask { realOnlyField: string; }
+export interface SnapshotTodo { id: number; }
+export interface PublicSnapshot { crafts: PublicCraft[]; questions: SnapshotQuestion[]; tasks: SnapshotTask[]; todos: SnapshotTodo[]; }
+`,
+    );
+
+    const dts = extractPublicTypes(tmpFile);
+
+    expect(dts).toContain("realOnlyField");
+    expect(dts).not.toContain("decoyOnlyField");
+    expect(dts).not.toContain("SnapshotTaskExtra");
   });
 });
