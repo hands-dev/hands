@@ -91,6 +91,11 @@ export function StationsGrid({
 }) {
   const onDuty = agents.filter((a) => a.online).length;
   const seriesIds = orderedSeriesIds(Object.keys(tokens?.perAgent ?? {}));
+  // Expo gets its own centered row above the stations — a clearer visual
+  // hierarchy than treating it as just another cell in the grid. Stations
+  // stay in their existing (registration) order.
+  const expo = agents.find((a) => a.id === "expo");
+  const stations = agents.filter((a) => a.id !== "expo");
   return (
     <Card>
       <CardHeader>
@@ -102,18 +107,31 @@ export function StationsGrid({
           </Badge>
         </CardAction>
       </CardHeader>
-      <CardContent className="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <CardContent className="space-y-3">
         {agents.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No stations yet — <span className="font-mono text-xs">hands station add -n 2</span>
           </p>
         ) : (
-          agents.map((a) => (
-            <StationCell key={a.id} agent={a} now={now} tokens={tokens} seriesIds={seriesIds} />
-          ))
+          <>
+            {expo ? (
+              <div className="mx-auto max-w-sm">
+                <StationCell agent={expo} now={now} tokens={tokens} seriesIds={seriesIds} />
+              </div>
+            ) : null}
+            {stations.length > 0 ? (
+              <div className="flex flex-wrap justify-between gap-3">
+                {stations.map((a) => (
+                  <div key={a.id} className="min-w-56 flex-1">
+                    <StationCell agent={a} now={now} tokens={tokens} seriesIds={seriesIds} />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
         )}
         {collisions.length > 0 ? (
-          <Alert variant="destructive" className="md:col-span-2">
+          <Alert variant="destructive">
             <AlertTitle>Crossed wires</AlertTitle>
             <AlertDescription>
               {collisions.map((c) => (
