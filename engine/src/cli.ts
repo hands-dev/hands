@@ -198,7 +198,13 @@ function cmdRestore(): void {
 function cmdSync(argv: string[]): void {
   const j = requireRemote();
   const { handle } = j;
-  const res = syncPush(j, { force: true, adopt: flag(argv, "--adopt") });
+  const store = new Store();
+  let res: ReturnType<typeof syncPush>;
+  try {
+    res = syncPush(j, { force: true, adopt: flag(argv, "--adopt"), store });
+  } finally {
+    store.close();
+  }
   if (res.status === "error") fail(`sync failed: ${res.detail}`);
   if (res.status === "invalid") fail(res.detail ?? "journal repo failed validation");
   out(`✔ journal ${res.status} (handle "${handle}")`);

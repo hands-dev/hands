@@ -1123,7 +1123,7 @@ function runCli(subcommand: string, argv: string[]): number {
     if (subcommand === "publish") {
       runPublish(store, { agentId, cwd: process.cwd() });
       // Durable-journal push rides the turn-end publish (debounced inside).
-      if (journal) syncPush(journal);
+      if (journal) syncPush(journal, { store });
       return 0;
     }
     if (subcommand === "board") {
