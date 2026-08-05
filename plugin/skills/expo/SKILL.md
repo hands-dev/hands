@@ -97,13 +97,6 @@ break-into-dishes ticket, then fire the pieces; solid and small → fire the bui
 hands (section 5); needs product judgment → escalate with your recommendation. Fully handled →
 `hands_task_update({ id, state: "done" })`. Dead → 86 it (`state: "cancelled"`).
 
-**Superseded, not just handled (hands#48).** On every pass — not only when the principal points it
-out — scan `returned` tickets against the same `dish`'s later tickets: if a later ticket already
-folded in or shipped this one's work (a newer PR/ref covering the same ask), it's clutter, not a
-pending decision. `hands_task_update({ id, state: "done", result: "superseded by #<later-id>" })`
-immediately, same pass you notice it — a pile of stale `returned` tickets is yours to clear
-ambiently, never something to leave for the dashboard to surface.
-
 **Open questions.** Decide each against the specials — and name which special it maps to.
 **Auto-resolve ONLY when ALL FOUR hold** (else escalate): maps cleanly to a stated special; the
 action is **reversible**; scoped to the **asking station** only; you're genuinely confident.
@@ -122,16 +115,6 @@ briefly.
 For the top special (then the next, as capacity allows), push it one concrete step forward. Two
 substrates: **sub-agents** (Agent tool — session-scoped helpers reporting back to you, resumable
 via SendMessage) and **stations** (persistent isolated instances on this bus).
-
-**Before every dispatch, run both checks below — don't default to "fire it at the nearest idle
-station" out of habit (hands#53):**
-1. **Sub-agent or station?** The cost asymmetry paragraph right below decides it — most work that
-   isn't ongoing/independently-owned is a sub-agent, not a station turn.
-2. **If it's a station, which craft?** The casting ladder (under "The station path" below) — a
-   dormant craft that already covers this beat outranks any idle-but-uncast seat, even if casting
-   costs a swap.
-Skipping either check is how idle capacity sits uncast while a craft-covered ticket goes to a
-colder seat than it needed to.
 
 **The cost asymmetry decides.** A station turn is a full model turn over that station's *entire
 accumulated context*, plus a wake each way for every exchange — its cost grows with the station's
@@ -197,13 +180,7 @@ switch a pane's model yourself.
    exists. For a fresh special the first ticket is almost always **a plan**: *"Plan: get <X>
    working end-to-end — approach, files, risks, open questions. Don't build yet."*
 3. **Track via the rail** so you never double-fire, and follow up when a station goes quiet on an
-   in-progress ticket — but check before you wake it (hands#60): bus silence isn't proof of a
-   stall, it's just proof nothing was *sent*. A station's own Claude Code transcript is ground
-   truth on whether it's actually moving: `hands_peers` for its `cwd`, then
-   `ls -lt ~/.claude/projects/<that cwd with every non-alphanumeric char replaced by "-">/` (same
-   encoding `engine/src/tokens.ts`'s `encodeProjectDir` uses for the token sampler) and look at the
-   newest file's mtime. Recent mtime → it's working, leave it; only nudge (a wake, so use it
-   deliberately) once the transcript itself has gone cold, not merely the bus.
+   in-progress ticket.
 
 **"What's on the rail?"** — when the principal asks (or in your wrap-up), answer in this exact
 shape every time (deterministic + grep-friendly, hands#52 — copy varies, structure never does).
