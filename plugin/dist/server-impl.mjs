@@ -8159,18 +8159,19 @@ function userConfigPath(env = process.env) {
   const home = env.HANDS_TEST_HOME?.trim() || os2.homedir();
   return path4.join(home, ".claude", CONFIG_BASENAME);
 }
-function repoConfigPath(cwd = process.cwd()) {
+function repoConfigPath(cwd = process.cwd(), env = process.env) {
+  if (env.HANDS_NO_REPO_CONFIG?.trim()) return null;
   const info = repoInfo(cwd);
   return info ? path4.join(info.repoRoot, CONFIG_BASENAME) : null;
 }
 function loadConfig(options) {
   const cwd = options?.cwd ?? process.cwd();
   const env = options?.env ?? process.env;
-  const key = `${cwd}\0${env.HANDS_TEST_HOME ?? ""}`;
+  const key = `${cwd} ${env.HANDS_TEST_HOME ?? ""} ${env.HANDS_NO_REPO_CONFIG ?? ""}`;
   const hit = cache.get(key);
   if (hit) return hit;
   let cfg = merge2(DEFAULT_CONFIG, readJson(userConfigPath(env)));
-  const repoFile = repoConfigPath(cwd);
+  const repoFile = repoConfigPath(cwd, env);
   if (repoFile) cfg = merge2(cfg, readJson(repoFile));
   cache.set(key, cfg);
   return cfg;
@@ -9034,6 +9035,43 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
   }
   return kitchens;
 }
+function readOtherCrafts(dir, project, ownHandle) {
+  let handles = [];
+  try {
+    handles = fs8.readdirSync(path9.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+  } catch {
+    return [];
+  }
+  const read = (file2) => {
+    try {
+      return fs8.readFileSync(file2, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const crafts = [];
+  for (const handle of handles) {
+    const craftsDir = path9.join(dir, "journal", project, handle, "crafts");
+    let files = [];
+    try {
+      files = fs8.readdirSync(craftsDir);
+    } catch {
+      continue;
+    }
+    const slugs = new Set(
+      files.filter((f) => f.endsWith(".md")).map((f) => f.endsWith(".skill.md") ? f.slice(0, -".skill.md".length) : f.slice(0, -".md".length))
+    );
+    for (const slug of [...slugs].sort()) {
+      crafts.push({
+        handle,
+        slug,
+        book: read(path9.join(craftsDir, `${slug}.md`)),
+        skill: read(path9.join(craftsDir, `${slug}.skill.md`))
+      });
+    }
+  }
+  return crafts;
+}
 var JOURNAL_VERSION, JOURNAL_LAYOUT, MARKER_FILE, PUSH_DEBOUNCE_MS, GIT_TIMEOUT_MS, projectCache, OWNED_ROOT;
 var init_remote = __esm({
   "src/remote.ts"() {
@@ -9526,6 +9564,7 @@ function serve(opts) {
   const principal = loadConfig({ env }).principal.name;
   const journal = openJournal({ env });
   let kitchens = [];
+  let crafts = [];
   const tokensTickMs = opts?.tokensTickMs ?? 6e4;
   const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : void 0);
   let tokens = null;
@@ -9549,14 +9588,15 @@ function serve(opts) {
     try {
       syncPull(journal.dir);
       kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
+      crafts = readOtherCrafts(journal.dir, journal.project, journal.handle);
     } catch {
     }
   };
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens, taskCosts }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, tokens, taskCosts }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
     };
   };
   const clients = /* @__PURE__ */ new Set();

@@ -121,6 +121,29 @@ describe("loadConfig", () => {
     }
   });
 
+  it("HANDS_NO_REPO_CONFIG suppresses the repo layer but not the user layer", () => {
+    const home = path.join(root, "home2");
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".claude", "hands.config.json"),
+      JSON.stringify({ principal: { name: "Ada" } }),
+    );
+    fs.writeFileSync(
+      path.join(repoA, "hands.config.json"),
+      JSON.stringify({ topology: "open" }),
+    );
+    try {
+      const cfg = loadConfig({
+        cwd: repoA,
+        env: { HANDS_TEST_HOME: home, HANDS_NO_REPO_CONFIG: "1" },
+      });
+      expect(cfg.principal.name).toBe("Ada"); // user layer still applies
+      expect(cfg.topology).toBe("strict-hub"); // repo layer suppressed — default, not "open"
+    } finally {
+      fs.rmSync(path.join(repoA, "hands.config.json"), { force: true });
+    }
+  });
+
   it("ignores a malformed config file (falls back to defaults)", () => {
     fs.writeFileSync(path.join(repoA, "hands.config.json"), "{not json");
     try {

@@ -12,7 +12,10 @@ let env: NodeJS.ProcessEnv;
 
 beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-crafts-"));
-  env = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user") };
+  // This suite never creates its own fixture repo, so a real hands.config.json
+  // in whatever repo the test process happens to run from (a worktree of this
+  // very repo, when dogfooded) must not bleed in — see config.ts repoConfigPath.
+  env = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user"), HANDS_NO_REPO_CONFIG: "1" };
   resetConfigCache();
 });
 afterEach(() => {
