@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DashboardPayload } from "../src/serve.js";
 import type { PublicSnapshot } from "../src/snapshot.js";
 
@@ -11,6 +11,27 @@ import type { PublicSnapshot } from "../src/snapshot.js";
 export type HostedDashboardPayload = PublicSnapshot & { mode: "hosted" };
 
 const HOSTED_POLL_INTERVAL_MS = 30_000;
+
+/**
+ * A hosted payload route is someone else's server — cheap sanity check
+ * before trusting the shape, so a wrong-shape 200 (misconfigured route,
+ * an HTML error page served with a 200, a stale cached response) lands in
+ * lastError instead of crashing every downstream component that assumes
+ * these are arrays.
+ */
+function looksLikePublicSnapshot(body: unknown): body is PublicSnapshot {
+  if (!body || typeof body !== "object") return false;
+  const b = body as Record<string, unknown>;
+  return (
+    Array.isArray(b.questions) &&
+    Array.isArray(b.tasks) &&
+    Array.isArray(b.todos) &&
+    Array.isArray(b.priorities) &&
+    Array.isArray(b.crafts) &&
+    typeof b.counts === "object" &&
+    b.counts !== null
+  );
+}
 
 /**
  * Live kitchen state. Local mode (default): SSE — the server pushes the
@@ -33,31 +54,40 @@ export function useSnapshot(opts?: { pollUrl?: string; pollIntervalMs?: number }
   const [isFetching, setIsFetching] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
 
+  // A slow response from an earlier tick must not clobber a newer one —
+  // abort whatever's in flight before starting the next poll.
+  const inFlight = useRef<AbortController | null>(null);
+
   useEffect(() => {
     if (pollUrl) {
       let cancelled = false;
       const poll = async (): Promise<void> => {
+        inFlight.current?.abort();
+        const controller = new AbortController();
+        inFlight.current = controller;
         setIsFetching(true);
         try {
-          const res = await fetch(pollUrl);
+          const res = await fetch(pollUrl, { cache: "no-store", signal: controller.signal });
           if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-          const body = (await res.json()) as PublicSnapshot;
-          if (cancelled) return;
+          const body: unknown = await res.json();
+          if (cancelled || controller.signal.aborted) return;
+          if (!looksLikePublicSnapshot(body)) throw new Error("unexpected payload shape");
           setSnapshot({ ...body, mode: "hosted" });
           setConnected(true);
           setLastError(null);
         } catch (err) {
-          if (cancelled) return;
+          if (cancelled || controller.signal.aborted) return;
           setConnected(false);
           setLastError(err instanceof Error ? err.message : String(err));
         } finally {
-          if (!cancelled) setIsFetching(false);
+          if (!cancelled && inFlight.current === controller) setIsFetching(false);
         }
       };
       void poll();
       const id = setInterval(() => void poll(), pollIntervalMs);
       return () => {
         cancelled = true;
+        inFlight.current?.abort();
         clearInterval(id);
       };
     }
