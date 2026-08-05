@@ -1,6 +1,7 @@
 import { OtherCrafts } from "@/components/crafts";
 import { JournalFeed } from "@/components/journal-feed";
 import { OtherKitchens } from "@/components/kitchens";
+import { MessageLog } from "@/components/message-log";
 import { NeedsYou, OpenQuestions } from "@/components/questions-lane";
 import { Specials } from "@/components/specials";
 import { StatCards } from "@/components/stat-cards";
@@ -19,6 +20,7 @@ const NAV = [
   { href: "#rail", label: "The rail" },
   { href: "#pass", label: "At the pass" },
   { href: "#book", label: "The book" },
+  { href: "#messages", label: "MCP messages" },
   { href: "#kitchens", label: "Other kitchens" },
   { href: "#crafts", label: "Other crafts" },
 ];
@@ -122,6 +124,9 @@ export function App() {
               <Todos todos={snapshot.todos} principal={snapshot.principal} now={snapshot.now} />
               <div id="book">
                 <JournalFeed journal={snapshot.journal} now={snapshot.now} />
+              </div>
+              <div id="messages">
+                <MessageLog messages={snapshot.messages} now={snapshot.now} />
               </div>
               <div id="kitchens">
                 <OtherKitchens
