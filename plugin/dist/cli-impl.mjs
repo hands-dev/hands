@@ -562,10 +562,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path19) {
-  if (!path19)
+function getElementAtPath(obj, path21) {
+  if (!path21)
     return obj;
-  return path19.reduce((acc, key) => acc?.[key], obj);
+  return path21.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -877,11 +877,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path19, issues) {
+function prefixIssues(path21, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path19);
+    iss.path.unshift(path21);
     return iss;
   });
 }
@@ -1123,7 +1123,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path19 = []) => {
+  const processError = (error49, path21 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1133,7 +1133,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path19, ...issue2.path];
+        const fullpath = [...path21, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1165,8 +1165,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path19 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path19) {
+  const path21 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path21) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13860,13 +13860,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path19 = ref.slice(1).split("/").filter(Boolean);
-  if (path19.length === 0) {
+  const path21 = ref.slice(1).split("/").filter(Boolean);
+  if (path21.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path19[0] === defsKey) {
-    const key = path19[1];
+  if (path21[0] === defsKey) {
+    const key = path21[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17829,8 +17829,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path19) {
-      let input = path19;
+    function removeDotSegments(path21) {
+      let input = path21;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18082,8 +18082,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path19, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path19 && path19 !== "/" ? path19 : void 0;
+        const [path21, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path21 && path21 !== "/" ? path21 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -21482,12 +21482,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats2(ajv, list, fs19, exportName) {
+    function addFormats2(ajv, list, fs21, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs19[f]);
+        ajv.addFormat(f, fs21[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -24343,6 +24343,9 @@ function pruneMissing(env = process.env) {
   const dropped = registry2.projects.length - live.length;
   if (dropped > 0) writeRegistry({ projects: live }, env);
   return dropped;
+}
+function listRegisteredProjects(env = process.env) {
+  return readRegistry(env).projects.slice().sort((a, b) => a.name.localeCompare(b.name));
 }
 var init_projects = __esm({
   "src/projects.ts"() {
@@ -27630,7 +27633,7 @@ function convertStandardElicitationSchema(schema) {
 function isAnnotationOnlyJsonSchemaKeyword(key) {
   return ANNOTATION_ONLY_JSON_SCHEMA_KEYWORDS.has(key) || key.startsWith("x-");
 }
-function walkProperty(node, path19, vendor, unsupported) {
+function walkProperty(node, path21, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -27638,8 +27641,8 @@ function walkProperty(node, path19, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path19}.${key}`);
-  } else unsupported.push(`${path19}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path21}.${key}`);
+  } else unsupported.push(`${path21}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -27656,11 +27659,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema2, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path19 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path19}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path21 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path21}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path19 ? `${path19}.${key}` : key;
+    const childPath = path21 ? `${path21}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -28273,9 +28276,9 @@ var init_src_D_zzAWoS = __esm({
         });
         const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
         if (!parsed.success) for (const issue2 of parsed.error.issues) {
-          const path19 = issue2.path.map(String);
-          const key = path19.length > 0 ? path19.join(".") : "_meta";
-          if (path19.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+          const path21 = issue2.path.map(String);
+          const key = path21.length > 0 ? path21.join(".") : "_meta";
+          if (path21.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
           issues.push({
             key,
             problem: issue2.message
@@ -32430,8 +32433,8 @@ var init_ajvProvider_97rDpkRx = __esm({
         for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
         return ind;
       }
-      function removeDotSegments(path19) {
-        let input = path19;
+      function removeDotSegments(path21) {
+        let input = path21;
         const output = [];
         let nextSlash = -1;
         let len = 0;
@@ -32584,8 +32587,8 @@ var init_ajvProvider_97rDpkRx = __esm({
           wsComponent.secure = void 0;
         }
         if (wsComponent.resourceName) {
-          const [path19, query] = wsComponent.resourceName.split("?");
-          wsComponent.path = path19 && path19 !== "/" ? path19 : void 0;
+          const [path21, query] = wsComponent.resourceName.split("?");
+          wsComponent.path = path21 && path21 !== "/" ? path21 : void 0;
           wsComponent.query = query;
           wsComponent.resourceName = void 0;
         }
@@ -36573,11 +36576,11 @@ var init_ajvProvider_97rDpkRx = __esm({
         if (!f) throw new Error(`Unknown format "${name}"`);
         return f;
       };
-      function addFormats2(ajv, list, fs19, exportName) {
+      function addFormats2(ajv, list, fs21, exportName) {
         var _a2;
         var _b;
         (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
-        for (const f of list) ajv.addFormat(f, fs19[f]);
+        for (const f of list) ajv.addFormat(f, fs21[f]);
       }
       module.exports = exports = formatsPlugin;
       Object.defineProperty(exports, "__esModule", { value: true });
@@ -37602,9 +37605,9 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs17 from "node:fs";
-import * as os10 from "node:os";
-import * as path17 from "node:path";
+import * as fs19 from "node:fs";
+import * as os11 from "node:os";
+import * as path19 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -37638,10 +37641,10 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path17.join(info.repoRoot, CONFIG_BASENAME);
+      const configPath = path19.join(info.repoRoot, CONFIG_BASENAME);
       const entry = registerProject(info.repoRoot);
       if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
-      if (fs17.existsSync(configPath)) {
+      if (fs19.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: hands books <url>)");
       } else {
@@ -37665,11 +37668,11 @@ async function runInit(argv) {
         if (journalUrl.trim()) {
           const handle = flags.handle ?? await ask(
             "Books handle (your fleet's namespace)?",
-            githubUsername() ?? os10.userInfo().username
+            githubUsername() ?? os11.userInfo().username
           );
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs17.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs19.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
@@ -37698,7 +37701,8 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import * as os11 from "node:os";
+import { execFileSync as execFileSync7 } from "node:child_process";
+import * as os12 from "node:os";
 
 // src/server.ts
 import * as fs14 from "node:fs";
@@ -38063,8 +38067,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path19, errorMaps, issueData } = params;
-  const fullPath = [...path19, ...issueData.path || []];
+  const { data, path: path21, errorMaps, issueData } = params;
+  const fullPath = [...path21, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -38179,11 +38183,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path19, key) {
+  constructor(parent, value, path21, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path19;
+    this._path = path21;
     this._key = key;
   }
   get path() {
@@ -48298,6 +48302,289 @@ if (invokedDirectly) {
 init_provision();
 init_projects();
 init_seed_permissions();
+
+// src/station-logs.ts
+init_tokens();
+import * as fs16 from "node:fs";
+import * as os9 from "node:os";
+import * as path16 from "node:path";
+function transcriptDir(cwd, home = os9.homedir()) {
+  return path16.join(home, ".claude", "projects", encodeProjectDir(cwd));
+}
+function latestTranscript(cwd, home = os9.homedir()) {
+  const dir = transcriptDir(cwd, home);
+  let names;
+  try {
+    names = fs16.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+  } catch {
+    return null;
+  }
+  let newest = null;
+  for (const name of names) {
+    const file2 = path16.join(dir, name);
+    try {
+      const { mtimeMs } = fs16.statSync(file2);
+      if (!newest || mtimeMs > newest.mtime) newest = { file: file2, mtime: mtimeMs };
+    } catch {
+    }
+  }
+  return newest?.file ?? null;
+}
+function clip2(s, max = 160) {
+  const flat = s.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}\u2026` : flat;
+}
+function eventsFromLine(raw) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const line = parsed;
+  const at = Date.parse(String(line.timestamp ?? "")) || 0;
+  const message = line.message;
+  const content = message?.content;
+  if (!Array.isArray(content)) return [];
+  const events = [];
+  for (const block of content) {
+    if (!block || typeof block !== "object") continue;
+    const b = block;
+    if (b.type === "text" && typeof b.text === "string" && b.text.trim()) {
+      events.push({ at, kind: "text", label: clip2(b.text, 100), detail: clip2(b.text, 400) });
+    } else if (b.type === "tool_use" && typeof b.name === "string") {
+      events.push({ at, kind: "tool", label: String(b.name), detail: clip2(JSON.stringify(b.input ?? {}), 200) });
+    } else if (b.type === "tool_result") {
+      const failed = b.is_error === true;
+      const body = typeof b.content === "string" ? b.content : JSON.stringify(b.content ?? "");
+      events.push({
+        at,
+        kind: failed ? "error" : "result",
+        label: failed ? "tool error" : "result",
+        detail: clip2(body, 200)
+      });
+    }
+  }
+  return events;
+}
+function recentActivity(cwd, opts) {
+  const limit = opts?.limit ?? 20;
+  const file2 = latestTranscript(cwd, opts?.home ?? os9.homedir());
+  if (!file2) return { file: null, events: [] };
+  let text = "";
+  try {
+    const tailBytes = opts?.tailBytes ?? 512 * 1024;
+    const { size } = fs16.statSync(file2);
+    const start = Math.max(0, size - tailBytes);
+    const fd = fs16.openSync(file2, "r");
+    try {
+      const buf = Buffer.alloc(Math.min(size, tailBytes));
+      fs16.readSync(fd, buf, 0, buf.length, start);
+      text = buf.toString("utf8");
+    } finally {
+      fs16.closeSync(fd);
+    }
+    if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+  } catch {
+    return { file: file2, events: [] };
+  }
+  const events = [];
+  for (const line of text.split("\n")) {
+    if (line.trim()) events.push(...eventsFromLine(line));
+  }
+  return { file: file2, events: events.slice(-limit) };
+}
+function idleMs(cwd, now = Date.now(), home) {
+  const { events } = recentActivity(cwd, { limit: 1, home });
+  const last = events[events.length - 1];
+  if (!last || !last.at) return null;
+  return now - last.at;
+}
+
+// src/doctor.ts
+init_config();
+init_paths();
+init_provision();
+init_projects();
+init_seed_permissions();
+import { execFileSync as execFileSync6 } from "node:child_process";
+import * as fs17 from "node:fs";
+import * as path17 from "node:path";
+var IDLE_WARN_MS = 30 * 6e4;
+var WAL_RATIO_WARN = 10;
+function worstOf(checks) {
+  if (checks.some((c) => c.severity === "fail")) return "fail";
+  if (checks.some((c) => c.severity === "warn")) return "warn";
+  return "ok";
+}
+function gitHead(cwd) {
+  try {
+    return execFileSync6("git", ["rev-parse", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3e3
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+function runDoctor(opts) {
+  const cwd = opts?.cwd ?? process.cwd();
+  const env = opts?.env ?? process.env;
+  const now = opts?.now ?? Date.now();
+  const checks = [];
+  const info = repoInfo(cwd);
+  if (!info) {
+    checks.push({ name: "repo", severity: "fail", detail: `${cwd} is not inside a git repo` });
+    return { checks, worst: "fail" };
+  }
+  checks.push({ name: "repo", severity: "ok", detail: `${info.repoRoot} (${info.slug})` });
+  const configPath = path17.join(info.repoRoot, CONFIG_BASENAME);
+  let cfg = null;
+  if (!fs17.existsSync(configPath)) {
+    checks.push({
+      name: "config",
+      severity: "fail",
+      detail: `no ${CONFIG_BASENAME} \u2014 run: hands init`
+    });
+  } else {
+    try {
+      cfg = loadConfig({ cwd: info.repoRoot });
+      checks.push({ name: "config", severity: "ok", detail: `principal: ${cfg.principal.name}` });
+    } catch (err) {
+      checks.push({
+        name: "config",
+        severity: "fail",
+        detail: `${CONFIG_BASENAME} is unreadable: ${err.message}`
+      });
+    }
+  }
+  const name = path17.basename(info.repoRoot);
+  const registered = resolveProject2(name, env);
+  if (registered?.repoRoot === info.repoRoot) {
+    checks.push({ name: "registry", severity: "ok", detail: `resolves as "${name}"` });
+  } else {
+    checks.push({
+      name: "registry",
+      severity: "warn",
+      detail: `not reachable by name \u2014 \`hands ${name}\` won't find this repo`,
+      fixable: "register this repo"
+    });
+  }
+  const pruned = pruneMissing(env);
+  if (pruned > 0) {
+    checks.push({
+      name: "registry.stale",
+      severity: "ok",
+      detail: `pruned ${pruned} entr${pruned === 1 ? "y" : "ies"} pointing at deleted repos`
+    });
+  }
+  const db = dbPath(env, info.repoRoot);
+  if (!fs17.existsSync(db)) {
+    checks.push({
+      name: "bus.db",
+      severity: "warn",
+      detail: "no database yet \u2014 normal before the first session takes a turn"
+    });
+  } else {
+    const dbSize = fs17.statSync(db).size;
+    let walSize = 0;
+    try {
+      walSize = fs17.statSync(`${db}-wal`).size;
+    } catch {
+    }
+    if (walSize > dbSize * WAL_RATIO_WARN && walSize > 1e6) {
+      checks.push({
+        name: "bus.wal",
+        severity: "warn",
+        detail: `write-ahead log is ${(walSize / 1e6).toFixed(1)}MB against a ${(dbSize / 1e3).toFixed(0)}KB database \u2014 checkpoints aren't completing (long-lived MCP connections hold a reader open). Harmless now; unbounded over days.`
+      });
+    } else {
+      checks.push({ name: "bus.db", severity: "ok", detail: `${(dbSize / 1e3).toFixed(0)}KB` });
+    }
+  }
+  const coord = coordinationDir(env, info.repoRoot);
+  checks.push(
+    fs17.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
+  );
+  const running = opts?.entry ?? process.argv[1] ?? "";
+  const cached2 = /plugins\/cache\/[^/]+\/[^/]+\/([0-9a-f]{7,40})\//.exec(running);
+  if (cached2?.[1]) {
+    const pluginCommit = cached2[1];
+    const head = gitHead(info.repoRoot);
+    const selfHosted = fs17.existsSync(path17.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
+    if (selfHosted && head && !head.startsWith(pluginCommit) && !pluginCommit.startsWith(head.slice(0, 7))) {
+      checks.push({
+        name: "build",
+        severity: "warn",
+        detail: `running the plugin build at ${pluginCommit}, but this checkout is at ${head.slice(0, 7)} \u2014 your changes aren't live. Update the plugin, and restart sessions so the MCP server reloads.`
+      });
+    } else {
+      checks.push({ name: "build", severity: "ok", detail: `plugin build ${pluginCommit}` });
+    }
+  } else if (running) {
+    checks.push({ name: "build", severity: "ok", detail: `running from source: ${running}` });
+  }
+  if (cfg) {
+    const stations = listStations(info.repoRoot, cfg);
+    if (stations.length === 0) {
+      checks.push({ name: "stations", severity: "ok", detail: "none open" });
+    }
+    for (const station of stations) {
+      if (!station.present) {
+        checks.push({
+          name: `${station.id}.worktree`,
+          severity: "fail",
+          detail: `worktree missing: ${station.dir}`
+        });
+        continue;
+      }
+      const settings = path17.join(station.dir, ".claude", "settings.local.json");
+      if (fs17.existsSync(settings)) {
+        checks.push({ name: `${station.id}.permissions`, severity: "ok", detail: "seeded" });
+      } else if (opts?.fix) {
+        seedStationPermissions(station.dir);
+        checks.push({
+          name: `${station.id}.permissions`,
+          severity: "ok",
+          detail: "was unseeded \u2014 seeded now"
+        });
+      } else {
+        checks.push({
+          name: `${station.id}.permissions`,
+          severity: "fail",
+          detail: "no permission allowlist \u2014 this station will stall on a prompt before it can work",
+          fixable: "seed the allowlist"
+        });
+      }
+      const idle = idleMs(station.dir, now);
+      if (idle === null) {
+        checks.push({
+          name: `${station.id}.activity`,
+          severity: "warn",
+          detail: "no transcript yet \u2014 never took a turn"
+        });
+      } else if (idle > IDLE_WARN_MS) {
+        checks.push({
+          name: `${station.id}.activity`,
+          severity: "warn",
+          detail: `quiet for ${Math.round(idle / 6e4)}m \u2014 check it with: hands logs ${station.id}`
+        });
+      } else {
+        checks.push({
+          name: `${station.id}.activity`,
+          severity: "ok",
+          detail: `active ${Math.round(idle / 1e3)}s ago`
+        });
+      }
+    }
+  }
+  return { checks, worst: worstOf(checks) };
+}
+
+// src/cli.ts
 init_digest();
 init_remote();
 
@@ -48305,9 +48592,9 @@ init_remote();
 init_config();
 init_paths();
 init_remote();
-import * as fs16 from "node:fs";
-import * as os9 from "node:os";
-import * as path16 from "node:path";
+import * as fs18 from "node:fs";
+import * as os10 from "node:os";
+import * as path18 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var NO_BOOKS_REASON = "no books attached \u2014 run: hands books <path-or-url> to enable books first";
 function resolveBooksTarget(opts) {
@@ -48320,7 +48607,7 @@ function resolveBooksTarget(opts) {
   if (!config2.remote.url?.trim()) return { ok: false, reason: NO_BOOKS_REASON };
   const j = openJournal({ cwd, env, config: config2 });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
-  if (!fs16.existsSync(path16.join(j.dir, ".git"))) {
+  if (!fs18.existsSync(path18.join(j.dir, ".git"))) {
     return { ok: false, reason: `could not set up the journal clone at ${j.dir}` };
   }
   syncPull(j.dir);
@@ -48328,25 +48615,25 @@ function resolveBooksTarget(opts) {
   if (!shape.ok) return { ok: false, reason: shape.reason ?? "journal repo failed validation" };
   return { ok: true, target: { dir: j.dir, project: j.project, handle: j.handle, url: j.url } };
 }
-function resolveBooksServerEntry(here = path16.dirname(fileURLToPath3(import.meta.url))) {
-  const bundled = path16.join(here, "books-server.mjs");
-  if (fs16.existsSync(bundled)) return bundled;
-  const devFallback = path16.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
-  if (fs16.existsSync(devFallback)) return devFallback;
+function resolveBooksServerEntry(here = path18.dirname(fileURLToPath3(import.meta.url))) {
+  const bundled = path18.join(here, "books-server.mjs");
+  if (fs18.existsSync(bundled)) return bundled;
+  const devFallback = path18.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
+  if (fs18.existsSync(devFallback)) return devFallback;
   return null;
 }
 function desktopConfigPath(env = process.env) {
   const override = env.HANDS_TEST_DESKTOP_CONFIG?.trim();
   if (override) return override;
-  const home = os9.homedir();
+  const home = os10.homedir();
   if (process.platform === "darwin") {
-    return path16.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+    return path18.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
   }
   if (process.platform === "win32") {
-    const appData = env.APPDATA?.trim() || path16.join(home, "AppData", "Roaming");
-    return path16.join(appData, "Claude", "claude_desktop_config.json");
+    const appData = env.APPDATA?.trim() || path18.join(home, "AppData", "Roaming");
+    return path18.join(appData, "Claude", "claude_desktop_config.json");
   }
-  return path16.join(home, ".config", "Claude", "claude_desktop_config.json");
+  return path18.join(home, ".config", "Claude", "claude_desktop_config.json");
 }
 function serverName(project) {
   return `hands-books-${project}`;
@@ -48361,7 +48648,7 @@ function booksMcpEntry(serverEntryPath, target) {
 function writeDesktopConfig(configPath, name, entry) {
   let parsed = {};
   try {
-    parsed = JSON.parse(fs16.readFileSync(configPath, "utf8"));
+    parsed = JSON.parse(fs18.readFileSync(configPath, "utf8"));
   } catch (err) {
     if (err.code !== "ENOENT") {
       return { ok: false, reason: `${configPath} is not valid JSON \u2014 fix or remove it, then retry (${String(err)})` };
@@ -48370,16 +48657,16 @@ function writeDesktopConfig(configPath, name, entry) {
   const servers = parsed.mcpServers && typeof parsed.mcpServers === "object" ? parsed.mcpServers : {};
   servers[name] = entry;
   parsed.mcpServers = servers;
-  fs16.mkdirSync(path16.dirname(configPath), { recursive: true });
-  fs16.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
+  fs18.mkdirSync(path18.dirname(configPath), { recursive: true });
+  fs18.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
 `);
   return { ok: true };
 }
 
 // src/cli.ts
 init_store();
-import * as fs18 from "node:fs";
-import * as path18 from "node:path";
+import * as fs20 from "node:fs";
+import * as path20 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -48449,11 +48736,11 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path18.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs18.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
+  const configPath = path20.join(info.repoRoot, CONFIG_BASENAME);
+  if (!fs20.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
-    cfg = JSON.parse(fs18.readFileSync(configPath, "utf8"));
+    cfg = JSON.parse(fs20.readFileSync(configPath, "utf8"));
   } catch (err) {
     fail(`${configPath} is not valid JSON: ${String(err)}`);
   }
@@ -48461,7 +48748,7 @@ function cmdBooks(argv) {
   const url2 = argv.find((a) => !a.startsWith("--"));
   if (!url2) {
     if (typeof remote.url === "string" && remote.url) {
-      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os11.userInfo().username)}")`);
+      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os12.userInfo().username)}")`);
     } else {
       out2("no books attached \u2014 attach with: hands books <private-git-url> [--handle <name>]");
     }
@@ -48472,9 +48759,9 @@ function cmdBooks(argv) {
   cfg.remote = {
     ...remote,
     url: url2,
-    handle: handleArg ?? remote.handle ?? githubUsername() ?? os11.userInfo().username
+    handle: handleArg ?? remote.handle ?? githubUsername() ?? os12.userInfo().username
   };
-  fs18.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs20.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
   out2("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
@@ -48485,7 +48772,7 @@ function requireRemote() {
   if (!j) {
     fail("no books attached \u2014 run: hands books git@github.com:you/hands-books.git");
   }
-  if (!fs18.existsSync(path18.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs20.existsSync(path20.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -48597,7 +48884,7 @@ function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
   let focus = null;
-  if (fs18.existsSync(dbPath())) {
+  if (fs20.existsSync(dbPath())) {
     const store = new Store();
     try {
       focus = store.getFocus(agentId);
@@ -48608,6 +48895,122 @@ function cmdPaths() {
   out2(JSON.stringify(pathsReport(agentId, cfg, focus), null, 2));
 }
 var STATION_ID2 = /^station-\d+$/;
+function parseArgs(argv, valueFlags) {
+  const words = [];
+  const flags = /* @__PURE__ */ new Map();
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === void 0) continue;
+    if (valueFlags.includes(arg)) {
+      flags.set(arg, argv[++i] ?? "");
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      flags.set(arg, "");
+      continue;
+    }
+    words.push(arg);
+  }
+  return { words, flags };
+}
+function requireStation(argv, verb) {
+  const { words } = parseArgs(argv, ["-n"]);
+  const seat = words.find((w) => STATION_ID2.test(w));
+  if (!seat) fail(`usage: hands ${verb} [<project>] <station-N>`);
+  const projectWord = words.find((w) => !STATION_ID2.test(w));
+  let repoRoot;
+  if (projectWord) {
+    const project = resolveProject2(projectWord);
+    if (!project) fail(`no project named "${projectWord}"`);
+    repoRoot = project.repoRoot;
+  } else {
+    const info = repoInfo(process.cwd());
+    if (!info) fail(`not inside a git repo \u2014 use \`hands ${verb} <project> ${seat}\``);
+    repoRoot = info.repoRoot;
+  }
+  const cfg = loadConfig({ cwd: repoRoot });
+  const match = listStations(repoRoot, cfg).find((s) => s.id === seat);
+  if (!match) fail(`no ${seat} in ${repoRoot}`);
+  return { repoRoot, id: match.id, dir: match.dir };
+}
+function cmdLogs(argv) {
+  const { id, dir } = requireStation(argv, "logs");
+  const { flags } = parseArgs(argv, ["-n"]);
+  const limit = Number(flags.get("-n")) || 20;
+  const { file: file2, events } = recentActivity(dir, { limit });
+  if (!file2) {
+    out2(`${id}: no transcript yet \u2014 it has never taken a turn`);
+    return;
+  }
+  if (argv.includes("--json")) {
+    out2(JSON.stringify({ station: id, file: file2, events }, null, 2));
+    return;
+  }
+  const idle = idleMs(dir);
+  out2(`${id} \u2014 ${events.length} recent event(s)${idle === null ? "" : `, last activity ${Math.round(idle / 1e3)}s ago`}`);
+  out2("");
+  for (const e of events) {
+    const t = e.at ? new Date(e.at).toISOString().slice(11, 19) : "  --  ";
+    const mark = e.kind === "error" ? "\u2717" : e.kind === "tool" ? "\u2192" : e.kind === "result" ? "\u2190" : "\xB7";
+    out2(`  ${t} ${mark} ${e.label}`);
+    if (e.kind === "error" && e.detail) out2(`             ${e.detail}`);
+  }
+}
+function cmdRestart(argv) {
+  const { repoRoot, id, dir } = requireStation(argv, "restart");
+  const cfg = loadConfig({ cwd: repoRoot });
+  const seeded = seedStationPermissions(dir);
+  if (seeded.written) out2(`  seeded missing permission allowlist`);
+  const model = cfg.stations.overrides[id] ?? cfg.stations.model;
+  const command = launchCommand({ id, dir, model }, "station");
+  try {
+    execFileSync7("tmux", ["respawn-pane", "-k", "-t", id, command], {
+      stdio: "ignore",
+      timeout: 1e4
+    });
+    out2(`\u2714 ${id} restarted in its existing pane`);
+    return;
+  } catch {
+  }
+  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, "station");
+  if (res.launched) out2(`\u2714 ${id} relaunched (${res.launcher})`);
+  else out2(`launcher unavailable \u2014 paste this into a terminal:
+
+  ${command}
+`);
+}
+function cmdLs() {
+  const projects = listRegisteredProjects();
+  if (projects.length === 0) {
+    out2("no kitchens registered \u2014 run `hands register` from a repo's main checkout");
+    return;
+  }
+  for (const p of projects) {
+    const configured = fs20.existsSync(path20.join(p.repoRoot, CONFIG_BASENAME));
+    let seats = "";
+    try {
+      if (configured) {
+        const stations = listStations(p.repoRoot, loadConfig({ cwd: p.repoRoot }));
+        seats = stations.length ? ` \xB7 ${stations.length} station(s)` : " \xB7 no stations";
+      }
+    } catch {
+    }
+    out2(`${p.name.padEnd(18)} ${p.repoRoot}${configured ? "" : "  (no hands.config.json)"}${seats}`);
+  }
+}
+function cmdDoctor(argv) {
+  const report = runDoctor({ fix: argv.includes("--fix") });
+  for (const c of report.checks) {
+    const mark = c.severity === "ok" ? "\u2714" : c.severity === "warn" ? "!" : "\u2717";
+    out2(`${mark} ${c.name.padEnd(24)} ${c.detail}`);
+  }
+  out2("");
+  const fixable = report.checks.filter((c) => c.fixable);
+  if (fixable.length > 0 && !argv.includes("--fix")) {
+    out2(`${fixable.length} issue(s) are repairable \u2014 re-run with --fix`);
+  }
+  if (report.worst === "fail") process.exit(1);
+}
 function launchAt(dir, mode, id, model) {
   const cfg = loadConfig({ cwd: dir });
   const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, mode);
@@ -48638,7 +49041,7 @@ function launchStationSeat(_repoRoot, id, dir, cfg) {
 function tryLaunch(cmd, rest) {
   if (!cmd) {
     const info = repoInfo(process.cwd());
-    if (!info || !fs18.existsSync(path18.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    if (!info || !fs20.existsSync(path20.join(info.repoRoot, CONFIG_BASENAME))) return false;
     launchAt(info.repoRoot, "expo", "expo");
     return true;
   }
@@ -48663,19 +49066,9 @@ function cmdGo(argv) {
   }
 }
 function cmdRegister(argv) {
-  let name;
-  const positional = [];
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === void 0) continue;
-    if (arg === "--name") {
-      name = argv[++i];
-      continue;
-    }
-    if (!arg.startsWith("-")) positional.push(arg);
-  }
-  const target = positional[0] ?? process.cwd();
-  const entry = registerProject(target, { name });
+  const { words, flags } = parseArgs(argv, ["--name"]);
+  const target = words[0] ?? process.cwd();
+  const entry = registerProject(target, { name: flags.get("--name") || void 0 });
   if (!entry) fail(`not a git repo: ${target}`);
   out2(`\u2714 registered "${entry.name}" \u2192 ${entry.repoRoot}`);
   out2(`  open it from anywhere with: hands ${entry.name}`);
@@ -48723,9 +49116,18 @@ async function main2() {
         return cmdGo(rest);
       case "register":
         return cmdRegister(rest);
+      case "ls":
+        return cmdLs();
+      case "logs":
+        return cmdLogs(rest);
+      case "restart":
+        return cmdRestart(rest);
+      case "doctor":
+        return cmdDoctor(rest);
       default: {
-        if (tryLaunch(cmd, rest)) return;
-        if (cmd) {
+        const askedForHelp = cmd === "--help" || cmd === "-h" || cmd === "help";
+        if (!askedForHelp && tryLaunch(cmd, rest)) return;
+        if (cmd && !askedForHelp) {
           fail(
             `no project or station named "${cmd}" \u2014 register this repo with \`hands register\`, or see \`hands\` for commands`
           );
@@ -48736,6 +49138,11 @@ async function main2() {
         out2("  hands [<project>] station-N  open a station's seat");
         out2("  hands go <project> [station-N]  same, explicit (for scripts / name collisions)");
         out2("  hands register [path]     enroll a kitchen so it resolves by name");
+        out2("  hands ls                  registered kitchens");
+        out2("");
+        out2("  hands doctor [--fix]      health check (--fix repairs what's safe to repair)");
+        out2("  hands logs <station-N>    what a station is actually doing (its own transcript)");
+        out2("  hands restart <station-N>  recycle a wedged station");
         out2("");
         out2(`  hands init                scaffold ${CONFIG_BASENAME}`);
         out2("  hands books [<url>]       attach the books (durable journal) to this repo's config");
@@ -48754,7 +49161,7 @@ async function main2() {
         out2("  hands whoami               show the signed-in identity (local only, no network call)");
         out2("  hands serve               live dashboard \u2192 http://localhost:4319");
         out2("  hands paths               show where this directory resolves (debug)");
-        process.exit(cmd ? 2 : 0);
+        process.exit(cmd && !askedForHelp ? 2 : 0);
       }
     }
   } catch (err) {

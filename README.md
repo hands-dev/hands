@@ -60,6 +60,21 @@ station never stalls on a permission prompt before it can read its own files. `E
 prompt, and pushing, force-resetting, and merging are denied outright — a station proposes on its
 own branch; a human ships.
 
+**When something's off:**
+
+```bash
+hands doctor [--fix]      # what's actually wrong, and repair what's safe to repair
+hands logs station-2      # what that station is really doing, from its own transcript
+hands restart station-2   # recycle a wedged seat in its existing pane
+hands ls                  # registered kitchens
+```
+
+`hands logs` reads the pane's Claude Code transcript rather than the bus, because the bus only
+shows what a station *chose to say* — a station parked on a prompt, thrashing on one file, or
+wedged mid-tool looks identical over MCP to one that's simply thinking. `doctor` checks the things
+that fail *quietly*: unseeded worktrees, a plugin build older than your checkout, a write-ahead log
+that stopped checkpointing, seats that are up but haven't moved in half an hour.
+
 The expo asks for **today's specials** (the ranked priorities — they change day to day with what's
 available and what the day calls for), then works the pass: fires **tickets** to stations, reviews
 everything that returns, escalates only what genuinely needs the chef. Ask it *"what's on the

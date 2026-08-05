@@ -60,6 +60,8 @@ mkdir -p "$MEM" && cp memory/*.md "$MEM/"
   work rather than parked on a prompt.
 - A specific seat: `hands station-<n>` (or `hands <project> station-<n>`).
 - Dashboard: `hands serve` → http://localhost:4319
+- Verify the restore landed: `hands doctor` — config, registry, bus database, per-station
+  permissions and activity, and whether the plugin build matches this checkout.
 
 ## Step 6 — Re-auth other MCP servers (human, as needed)
 
