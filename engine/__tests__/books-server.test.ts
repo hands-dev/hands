@@ -4,16 +4,19 @@ import * as path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildBooksServer, resolveBooksConfig, type BooksConfig } from "../src/books-server.js";
+import { buildBooksServer, journalPath, resolveBooksConfig, type BooksConfig } from "../src/books-server.js";
 
+let sandbox: string;
 let root: string;
 
 beforeEach(() => {
-  root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-books-server-"));
+  sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "hands-books-server-"));
+  root = path.join(sandbox, "books");
+  fs.mkdirSync(root);
 });
 
 afterEach(() => {
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(sandbox, { recursive: true, force: true });
 });
 
 /** Write a digest + README under journal/<project>/<handle>/ directly — the server only ever reads these files, never the event log. */
@@ -27,6 +30,19 @@ function writeReadme(dir: string, project: string, handle: string, body: string)
   const handleDir = path.join(dir, "journal", project, handle);
   fs.mkdirSync(handleDir, { recursive: true });
   fs.writeFileSync(path.join(handleDir, "README.md"), body);
+}
+
+function writeCraft(
+  dir: string,
+  project: string,
+  handle: string,
+  slug: string,
+  parts: { book?: string; skill?: string },
+): void {
+  const craftsDir = path.join(dir, "journal", project, handle, "crafts");
+  fs.mkdirSync(craftsDir, { recursive: true });
+  if (parts.book !== undefined) fs.writeFileSync(path.join(craftsDir, `${slug}.md`), parts.book);
+  if (parts.skill !== undefined) fs.writeFileSync(path.join(craftsDir, `${slug}.skill.md`), parts.skill);
 }
 
 async function connect(cfg: BooksConfig | null) {
@@ -149,6 +165,88 @@ describe("books MCP tools — configured", () => {
     });
     expect(res.isError).toBe(false);
     expect(res.body.project).toBe("other-repo");
+    await close();
+  });
+
+  it("lists crafts across every handle and reads one back", async () => {
+    writeCraft(root, "hands", "michael", "saucier", { book: "# saucier book\n", skill: "# saucier skill\n" });
+    writeCraft(root, "hands", "station-1", "ordering-api", { book: "# api book\n" });
+    const { client, close } = await connect({ dir: root, project: "hands" });
+
+    const list = await call(client, "books_list_crafts");
+    expect(list.isError).toBe(false);
+    expect(list.body.crafts).toEqual(
+      expect.arrayContaining([
+        { handle: "michael", slug: "saucier" },
+        { handle: "station-1", slug: "ordering-api" },
+      ]),
+    );
+
+    const read = await call(client, "books_read_craft", { handle: "michael", slug: "saucier" });
+    expect(read.isError).toBe(false);
+    expect(read.body.book).toBe("# saucier book\n");
+    expect(read.body.skill).toBe("# saucier skill\n");
+
+    // a slug with only a book (no skill file) still reads — the missing half is null, not an error
+    const partial = await call(client, "books_read_craft", { handle: "station-1", slug: "ordering-api" });
+    expect(partial.isError).toBe(false);
+    expect(partial.body.book).toBe("# api book\n");
+    expect(partial.body.skill).toBeNull();
+
+    const missing = await call(client, "books_read_craft", { handle: "michael", slug: "poissonnier" });
+    expect(missing.isError).toBe(true);
+    await close();
+  });
+});
+
+describe("journalPath (path-traversal containment)", () => {
+  it("stays under <dir>/journal for benign segments", () => {
+    expect(journalPath(root, "hands", "michael")).toBe(path.join(root, "journal", "hands", "michael"));
+  });
+
+  it("neutralizes a traversal-bearing segment instead of escaping", () => {
+    const p = journalPath(root, "../../../../../../etc", "passwd");
+    expect(p).not.toBeNull();
+    const journalRoot = path.resolve(root, "journal");
+    expect(p!.startsWith(`${journalRoot}${path.sep}`)).toBe(true);
+  });
+
+  it("a bare '..' or '.' segment resolves to a confined literal, never the parent dir", () => {
+    const p = journalPath(root, "..");
+    expect(p).not.toBeNull();
+    const journalRoot = path.resolve(root, "journal");
+    expect(p === journalRoot || p!.startsWith(`${journalRoot}${path.sep}`)).toBe(true);
+  });
+});
+
+describe("books MCP tools — path traversal is neutralized end-to-end", () => {
+  it("a traversal-bearing handle can never read a file outside the books clone", async () => {
+    const secret = path.join(sandbox, "secret.txt");
+    fs.writeFileSync(secret, "TOP SECRET — must never be readable via the books MCP\n");
+    writeDigest(root, "hands", "michael", "2026-08-01", "# real digest\n");
+    const { client, close } = await connect({ dir: root, project: "hands" });
+
+    const evilHandle = "../".repeat(8) + "secret.txt";
+    const digest = await call(client, "books_read_digest", { handle: evilHandle, date: "2026-08-01" });
+    expect(digest.isError).toBe(true);
+    expect(JSON.stringify(digest.body)).not.toContain("TOP SECRET");
+
+    const index = await call(client, "books_read_index", { handle: evilHandle });
+    expect(index.isError).toBe(true);
+    expect(JSON.stringify(index.body)).not.toContain("TOP SECRET");
+
+    const days = await call(client, "books_list_days", { handle: evilHandle });
+    expect(days.isError).toBe(false);
+    expect(days.body.days).toEqual([]);
+
+    const craft = await call(client, "books_read_craft", { handle: evilHandle, slug: "../secret" });
+    expect(craft.isError).toBe(true);
+    expect(JSON.stringify(craft.body)).not.toContain("TOP SECRET");
+
+    const handles = await call(client, "books_list_handles", { project: "../../../../../../etc" });
+    expect(handles.isError).toBe(false);
+    expect(handles.body.handles).toEqual([]);
+
     await close();
   });
 });

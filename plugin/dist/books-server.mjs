@@ -2984,7 +2984,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a2 = root.localRefs) === null || _a2 === void 0 ? void 0 : _a2[ref];
         const { schemaId } = this.opts;
@@ -3011,7 +3011,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3229,8 +3229,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path7) {
-      let input = path7;
+    function removeDotSegments(path10) {
+      let input = path10;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3482,8 +3482,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path7, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path7 && path7 !== "/" ? path7 : void 0;
+        const [path10, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path10 && path10 !== "/" ? path10 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -3642,7 +3642,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse3(baseURI, schemelessOptions), parse3(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -3906,7 +3906,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -6882,12 +6882,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs7, exportName) {
+    function addFormats(ajv, list, fs8, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs7[f]);
+        ajv.addFormat(f, fs8[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -6896,8 +6896,8 @@ var require_dist = __commonJS({
 });
 
 // src/books-server.ts
-import * as fs6 from "node:fs";
-import * as path6 from "node:path";
+import * as fs7 from "node:fs";
+import * as path9 from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -7259,8 +7259,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path7, errorMaps, issueData } = params;
-  const fullPath = [...path7, ...issueData.path || []];
+  const { data, path: path10, errorMaps, issueData } = params;
+  const fullPath = [...path10, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7375,11 +7375,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path7, key) {
+  constructor(parent, value, path10, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path7;
+    this._path = path10;
     this._key = key;
   }
   get path() {
@@ -11302,10 +11302,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path7) {
-  if (!path7)
+function getElementAtPath(obj, path10) {
+  if (!path10)
     return obj;
-  return path7.reduce((acc, key) => acc?.[key], obj);
+  return path10.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11688,11 +11688,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path7, issues) {
+function prefixIssues(path10, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path7);
+    iss.path.unshift(path10);
     return iss;
   });
 }
@@ -11875,7 +11875,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path7 = []) => {
+  const processError = (error49, path10 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -11885,7 +11885,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path7, ...issue2.path];
+        const fullpath = [...path10, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -11917,8 +11917,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path7 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path7) {
+  const path10 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path10) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -24324,13 +24324,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path7 = ref.slice(1).split("/").filter(Boolean);
-  if (path7.length === 0) {
+  const path10 = ref.slice(1).split("/").filter(Boolean);
+  if (path10.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path7[0] === defsKey) {
-    const key = path7[1];
+  if (path10[0] === defsKey) {
+    const key = path10[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -28063,7 +28063,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error48) {
@@ -28080,7 +28080,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const earlyReject = (error48) => {
         reject(error48);
       };
@@ -28158,7 +28158,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve3(parseResult.data);
           }
         } catch (error48) {
           reject(error48);
@@ -28419,12 +28419,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve3, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -29383,7 +29383,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -30026,12 +30026,12 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve2();
+        resolve3();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve3);
       }
     });
   }
@@ -30039,9 +30039,9 @@ var StdioServerTransport = class {
 
 // src/remote.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import * as fs5 from "node:fs";
+import * as fs6 from "node:fs";
 import * as os3 from "node:os";
-import * as path5 from "node:path";
+import * as path8 from "node:path";
 
 // src/config.ts
 import * as fs2 from "node:fs";
@@ -30066,6 +30066,26 @@ var STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
 import * as fs4 from "node:fs";
 import * as path4 from "node:path";
 
+// src/snapshot.ts
+import * as path7 from "node:path";
+
+// src/board.ts
+import { createHash as createHash2 } from "node:crypto";
+
+// src/identity.ts
+import * as path5 from "node:path";
+
+// src/board.ts
+import * as path6 from "node:path";
+
+// src/store.ts
+import * as fs5 from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+var ONLINE_WINDOW_MS = 15 * 6e4;
+
+// src/board.ts
+var IDLE_THRESHOLD_MS = 3 * 6e4;
+
 // src/remote.ts
 var GIT_TIMEOUT_MS = 2e4;
 function git(cwd, args) {
@@ -30083,6 +30103,10 @@ function tryGit(cwd, args) {
     return null;
   }
 }
+function sanitizeSegment(raw, fallback = "unnamed") {
+  const clean = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^\.+/, "");
+  return clean || fallback;
+}
 function syncPull(dir) {
   if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return { ok: false, reason: "offline" };
   if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return { ok: true };
@@ -30093,7 +30117,9 @@ function syncPull(dir) {
   for (let round = 0; round < 10; round++) {
     const conflictedRaw = tryGit(dir, ["diff", "--name-only", "--diff-filter=U"]);
     const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
-    const digestOnly = conflicted.length > 0 && conflicted.every((f) => f.startsWith("journal/") && f.endsWith(".md"));
+    const digestOnly = conflicted.length > 0 && conflicted.every(
+      (f) => f.startsWith("journal/") && (f.endsWith(".md") || f.endsWith("/dashboard.json"))
+    );
     if (!digestOnly) break;
     if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
     if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
@@ -30106,7 +30132,7 @@ function syncPull(dir) {
 }
 function listProjects(dir) {
   try {
-    return fs5.readdirSync(path5.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs6.readdirSync(path8.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -30128,27 +30154,57 @@ function resolveBooksConfig(env = process.env) {
 function requireProject(cfg, input) {
   const project = input?.trim() || cfg.project;
   if (!project) return { error: "no project given and HANDS_BOOKS_PROJECT is not set \u2014 pass `project`" };
-  return project;
+  return sanitizeSegment(project);
+}
+function journalPath(dir, ...segments) {
+  const root = path9.resolve(dir, "journal");
+  const full = path9.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
+  if (full !== root && !full.startsWith(`${root}${path9.sep}`)) return null;
+  return full;
 }
 function listHandles(dir, project) {
+  const p = journalPath(dir, project);
+  if (!p) return [];
   try {
-    return fs6.readdirSync(path6.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs7.readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
 }
 function listDigestDates(dir, project, handle) {
+  const p = journalPath(dir, project, handle);
+  if (!p) return [];
   try {
-    return fs6.readdirSync(path6.join(dir, "journal", project, handle)).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
+    return fs7.readdirSync(p).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
   } catch {
     return [];
+  }
+}
+function listCraftSlugs(dir, project, handle) {
+  const p = journalPath(dir, project, handle, "crafts");
+  if (!p) return [];
+  try {
+    const files = fs7.readdirSync(p);
+    const slugs = new Set(
+      files.filter((f) => f.endsWith(".md")).map((f) => f.endsWith(".skill.md") ? f.slice(0, -".skill.md".length) : f.slice(0, -".md".length))
+    );
+    return [...slugs].sort();
+  } catch {
+    return [];
+  }
+}
+function readCraftFile(file2) {
+  try {
+    return fs7.readFileSync(file2, "utf8");
+  } catch {
+    return null;
   }
 }
 function buildBooksServer(cfg) {
   const server = new McpServer(
     { name: "hands-books", version: "0.1.0" },
     {
-      instructions: cfg ? `Read-only browser for the hands books \u2014 a durable journal of kitchen activity. Scoped to ${cfg.dir}${cfg.project ? ` (default project "${cfg.project}")` : ""}. Digests are pre-rendered markdown, one per contributor per day; message bodies are never included (a content policy of the books themselves, not this server). Start with books_list_projects / books_list_handles, then books_read_digest.` : NOT_CONFIGURED
+      instructions: cfg ? `Read-only browser for the hands books \u2014 a durable journal of kitchen activity. Scoped to ${cfg.dir}${cfg.project ? ` (default project "${cfg.project}")` : ""}. Digests are pre-rendered markdown, one per contributor per day; message bodies are never included (a content policy of the books themselves, not this server). Start with books_list_projects / books_list_handles, then books_read_digest. books_list_crafts / books_read_craft browse every handle's crafts in the project (the shared roster read \u2014 each kitchen still writes only its own copy).` : NOT_CONFIGURED
     }
   );
   server.registerTool(
@@ -30194,7 +30250,8 @@ function buildBooksServer(cfg) {
       if (!cfg) return errorResult(NOT_CONFIGURED);
       const p = requireProject(cfg, project);
       if (typeof p !== "string") return errorResult(p.error);
-      return asToolResult({ project: p, handle, days: listDigestDates(cfg.dir, p, handle) });
+      const h = sanitizeSegment(handle);
+      return asToolResult({ project: p, handle: h, days: listDigestDates(cfg.dir, p, h) });
     }
   );
   server.registerTool(
@@ -30212,11 +30269,13 @@ function buildBooksServer(cfg) {
       if (!cfg) return errorResult(NOT_CONFIGURED);
       const p = requireProject(cfg, project);
       if (typeof p !== "string") return errorResult(p.error);
-      const file2 = path6.join(cfg.dir, "journal", p, handle, "README.md");
+      const h = sanitizeSegment(handle);
+      const file2 = journalPath(cfg.dir, p, h, "README.md");
       try {
-        return asToolResult({ project: p, handle, markdown: fs6.readFileSync(file2, "utf8") });
+        if (!file2) throw new Error("path escaped the journal root");
+        return asToolResult({ project: p, handle: h, markdown: fs7.readFileSync(file2, "utf8") });
       } catch {
-        return errorResult(`no index for ${p}/${handle} \u2014 check books_list_handles`);
+        return errorResult(`no index for ${p}/${h} \u2014 check books_list_handles`);
       }
     }
   );
@@ -30237,12 +30296,60 @@ function buildBooksServer(cfg) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(date5)) return errorResult("date must be YYYY-MM-DD");
       const p = requireProject(cfg, project);
       if (typeof p !== "string") return errorResult(p.error);
-      const file2 = path6.join(cfg.dir, "journal", p, handle, `${date5}.md`);
+      const h = sanitizeSegment(handle);
+      const file2 = journalPath(cfg.dir, p, h, `${date5}.md`);
       try {
-        return asToolResult({ project: p, handle, date: date5, markdown: fs6.readFileSync(file2, "utf8") });
+        if (!file2) throw new Error("path escaped the journal root");
+        return asToolResult({ project: p, handle: h, date: date5, markdown: fs7.readFileSync(file2, "utf8") });
       } catch {
-        return errorResult(`no digest for ${p}/${handle}/${date5} \u2014 check books_list_days`);
+        return errorResult(`no digest for ${p}/${h}/${date5} \u2014 check books_list_days`);
       }
+    }
+  );
+  server.registerTool(
+    "books_list_crafts",
+    {
+      title: "List crafts across handles",
+      description: "Every craft slug held by any handle in the project \u2014 the shared craft roster read (each kitchen still writes only its own copy; see books_read_craft for the content).",
+      inputSchema: { project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT") },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async ({ project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      const crafts = listHandles(cfg.dir, p).flatMap(
+        (handle) => listCraftSlugs(cfg.dir, p, handle).map((slug) => ({ handle, slug }))
+      );
+      return asToolResult({ project: p, crafts });
+    }
+  );
+  server.registerTool(
+    "books_read_craft",
+    {
+      title: "Read one handle's craft book + skill",
+      description: "A craft's prep book and skill file for one handle \u2014 either half may be null if that file doesn't exist.",
+      inputSchema: {
+        handle: external_exports3.string(),
+        slug: external_exports3.string().describe('craft slug, e.g. from books_list_crafts \u2014 "ordering-api"'),
+        project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async ({ handle, slug, project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      const h = sanitizeSegment(handle);
+      const s = sanitizeSegment(slug);
+      const craftsDir = journalPath(cfg.dir, p, h, "crafts");
+      if (!craftsDir) return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
+      const book = readCraftFile(path9.join(craftsDir, `${s}.md`));
+      const skill = readCraftFile(path9.join(craftsDir, `${s}.skill.md`));
+      if (book === null && skill === null) {
+        return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
+      }
+      return asToolResult({ project: p, handle: h, slug: s, book, skill });
     }
   );
   server.registerTool(
@@ -30269,8 +30376,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs6.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs6.realpathSync(fileURLToPath(import.meta.url))).href;
+    const entry = pathToFileURL(fs7.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs7.realpathSync(fileURLToPath(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
@@ -30284,5 +30391,6 @@ if (invokedDirectly) {
 }
 export {
   buildBooksServer,
+  journalPath,
   resolveBooksConfig
 };

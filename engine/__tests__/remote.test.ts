@@ -12,6 +12,7 @@ import {
   openJournal,
   projectFromOrigin,
   readEvents,
+  readOtherCrafts,
   readSyncStatus,
   replayInto,
   sanitizeSegment,
@@ -466,5 +467,43 @@ describe("public dashboard snapshot", () => {
     expect(JSON.parse(fs.readFileSync(file, "utf8")).tasks).toHaveLength(1);
 
     store.close();
+  });
+});
+
+describe("readOtherCrafts (shared craft roster read — Option 1)", () => {
+  function writeCraft(
+    dir: string,
+    project: string,
+    handle: string,
+    slug: string,
+    parts: { book?: string; skill?: string },
+  ): void {
+    const craftsDir = path.join(dir, "journal", project, handle, "crafts");
+    fs.mkdirSync(craftsDir, { recursive: true });
+    if (parts.book !== undefined) fs.writeFileSync(path.join(craftsDir, `${slug}.md`), parts.book);
+    if (parts.skill !== undefined) fs.writeFileSync(path.join(craftsDir, `${slug}.skill.md`), parts.skill);
+  }
+
+  it("lists every OTHER handle's crafts, excluding the caller's own", () => {
+    const dir = fs.mkdtempSync(path.join(root, "clone-"));
+    writeCraft(dir, "hands", "michael", "saucier", { book: "michael's book", skill: "michael's skill" });
+    writeCraft(dir, "hands", "station-1", "ordering-api", { book: "station-1's book" });
+    writeCraft(dir, "hands", "station-2", "saucier", { skill: "station-2's skill" }); // book-less craft
+
+    const others = readOtherCrafts(dir, "hands", "michael");
+    expect(others).toEqual(
+      expect.arrayContaining([
+        { handle: "station-1", slug: "ordering-api", book: "station-1's book", skill: null },
+        { handle: "station-2", slug: "saucier", book: null, skill: "station-2's skill" },
+      ]),
+    );
+    expect(others.some((c) => c.handle === "michael")).toBe(false);
+  });
+
+  it("returns [] for a project with no crafts yet, never throws", () => {
+    const dir = fs.mkdtempSync(path.join(root, "clone-"));
+    fs.mkdirSync(path.join(dir, "journal", "hands", "michael"), { recursive: true });
+    expect(readOtherCrafts(dir, "hands", "michael")).toEqual([]);
+    expect(readOtherCrafts(dir, "no-such-project", "michael")).toEqual([]);
   });
 });
