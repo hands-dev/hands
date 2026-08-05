@@ -6,6 +6,7 @@ import { type HandsConfig, loadConfig } from "./config.js";
 import { regenerateDigests } from "./digest.js";
 import { coordinationDir, repoInfo } from "./paths.js";
 import { writePriorities } from "./priorities.js";
+import { buildPublicSnapshot } from "./snapshot.js";
 import type { Store } from "./store.js";
 
 /**
@@ -224,14 +225,16 @@ export interface PullResult {
 /**
  * Fetch + integrate origin/main (rebase keeps our unpushed appends on top).
  *
- * Digest .md files are the one legitimately multi-writer path (same handle,
- * two machines, each rendering from a different pre-merge event set), so a
- * rebase conflict confined to digest .md files under `journal/` is auto-resolved — either
- * side's content is fine because the caller regenerates digests from the
- * MERGED events right after the pull, and the deterministic renderer makes
- * both machines converge on identical bytes. Any non-digest conflict still
- * aborts — including two machines appending the same handle's day log
- * concurrently (accepted: one handle = one writer at a time).
+ * Digest .md files (and each handle's dashboard.json) are the one
+ * legitimately multi-writer path (same handle, two machines, each rendering
+ * from a different pre-merge view), so a rebase conflict confined to those
+ * files under `journal/` is auto-resolved — either side's content is fine
+ * because the caller unconditionally regenerates digests from the MERGED
+ * events, and rewrites dashboard.json from this machine's current live
+ * state, right after the pull; both land on their final bytes regardless of
+ * which side "won" the conflict. Any other conflict still aborts — including
+ * two machines appending the same handle's day log concurrently (accepted:
+ * one handle = one writer at a time).
  */
 export function syncPull(dir: string): PullResult {
   // fetch all refs — asking for `main` explicitly fails on a still-empty remote
@@ -251,7 +254,9 @@ export function syncPull(dir: string): PullResult {
     const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
     const digestOnly =
       conflicted.length > 0 &&
-      conflicted.every((f) => f.startsWith("journal/") && f.endsWith(".md"));
+      conflicted.every(
+        (f) => f.startsWith("journal/") && (f.endsWith(".md") || f.endsWith("/dashboard.json")),
+      );
     if (!digestOnly) break;
     if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
     if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
@@ -422,9 +427,20 @@ function changedLogDates(
  * that fails the contract (stray local commits in our private clone are
  * harmless).
  */
+/** Byte-identical skip (like digest.ts's writeIfOwn) — avoids no-op commits. */
+function writeIfChanged(file: string, content: string): boolean {
+  try {
+    if (fs.readFileSync(file, "utf8") === content) return false;
+  } catch {
+    // absent — write it
+  }
+  fs.writeFileSync(file, content);
+  return true;
+}
+
 export function syncPush(
   journal: JournalRef,
-  opts?: { force?: boolean; now?: number; adopt?: boolean },
+  opts?: { force?: boolean; now?: number; adopt?: boolean; store?: Store },
 ): SyncResult {
   const { dir, project, handle } = journal;
   const now = opts?.now ?? Date.now();
@@ -480,6 +496,26 @@ export function syncPush(
       git(dir, ["add", "--", path.join("journal", project, handle)]);
       git(dir, ["commit", "-q", "-m", "journal: digests"]);
       dirty = true;
+    }
+    // Redacted remote-safe snapshot for a hosted dashboard (see snapshot.ts
+    // buildPublicSnapshot) — regenerated from this machine's CURRENT live
+    // state on every push, same as digests are regenerated from the merged
+    // events. Only when a Store is provided (some callers, e.g. `hands sync`
+    // without a live bus, may not have one).
+    if (opts?.store) {
+      const handleDir = path.join(dir, "journal", project, handle);
+      // Normally created by the first journal append (or by regenerateDigests
+      // once events exist) — neither has necessarily run yet on a first-ever
+      // sync of an otherwise-populated local bus, so this can't rely on
+      // either as a side effect.
+      fs.mkdirSync(handleDir, { recursive: true });
+      const snapshotFile = path.join(handleDir, "dashboard.json");
+      const pub = buildPublicSnapshot(opts.store, { handle, project, now });
+      if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}\n`)) {
+        git(dir, ["add", "--", snapshotFile]);
+        git(dir, ["commit", "-q", "-m", "journal: dashboard snapshot"]);
+        dirty = true;
+      }
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
     if (!dirty && ahead === "0") {

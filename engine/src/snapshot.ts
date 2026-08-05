@@ -299,3 +299,65 @@ export function buildSnapshot(
     },
   };
 }
+
+export interface PublicCraft {
+  station: string;
+  focus: string | null;
+}
+
+export interface PublicSnapshot {
+  pushedAt: number;
+  handle: string;
+  project: string;
+  crafts: PublicCraft[];
+  priorities: string[];
+  questions: SnapshotQuestion[];
+  tasks: SnapshotTask[];
+  todos: SnapshotTodo[];
+  counts: {
+    openQuestions: number;
+    needsHuman: number;
+    activeTasks: number;
+    returnedTasks: number;
+    openTodos: number;
+  };
+}
+
+/**
+ * Redacted, remote-safe view of the bus — pushed to the journal repo
+ * alongside digests (see remote.ts syncPush) so a hosted dashboard can read
+ * it with no server-side replay. Derived from the same buildSnapshot() the
+ * local dashboard uses, forwarding only fields that are meaningful off-machine:
+ * tickets/questions/todos/priorities/craft labels. Deliberately drops message
+ * bodies (never leave the NDJSON layer — same policy as digests), live
+ * agent presence (pid/cwd/files/branch/wakes — meaningless once the pane that
+ * pushed this isn't the pane you're looking at), and token/cost telemetry
+ * (reading local Claude Code transcripts off-machine is a privacy call this
+ * doesn't make).
+ */
+export function buildPublicSnapshot(
+  store: Store,
+  opts: { handle: string; project: string; now?: number; env?: NodeJS.ProcessEnv },
+): PublicSnapshot {
+  const now = opts.now ?? Date.now();
+  const full = buildSnapshot(store, now, opts.env);
+  return {
+    pushedAt: now,
+    handle: opts.handle,
+    project: opts.project,
+    crafts: full.agents
+      .filter((a) => a.focus)
+      .map((a) => ({ station: a.id, focus: a.focus })),
+    priorities: full.priorities,
+    questions: full.questions,
+    tasks: full.tasks,
+    todos: full.todos,
+    counts: {
+      openQuestions: full.counts.openQuestions,
+      needsHuman: full.counts.needsHuman,
+      activeTasks: full.counts.activeTasks,
+      returnedTasks: full.counts.returnedTasks,
+      openTodos: full.counts.openTodos,
+    },
+  };
+}

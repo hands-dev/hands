@@ -386,3 +386,85 @@ describe("journal replay", () => {
     b.close();
   });
 });
+
+describe("public dashboard snapshot", () => {
+  it("writes a redacted, remote-safe dashboard.json alongside digests", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    const store = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
+    store.setJournal(j.append);
+    populate(store);
+    store.setFocus("station-1", "saucier");
+
+    const res = syncPush(j, { force: true, now: 10_000, store });
+    expect(res.status).toBe("pushed");
+
+    const file = path.join(j.dir, "journal", j.project, "michael", "dashboard.json");
+    const raw = fs.readFileSync(file, "utf8");
+    const pub = JSON.parse(raw);
+    expect(pub.handle).toBe("michael");
+    expect(pub.project).toBe(j.project);
+    expect(pub.pushedAt).toBe(10_000);
+    expect(pub.crafts).toEqual([{ station: "station-1", focus: "saucier" }]);
+    expect(pub.tasks).toHaveLength(1);
+    expect(pub.tasks[0]).toMatchObject({ state: "returned", result: "the plan", assignee: "station-1" });
+    expect(pub.todos).toHaveLength(1);
+    expect(pub.todos[0]).toMatchObject({ state: "done", doneSignal: "PR #7 merged" });
+    expect(pub.questions).toHaveLength(1);
+    expect(pub.questions[0]).toMatchObject({ answer: "yes", state: "answered" });
+
+    // redacted: message bodies and live/local-only fields never reach this file
+    expect(raw).not.toContain("returned early");
+    expect(raw).not.toContain("all hands");
+    expect(pub).not.toHaveProperty("messages");
+    expect(pub).not.toHaveProperty("agents");
+    expect(pub).not.toHaveProperty("tokens");
+    expect(pub).not.toHaveProperty("taskCosts");
+
+    store.close();
+  });
+
+  it("skips the commit when the snapshot is byte-identical (no state change)", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    const store = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
+    store.setJournal(j.append);
+    populate(store);
+
+    expect(syncPush(j, { force: true, now: 10_000, store }).status).toBe("pushed");
+    // same store state, same `now` → byte-identical dashboard.json (and digests) → nothing to commit
+    expect(syncPush(j, { force: true, now: 10_000, store }).status).toBe("clean");
+
+    store.close();
+  });
+
+  it("never writes dashboard.json when no store is provided (e.g. the CLI restore path)", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    j.append("message", { id: 1, from: "a", to: "b", body: "mine", at: 1 });
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+    const file = path.join(j.dir, "journal", j.project, "michael", "dashboard.json");
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it("creates the handle dir itself on a first sync with zero prior journal events (regression)", () => {
+    // `hands sync` (cli.ts cmdSync) opens a fresh, NOT journal-wired Store —
+    // so unlike every other test here, nothing has ever called j.append(),
+    // which is what normally creates journal/<project>/<handle> as a side
+    // effect. A bus with real local state but a freshly attached journal
+    // hits exactly this: zero events, non-empty snapshot, no directory yet.
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    const store = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
+    populate(store);
+    expect(fs.existsSync(path.join(j.dir, "journal", j.project, "michael"))).toBe(false);
+
+    const res = syncPush(j, { force: true, now: 10_000, store });
+    expect(res.status).toBe("pushed");
+
+    const file = path.join(j.dir, "journal", j.project, "michael", "dashboard.json");
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).tasks).toHaveLength(1);
+
+    store.close();
+  });
+});
