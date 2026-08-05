@@ -446,4 +446,25 @@ describe("public dashboard snapshot", () => {
     const file = path.join(j.dir, "journal", j.project, "michael", "dashboard.json");
     expect(fs.existsSync(file)).toBe(false);
   });
+
+  it("creates the handle dir itself on a first sync with zero prior journal events (regression)", () => {
+    // `hands sync` (cli.ts cmdSync) opens a fresh, NOT journal-wired Store —
+    // so unlike every other test here, nothing has ever called j.append(),
+    // which is what normally creates journal/<project>/<handle> as a side
+    // effect. A bus with real local state but a freshly attached journal
+    // hits exactly this: zero events, non-empty snapshot, no directory yet.
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    const store = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
+    populate(store);
+    expect(fs.existsSync(path.join(j.dir, "journal", j.project, "michael"))).toBe(false);
+
+    const res = syncPush(j, { force: true, now: 10_000, store });
+    expect(res.status).toBe("pushed");
+
+    const file = path.join(j.dir, "journal", j.project, "michael", "dashboard.json");
+    expect(JSON.parse(fs.readFileSync(file, "utf8")).tasks).toHaveLength(1);
+
+    store.close();
+  });
 });

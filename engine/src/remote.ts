@@ -503,7 +503,13 @@ export function syncPush(
     // events. Only when a Store is provided (some callers, e.g. `hands sync`
     // without a live bus, may not have one).
     if (opts?.store) {
-      const snapshotFile = path.join(dir, "journal", project, handle, "dashboard.json");
+      const handleDir = path.join(dir, "journal", project, handle);
+      // Normally created by the first journal append (or by regenerateDigests
+      // once events exist) — neither has necessarily run yet on a first-ever
+      // sync of an otherwise-populated local bus, so this can't rely on
+      // either as a side effect.
+      fs.mkdirSync(handleDir, { recursive: true });
+      const snapshotFile = path.join(handleDir, "dashboard.json");
       const pub = buildPublicSnapshot(opts.store, { handle, project, now });
       if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}\n`)) {
         git(dir, ["add", "--", snapshotFile]);
