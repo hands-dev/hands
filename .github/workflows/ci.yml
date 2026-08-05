@@ -5,9 +5,17 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: engine
@@ -32,4 +40,4 @@ jobs:
       # step, so dist must always be committed and current). This is the
       # bundle-freshness gate: a PR that changed src/ without `npm run
       # bundle` fails here instead of forcing a rebase dance after the fact.
-      - run: npx vitest run
+      - run: npm run test:run
