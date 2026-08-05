@@ -14,9 +14,9 @@ import { useSnapshot } from "./use-snapshot.js";
 
 const NAV = [
   { href: "#overview", label: "Overview" },
+  { href: "#line", label: "The line" },
   { href: "#tokens", label: "Token burn" },
   { href: "#rail", label: "The rail" },
-  { href: "#line", label: "The line" },
   { href: "#pass", label: "At the pass" },
   { href: "#book", label: "The book" },
   { href: "#kitchens", label: "Other kitchens" },
@@ -92,6 +92,14 @@ export function App() {
         </header>
 
         <main id="overview" className="space-y-4 px-6 py-5">
+          <div id="line">
+            <StationsGrid
+              agents={snapshot.agents}
+              collisions={snapshot.collisions}
+              tokens={snapshot.tokens}
+              now={snapshot.now}
+            />
+          </div>
           <NeedsYou questions={needsHuman} principal={snapshot.principal} now={snapshot.now} />
           <StatCards snapshot={snapshot} />
           <TokenBurn tokens={snapshot.tokens} />
@@ -102,14 +110,6 @@ export function App() {
                 <TicketRail
                   tasks={[...activeTasks, ...settledTasks]}
                   taskCosts={snapshot.taskCosts}
-                  now={snapshot.now}
-                />
-              </div>
-              <div id="line">
-                <StationsGrid
-                  agents={snapshot.agents}
-                  collisions={snapshot.collisions}
-                  tokens={snapshot.tokens}
                   now={snapshot.now}
                 />
               </div>
