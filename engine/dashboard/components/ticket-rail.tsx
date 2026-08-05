@@ -38,28 +38,37 @@ function stateBadge(task: SnapshotTask) {
 function Chit({ task, now, cost }: { task: SnapshotTask; now: number; cost?: number }) {
   const settled = task.state === "done" || task.state === "cancelled";
   return (
-    <div className={cn("flex items-center gap-2 py-1.5", settled && "opacity-50")}>
-      <span className="w-7 shrink-0 text-xs text-muted-foreground tabular-nums">#{task.id}</span>
+    <div className={cn("flex items-start gap-2 py-1.5", settled && "opacity-50")}>
+      <span className="w-7 shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums">
+        #{task.id}
+      </span>
       <span
-        className={cn("min-w-0 flex-1 truncate", task.state === "cancelled" && "line-through")}
+        className={cn(
+          "min-w-0 flex-1 break-words",
+          task.state === "cancelled" && "line-through",
+        )}
         title={task.result ? `${task.title}\n\n${task.result}` : task.title}
       >
         {task.title}
       </span>
       {cost !== undefined && cost > 0 ? (
         <span
-          className="shrink-0 text-xs text-muted-foreground tabular-nums"
+          className="shrink-0 pt-0.5 text-xs text-muted-foreground tabular-nums"
           title="≈ output tokens spent by the assignee over this ticket's working interval"
         >
           ~{fmtTokens(cost)}
         </span>
       ) : null}
       {task.assignee ? (
-        <span className="shrink-0 text-xs text-muted-foreground">{task.assignee}</span>
+        <span className="shrink-0 pt-0.5 text-xs text-muted-foreground">{task.assignee}</span>
       ) : null}
-      {task.priority ? <Badge variant="outline">{task.priority}</Badge> : null}
-      {stateBadge(task)}
-      <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">
+      {task.priority ? (
+        <Badge variant="outline" className="shrink-0">
+          {task.priority}
+        </Badge>
+      ) : null}
+      <span className="shrink-0">{stateBadge(task)}</span>
+      <span className="w-16 shrink-0 pt-0.5 text-right text-xs text-muted-foreground">
         {ago(now, task.at)}
       </span>
     </div>

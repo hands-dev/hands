@@ -8,7 +8,7 @@ import { IDLE_THRESHOLD_MS } from "../src/board.js";
 import { DEFAULT_CONFIG, resetConfigCache } from "../src/config.js";
 import { openJournal, syncPush } from "../src/remote.js";
 import { buildSnapshot } from "../src/snapshot.js";
-import { serve, type ServeHandle, snapshotKey } from "../src/serve.js";
+import { kitchenName, serve, type ServeHandle, snapshotKey } from "../src/serve.js";
 import { Store } from "../src/store.js";
 
 let home: string;
@@ -101,6 +101,8 @@ describe("serve", () => {
     expect(shell.body).toContain('<div id="root">');
     expect(shell.body).toContain("/assets/dashboard.js");
     expect(shell.body).toContain("/assets/dashboard.css");
+    // the tab title is namespaced to the kitchen (#40)
+    expect(shell.body).toMatch(/<title>hands · [^<]+<\/title>/);
 
     expect((await get(`${handle.url}assets/dashboard.js`)).type).toContain("text/javascript");
     expect((await get(`${handle.url}assets/dashboard.css`)).type).toContain("text/css");
@@ -269,5 +271,17 @@ describe("snapshotKey (SSE change detection)", () => {
     expect(pastIdle).not.toBe(atT); // active → idle IS a pushable change
 
     store.close();
+  });
+});
+
+describe("kitchenName (dashboard repo/kitchen namespacing, #40)", () => {
+  it("derives the kitchen from the coordination-dir basename above hands.db", () => {
+    expect(kitchenName("/Users/michael/.claude/coordination/hands-3667facd/hands.db")).toBe(
+      "hands-3667facd",
+    );
+  });
+
+  it("falls back to a generic label when the parent basename is empty", () => {
+    expect(kitchenName("/hands.db")).toBe("kitchen");
   });
 });

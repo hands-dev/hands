@@ -96,8 +96,8 @@ export function App() {
           <StatCards snapshot={snapshot} />
           <TokenBurn tokens={snapshot.tokens} />
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[3fr_2fr]">
-            <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+            <div className="min-w-0 space-y-4">
               <div id="rail">
                 <TicketRail
                   tasks={[...activeTasks, ...settledTasks]}
@@ -114,7 +114,7 @@ export function App() {
                 />
               </div>
             </div>
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <Specials items={snapshot.priorities} />
               <div id="pass">
                 <OpenQuestions questions={open} now={snapshot.now} />
