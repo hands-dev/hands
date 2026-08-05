@@ -4,9 +4,11 @@
  * plugin/dist/{server,cli}-impl.mjs (esbuild, deps inlined, node builtins
  * external) plus tiny hand-authored wrapper entries that gate on the Node
  * floor BEFORE anything touches `node:sqlite` (a static import would hoist
- * past any in-module check; the wrapper's dynamic import cannot), plus the
- * dashboard SPA: engine/dashboard/ → plugin/dist/assets/dashboard.{js,css}
- * (esbuild browser bundle + the Tailwind v4 CLI).
+ * past any in-module check; the wrapper's dynamic import cannot); engine/src/
+ * books-server.ts → plugin/dist/books-server.mjs (no wrapper — it never
+ * touches node:sqlite, so there's no floor to gate); plus the dashboard SPA:
+ * engine/dashboard/ → plugin/dist/assets/dashboard.{js,css} (esbuild browser
+ * bundle + the Tailwind v4 CLI).
  *
  * Run via `npm run bundle`. The bundles are committed — a plugin install is a
  * plain copy with no npm step — and __tests__/bundle.test.ts fails when they
@@ -56,6 +58,14 @@ export async function buildBundles(outDir = defaultOut) {
     ...shared,
     entryPoints: [path.join(pkgDir, "src", "cli.ts")],
     outfile: path.join(outDir, "cli-impl.mjs"),
+  });
+  // The books MCP server is a single-file bundle, no wrapper: it never
+  // imports Store/node:sqlite, so it has no Node-floor gate to enforce
+  // before import (see engine/src/books-server.ts).
+  await esbuild.build({
+    ...shared,
+    entryPoints: [path.join(pkgDir, "src", "books-server.ts")],
+    outfile: path.join(outDir, "books-server.mjs"),
   });
   // Wrappers: version gate, then hand off. The server wrapper is what argv[1]
   // points at, so it flags the impl to run main() (the impl's own

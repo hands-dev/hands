@@ -781,6 +781,67 @@ export function readOtherKitchens(
   return kitchens;
 }
 
+export interface OtherCraft {
+  handle: string;
+  slug: string;
+  /** null when that half of the craft's files is absent, not an error */
+  book: string | null;
+  skill: string | null;
+}
+
+/**
+ * Every OTHER handle's crafts in this project's books — the shared craft
+ * roster READ (Option 1 of the multiplayer-kitchens plan: each kitchen still
+ * writes only its own crafts/ namespace, same one-handle-one-writer
+ * invariant as everything else in the journal; this just lets a station
+ * browse a teammate's equivalent craft's book/skill for inspiration, with no
+ * schema change and no migration). Purely local (reads the clone); pair with
+ * a periodic syncPull for liveness, same as readOtherKitchens.
+ */
+export function readOtherCrafts(dir: string, project: string, ownHandle: string): OtherCraft[] {
+  let handles: string[] = [];
+  try {
+    handles = fs
+      .readdirSync(path.join(dir, "journal", project), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name !== ownHandle)
+      .map((e) => e.name)
+      .sort();
+  } catch {
+    return [];
+  }
+  const read = (file: string): string | null => {
+    try {
+      return fs.readFileSync(file, "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const crafts: OtherCraft[] = [];
+  for (const handle of handles) {
+    const craftsDir = path.join(dir, "journal", project, handle, "crafts");
+    let files: string[] = [];
+    try {
+      files = fs.readdirSync(craftsDir);
+    } catch {
+      continue;
+    }
+    const slugs = new Set(
+      files
+        .filter((f) => f.endsWith(".md"))
+        .map((f) => (f.endsWith(".skill.md") ? f.slice(0, -".skill.md".length) : f.slice(0, -".md".length))),
+    );
+    for (const slug of [...slugs].sort()) {
+      crafts.push({
+        handle,
+        slug,
+        book: read(path.join(craftsDir, `${slug}.md`)),
+        skill: read(path.join(craftsDir, `${slug}.skill.md`)),
+      });
+    }
+  }
+  return crafts;
+}
+
 /** Project dirs present in the journal (the restore-miss hint). */
 export function listProjects(dir: string): string[] {
   try {

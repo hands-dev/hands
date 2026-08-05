@@ -1,18 +1,10 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res, err) => function __init() {
-  if (err) throw err[0];
-  try {
-    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
-  } catch (e) {
-    throw err = [e], e;
-  }
-};
 var __commonJS = (cb, mod) => function __require() {
   try {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
@@ -2992,7 +2984,7 @@ var require_compile = __commonJS({
       const schOrFunc = root.refs[ref];
       if (schOrFunc)
         return schOrFunc;
-      let _sch = resolve2.call(this, root, ref);
+      let _sch = resolve3.call(this, root, ref);
       if (_sch === void 0) {
         const schema = (_a2 = root.localRefs) === null || _a2 === void 0 ? void 0 : _a2[ref];
         const { schemaId } = this.opts;
@@ -3019,7 +3011,7 @@ var require_compile = __commonJS({
     function sameSchemaEnv(s1, s2) {
       return s1.schema === s2.schema && s1.root === s2.root && s1.baseId === s2.baseId;
     }
-    function resolve2(root, ref) {
+    function resolve3(root, ref) {
       let sch;
       while (typeof (sch = this.refs[ref]) == "string")
         ref = sch;
@@ -3237,8 +3229,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path13) {
-      let input = path13;
+    function removeDotSegments(path10) {
+      let input = path10;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3490,8 +3482,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path13, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path13 && path13 !== "/" ? path13 : void 0;
+        const [path10, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path10 && path10 !== "/" ? path10 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -3650,7 +3642,7 @@ var require_fast_uri = __commonJS({
       }
       return uri;
     }
-    function resolve2(baseURI, relativeURI, options) {
+    function resolve3(baseURI, relativeURI, options) {
       const schemelessOptions = options ? Object.assign({ scheme: "null" }, options) : { scheme: "null" };
       const resolved = resolveComponent(parse3(baseURI, schemelessOptions), parse3(relativeURI, schemelessOptions), schemelessOptions, true);
       schemelessOptions.skipEscape = true;
@@ -3914,7 +3906,7 @@ var require_fast_uri = __commonJS({
     var fastUri = {
       SCHEMES,
       normalize,
-      resolve: resolve2,
+      resolve: resolve3,
       resolveComponent,
       equal,
       serialize,
@@ -6890,12 +6882,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs13, exportName) {
+    function addFormats(ajv, list, fs8, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs13[f]);
+        ajv.addFormat(f, fs8[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -6903,2830 +6895,10 @@ var require_dist = __commonJS({
   }
 });
 
-// src/paths.ts
-import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import * as fs from "node:fs";
-import * as os from "node:os";
-import * as path from "node:path";
-function git(cwd, args) {
-  try {
-    return execFileSync("git", args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 3e3
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-function realpathBestEffort(p) {
-  try {
-    return fs.realpathSync(p);
-  } catch {
-    return p;
-  }
-}
-function repoInfo(cwd = process.cwd()) {
-  const cached2 = repoInfoCache.get(cwd);
-  if (cached2 !== void 0) return cached2;
-  let info = null;
-  const rawCommon = git(cwd, ["rev-parse", "--git-common-dir"]);
-  const rawGitDir = git(cwd, ["rev-parse", "--git-dir"]);
-  if (rawCommon && rawGitDir) {
-    const commonDir = realpathBestEffort(path.resolve(cwd, rawCommon));
-    const gitDir = realpathBestEffort(path.resolve(cwd, rawGitDir));
-    const repoRoot = path.dirname(commonDir);
-    const hash2 = createHash("sha1").update(repoRoot).digest("hex").slice(0, 8);
-    info = {
-      repoRoot,
-      isMainWorktree: gitDir === commonDir,
-      slug: `${path.basename(repoRoot)}-${hash2}`
-    };
-  }
-  repoInfoCache.set(cwd, info);
-  return info;
-}
-function coordinationDir(env = process.env, cwd = process.cwd()) {
-  const override = env.HANDS_HOME?.trim();
-  if (override) return override;
-  const info = repoInfo(cwd);
-  return path.join(os.homedir(), ".claude", "coordination", info?.slug ?? "_global");
-}
-function dbPath(env = process.env, cwd = process.cwd()) {
-  return path.join(coordinationDir(env, cwd), "hands.db");
-}
-function notifyPath(agentId, env = process.env, cwd = process.cwd()) {
-  return path.join(coordinationDir(env, cwd), `${agentId}.notify`);
-}
-var repoInfoCache;
-var init_paths = __esm({
-  "src/paths.ts"() {
-    "use strict";
-    repoInfoCache = /* @__PURE__ */ new Map();
-  }
-});
-
-// src/identity.ts
-import * as path2 from "node:path";
-function isStation(id) {
-  return STATION_ID.test(id);
-}
-function isExpo(id) {
-  return id === "expo";
-}
-function resolveAgentRef(nameOrId) {
-  return nameOrId.trim();
-}
-function indexFromDirName(dir) {
-  const base = path2.basename(dir);
-  const match = base.match(/(?:^station-|worktree-|-wt)(\d+)$/i);
-  if (!match) return null;
-  const n = Number.parseInt(match[1], 10);
-  return Number.isFinite(n) && n > 0 ? n : null;
-}
-function agentIdFromArgv(argv = process.argv) {
-  for (let i = 0; i < argv.length; i++) {
-    const arg = argv[i];
-    if (arg === "--agent-id") {
-      const next = argv[i + 1];
-      return next && !next.startsWith("--") ? next : null;
-    }
-    if (arg.startsWith("--agent-id=")) {
-      return arg.slice("--agent-id=".length) || null;
-    }
-  }
-  return null;
-}
-function resolveAgentId(options) {
-  const cwd = options?.cwd ?? process.cwd();
-  const env = options?.env ?? process.env;
-  const argv = options?.argv ?? process.argv;
-  const fromEnv = env.HANDS_ID?.trim();
-  if (fromEnv) return resolveAgentRef(fromEnv);
-  const fromArg = agentIdFromArgv(argv)?.trim();
-  if (fromArg) return resolveAgentRef(fromArg);
-  const base = path2.basename(cwd);
-  const expoBasename = env.HANDS_EXPO_BASENAME?.trim() || options?.expoBasename;
-  if (expoBasename && base === expoBasename) return "expo";
-  if (repoInfo(cwd)?.isMainWorktree) return "expo";
-  const index = indexFromDirName(cwd);
-  if (index !== null) return `station-${index}`;
-  return base;
-}
-var STATION_ID;
-var init_identity = __esm({
-  "src/identity.ts"() {
-    "use strict";
-    init_paths();
-    STATION_ID = /^station-(\d+)$/;
-  }
-});
-
-// src/store.ts
-import * as fs2 from "node:fs";
-import { DatabaseSync } from "node:sqlite";
-function sleepSync(ms) {
-  const shared = new Int32Array(new SharedArrayBuffer(4));
-  Atomics.wait(shared, 0, 0, ms);
-}
-function isBusy(err) {
-  const code = err?.errcode;
-  if (code === SQLITE_BUSY || code === SQLITE_LOCKED) return true;
-  const message = err instanceof Error ? err.message : "";
-  return /database is locked|database table is locked|busy/i.test(message);
-}
-var SQLITE_BUSY, SQLITE_LOCKED, ONLINE_WINDOW_MS, Store;
-var init_store = __esm({
-  "src/store.ts"() {
-    "use strict";
-    init_paths();
-    SQLITE_BUSY = 5;
-    SQLITE_LOCKED = 6;
-    ONLINE_WINDOW_MS = 15 * 6e4;
-    Store = class {
-      db;
-      journalFn = null;
-      constructor(options) {
-        const env = options?.env ?? process.env;
-        const dir = coordinationDir(env);
-        fs2.mkdirSync(dir, { recursive: true, mode: 448 });
-        try {
-          fs2.chmodSync(dir, 448);
-        } catch {
-        }
-        const file2 = options?.path ?? dbPath(env);
-        this.db = new DatabaseSync(file2);
-        this.db.exec("PRAGMA journal_mode = WAL;");
-        this.db.exec("PRAGMA busy_timeout = 5000;");
-        this.db.exec("PRAGMA synchronous = NORMAL;");
-        this.db.exec("PRAGMA foreign_keys = ON;");
-        this.migrate();
-        for (const suffix of ["", "-wal", "-shm"]) {
-          try {
-            fs2.chmodSync(`${file2}${suffix}`, 384);
-          } catch {
-          }
-        }
-      }
-      migrate() {
-        this.db.exec(`
-      CREATE TABLE IF NOT EXISTS agents (
-        id            TEXT PRIMARY KEY,
-        cwd           TEXT NOT NULL,
-        pid           INTEGER NOT NULL,
-        registered_at INTEGER NOT NULL,
-        last_seen_at  INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS messages (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        from_id    TEXT NOT NULL,
-        to_id      TEXT,               -- NULL = broadcast
-        subject    TEXT,
-        body       TEXT NOT NULL,
-        thread_id  TEXT,
-        created_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_messages_to_id ON messages (to_id, id);
-
-      CREATE TABLE IF NOT EXISTS cursors (
-        agent_id            TEXT PRIMARY KEY,
-        last_read_message_id INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS journal (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_id   TEXT NOT NULL,
-        kind       TEXT NOT NULL,      -- commit | memory | note
-        ref        TEXT,               -- sha, memory filename, \u2026
-        text       TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_journal_created ON journal (created_at);
-
-      CREATE TABLE IF NOT EXISTS watermarks (
-        agent_id TEXT NOT NULL,        -- '*' = global (cross-worktree dedup)
-        key      TEXT NOT NULL,
-        value    TEXT NOT NULL,
-        PRIMARY KEY (agent_id, key)
-      );
-
-      CREATE TABLE IF NOT EXISTS questions (
-        id             INTEGER PRIMARY KEY AUTOINCREMENT,
-        asker          TEXT NOT NULL,
-        question       TEXT NOT NULL,
-        context        TEXT,
-        state          TEXT NOT NULL DEFAULT 'open',  -- open | needs_human | answered
-        answer         TEXT,
-        resolved_by    TEXT,                          -- expo | human
-        priority_ref   TEXT,
-        recommendation TEXT,
-        created_at     INTEGER NOT NULL,
-        updated_at     INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_questions_state ON questions (state, id);
-
-      CREATE TABLE IF NOT EXISTS github_prs (
-        number     INTEGER PRIMARY KEY,
-        title      TEXT NOT NULL,
-        author     TEXT NOT NULL,
-        branch     TEXT,
-        url        TEXT NOT NULL,
-        state      TEXT NOT NULL,        -- open | merged
-        ticket     TEXT,
-        files_json TEXT,
-        updated_at INTEGER NOT NULL,     -- PR updatedAt (epoch ms)
-        seen_at    INTEGER NOT NULL      -- first time we recorded it
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_github_state ON github_prs (state, updated_at);
-
-      CREATE TABLE IF NOT EXISTS tasks (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        created_by   TEXT NOT NULL,
-        assignee     TEXT,                              -- NULL = unassigned queue
-        title        TEXT NOT NULL,
-        body         TEXT,
-        state        TEXT NOT NULL DEFAULT 'assigned',  -- open|assigned|in_progress|returned|done|cancelled
-        result       TEXT,
-        priority_ref TEXT,
-        thread_id    TEXT,
-        created_at   INTEGER NOT NULL,
-        updated_at   INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_tasks_assignee ON tasks (assignee, state);
-      CREATE INDEX IF NOT EXISTS idx_tasks_state ON tasks (state, updated_at);
-
-      CREATE TABLE IF NOT EXISTS todos (
-        id           INTEGER PRIMARY KEY AUTOINCREMENT,
-        title        TEXT NOT NULL,
-        detail       TEXT,
-        state        TEXT NOT NULL DEFAULT 'open',      -- open | done | dismissed
-        source       TEXT NOT NULL DEFAULT 'expo',   -- expo | human
-        origin_ref   TEXT,                              -- PR#, question id, priority text, \u2026
-        dedup_key    TEXT,                              -- normalized identity (open-scoped)
-        done_signal  TEXT,                              -- how completion was inferred (audit)
-        priority_ref TEXT,
-        created_at   INTEGER NOT NULL,
-        updated_at   INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_todos_state ON todos (state, updated_at);
-      -- At most one OPEN todo per dedup_key, so a self-managing expo that
-      -- re-derives the same item every pass never spawns duplicates. Done/
-      -- dismissed rows are exempt, so a recurring item can legitimately re-open.
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_open_dedup
-        ON todos (dedup_key) WHERE state = 'open' AND dedup_key IS NOT NULL;
-    `);
-        this.db.exec(`
-      CREATE TABLE IF NOT EXISTS wake_log (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        agent_id   TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_wake_log_agent ON wake_log (agent_id, created_at);
-    `);
-        this.ensureColumn("agents", "branch", "TEXT");
-        this.ensureColumn("agents", "activity", "TEXT");
-        this.ensureColumn("agents", "state", "TEXT");
-        this.ensureColumn("agents", "last_active", "INTEGER");
-        this.ensureColumn("tasks", "started_at", "INTEGER");
-        this.ensureColumn("tasks", "finished_at", "INTEGER");
-        this.ensureColumn("agents", "focus", "TEXT");
-        this.ensureColumn("tasks", "dish", "TEXT");
-        this.ensureColumn("questions", "outcome", "TEXT");
-        this.ensureColumn("questions", "outcome_note", "TEXT");
-        this.ensureColumn("questions", "outcome_at", "INTEGER");
-      }
-      ensureColumn(table, column, ddl) {
-        const cols = this.db.prepare(`PRAGMA table_info(${table})`).all();
-        if (!cols.some((c) => c.name === column)) {
-          this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
-        }
-      }
-      /**
-       * Wire the durable remote journal (remote.ts). When set, every
-       * state-changing method below mirrors its action as one event AFTER the DB
-       * write succeeds — the DB stays authoritative; the journal is the rebuild
-       * log. Ephemeral state (presence, wake_log, board watermarks, github cache)
-       * is deliberately NOT journaled.
-       */
-      setJournal(fn) {
-        this.journalFn = fn;
-      }
-      /** Emit a journal event (no-op when no journal is wired; never throws). */
-      journal(type, data) {
-        try {
-          this.journalFn?.(type, data);
-        } catch {
-        }
-      }
-      /** Retry a write closure on transient SQLITE_BUSY/LOCKED contention. */
-      withRetry(fn) {
-        const maxAttempts = 6;
-        let lastErr;
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          try {
-            return fn();
-          } catch (err) {
-            if (!isBusy(err)) throw err;
-            lastErr = err;
-            sleepSync(10 * (attempt + 1));
-          }
-        }
-        throw lastErr;
-      }
-      registerAgent(agent) {
-        const now = agent.now ?? Date.now();
-        this.withRetry(
-          () => this.db.prepare(
-            `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at)
-           VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             cwd = excluded.cwd,
-             pid = excluded.pid,
-             last_seen_at = excluded.last_seen_at`
-          ).run(agent.id, agent.cwd, agent.pid, now, now)
-        );
-      }
-      touch(agentId, now = Date.now()) {
-        this.withRetry(
-          () => this.db.prepare("UPDATE agents SET last_seen_at = ? WHERE id = ?").run(now, agentId)
-        );
-      }
-      /**
-       * Set a station's focus — its evolving specialization label. The id stays
-       * the routing key (the persona-layer lesson); the label rides along, shows
-       * on the board/digests, and is addressable as a convenience lookup. Upserts
-       * so a focus can be assigned before the station's first turn.
-       */
-      setFocus(agentId, focus, now = Date.now()) {
-        this.withRetry(
-          () => this.db.prepare(
-            `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, focus)
-           VALUES (?, '', 0, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET focus = excluded.focus`
-          ).run(agentId, now, now, focus)
-        );
-        this.journal("focus.set", { station: agentId, focus, at: now });
-      }
-      /**
-       * An agent's current focus label — i.e. the CRAFT it holds. Deliberately
-       * not presence-windowed (unlike listPeers): an offline station's craft must
-       * still resolve so its files inject correctly at the next connect.
-       */
-      getFocus(agentId) {
-        const row = this.db.prepare(`SELECT focus FROM agents WHERE id = ?`).get(agentId);
-        return row?.focus ?? null;
-      }
-      /** Agent ids whose focus label matches (case-insensitive) — label addressing. */
-      findByFocus(label) {
-        return this.db.prepare("SELECT id FROM agents WHERE focus IS NOT NULL AND lower(focus) = lower(?) ORDER BY id").all(label.trim()).map((r) => r.id);
-      }
-      /** Enqueue a message; returns its autoincrement id. */
-      insertMessage(input) {
-        const now = input.now ?? Date.now();
-        const id = this.withRetry(() => {
-          const result = this.db.prepare(
-            `INSERT INTO messages (from_id, to_id, subject, body, thread_id, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)`
-          ).run(
-            input.from,
-            input.to,
-            input.subject ?? null,
-            input.body,
-            input.thread ?? null,
-            now
-          );
-          return Number(result.lastInsertRowid);
-        });
-        this.journal("message", {
-          id,
-          from: input.from,
-          to: input.to,
-          subject: input.subject ?? null,
-          body: input.body,
-          thread: input.thread ?? null,
-          at: now
-        });
-        return id;
-      }
-      /**
-       * Messages addressed to `agentId` (directed OR broadcast) with id > cursor,
-       * excluding the agent's own sends. Uniform handling of directed + broadcast.
-       */
-      messagesSince(agentId, cursor) {
-        return this.db.prepare(
-          `SELECT * FROM messages
-         WHERE (to_id = ? OR to_id IS NULL)
-           AND from_id != ?
-           AND id > ?
-         ORDER BY id ASC`
-        ).all(agentId, agentId, cursor);
-      }
-      /**
-       * Messages addressed to `agentId` created after `sinceTs` — for the board's
-       * awareness view. Independent of the receive cursor (which is how a station
-       * *handles* messages), so showing a message never marks it handled.
-       */
-      messagesForSince(agentId, sinceTs) {
-        return this.db.prepare(
-          `SELECT * FROM messages
-         WHERE (to_id = ? OR to_id IS NULL) AND from_id != ? AND created_at > ?
-         ORDER BY id ASC`
-        ).all(agentId, agentId, sinceTs);
-      }
-      /**
-       * Redundant-wake suppression state. A recipient with an OUTSTANDING `.notify`
-       * wake (delivered but not yet drained) doesn't need another — one drain
-       * returns everything. Tracked as an explicit flag (not "any undrained
-       * message") so silent `wake:false` FYIs never mask a real wake: only an
-       * actual notify sets it, and only a drain clears it.
-       *
-       * The drain clears the flag BEFORE reading messages, so a send racing the
-       * drain can at worst cause one redundant wake — never a lost one.
-       */
-      hasPendingWake(agentId) {
-        return this.getWatermark(agentId, "wake_pending") === "1";
-      }
-      markWakePending(agentIds) {
-        for (const id of agentIds) this.setWatermark(id, "wake_pending", "1");
-      }
-      clearWakePending(agentId) {
-        this.setWatermark(agentId, "wake_pending", "0");
-      }
-      getCursor(agentId) {
-        const row = this.db.prepare("SELECT last_read_message_id AS c FROM cursors WHERE agent_id = ?").get(agentId);
-        return row?.c ?? 0;
-      }
-      setCursor(agentId, lastReadMessageId) {
-        this.withRetry(
-          () => this.db.prepare(
-            `INSERT INTO cursors (agent_id, last_read_message_id)
-           VALUES (?, ?)
-           ON CONFLICT(agent_id) DO UPDATE SET last_read_message_id = excluded.last_read_message_id`
-          ).run(agentId, lastReadMessageId)
-        );
-        this.journal("cursor", { agent: agentId, last: lastReadMessageId });
-      }
-      listPeers(now = Date.now()) {
-        const rows = this.db.prepare("SELECT * FROM agents ORDER BY id ASC").all();
-        return rows.map((row) => ({
-          ...row,
-          online: now - row.last_seen_at < ONLINE_WINDOW_MS
-        }));
-      }
-      history(options) {
-        const limit = Math.max(1, Math.min(options?.limit ?? 50, 500));
-        const clauses = [];
-        const params = [];
-        if (options?.peer) {
-          clauses.push("(from_id = ? OR to_id = ?)");
-          params.push(options.peer, options.peer);
-        }
-        if (options?.thread) {
-          clauses.push("thread_id = ?");
-          params.push(options.thread);
-        }
-        const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        params.push(limit);
-        const rows = this.db.prepare(`SELECT * FROM messages ${where} ORDER BY id DESC LIMIT ?`).all(...params);
-        return rows.reverse();
-      }
-      /**
-       * Upsert this agent's live status (branch/activity/state) and bump both the
-       * presence heartbeat (`last_seen_at`) and the turn heartbeat (`last_active`).
-       * Called by the Stop-hook publisher every turn.
-       */
-      setStatus(input) {
-        const now = input.now ?? Date.now();
-        const activity2 = input.files !== void 0 || input.ticket !== void 0 ? JSON.stringify({ files: input.files ?? [], ticket: input.ticket ?? null }) : null;
-        this.withRetry(
-          () => this.db.prepare(
-            `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, branch, activity, state, last_active)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET
-             cwd          = excluded.cwd,
-             last_seen_at = excluded.last_seen_at,
-             last_active  = excluded.last_active,
-             branch       = COALESCE(excluded.branch, agents.branch),
-             activity     = COALESCE(excluded.activity, agents.activity),
-             state        = COALESCE(excluded.state, agents.state)`
-          ).run(
-            input.id,
-            input.cwd,
-            input.pid,
-            now,
-            now,
-            input.branch ?? null,
-            activity2,
-            input.state ?? null,
-            now
-          )
-        );
-      }
-      journalAdd(input) {
-        const now = input.now ?? Date.now();
-        const id = this.withRetry(() => {
-          const result = this.db.prepare(
-            `INSERT INTO journal (agent_id, kind, ref, text, created_at) VALUES (?, ?, ?, ?, ?)`
-          ).run(input.agentId, input.kind, input.ref ?? null, input.text, now);
-          return Number(result.lastInsertRowid);
-        });
-        this.journal("journal.add", {
-          id,
-          agent: input.agentId,
-          kind: input.kind,
-          ref: input.ref ?? null,
-          text: input.text,
-          at: now
-        });
-        return id;
-      }
-      /** True if a journal row with this (kind, ref) already exists — commit dedup. */
-      journalHasRef(kind, ref) {
-        const row = this.db.prepare("SELECT 1 AS x FROM journal WHERE kind = ? AND ref = ? LIMIT 1").get(kind, ref);
-        return row !== void 0;
-      }
-      journalSince(since, limit = 50) {
-        return this.db.prepare("SELECT * FROM journal WHERE created_at > ? ORDER BY created_at ASC, id ASC LIMIT ?").all(since, Math.max(1, Math.min(limit, 200)));
-      }
-      // --- wake accounting (observability only — no caps, no throttling) ---
-      /**
-       * Record that a real wake (`.notify` append) was just delivered to each
-       * agent. Suppressed/`wake:false` notifies are NOT recorded — the log counts
-       * actual model wakes, the thing that costs a full context turn. Prunes rows
-       * older than ~24h opportunistically to keep the table tiny.
-       */
-      recordWakes(agentIds, now = Date.now()) {
-        if (agentIds.length === 0) return;
-        this.withRetry(() => {
-          const stmt = this.db.prepare("INSERT INTO wake_log (agent_id, created_at) VALUES (?, ?)");
-          for (const id of agentIds) stmt.run(id, now);
-          this.db.prepare("DELETE FROM wake_log WHERE created_at < ?").run(now - 24 * 60 * 6e4);
-        });
-      }
-      /** Per-agent wake counts over the trailing hour and 24h. */
-      wakeCounts(now = Date.now()) {
-        const rows = this.db.prepare(
-          `SELECT agent_id,
-                SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END) AS hour,
-                COUNT(*) AS day
-         FROM wake_log WHERE created_at > ?
-         GROUP BY agent_id`
-        ).all(now - 60 * 6e4, now - 24 * 60 * 6e4);
-        return new Map(rows.map((r) => [r.agent_id, { lastHour: Number(r.hour), last24h: Number(r.day) }]));
-      }
-      getWatermark(agentId, key) {
-        const row = this.db.prepare("SELECT value FROM watermarks WHERE agent_id = ? AND key = ?").get(agentId, key);
-        return row?.value ?? null;
-      }
-      setWatermark(agentId, key, value) {
-        this.withRetry(
-          () => this.db.prepare(
-            `INSERT INTO watermarks (agent_id, key, value) VALUES (?, ?, ?)
-           ON CONFLICT(agent_id, key) DO UPDATE SET value = excluded.value`
-          ).run(agentId, key, value)
-        );
-      }
-      // --- questions (worktree → expo escalation) ---
-      askQuestion(input) {
-        const now = input.now ?? Date.now();
-        const id = this.withRetry(() => {
-          const result = this.db.prepare(
-            `INSERT INTO questions (asker, question, context, state, created_at, updated_at)
-           VALUES (?, ?, ?, 'open', ?, ?)`
-          ).run(input.asker, input.question, input.context ?? null, now, now);
-          return Number(result.lastInsertRowid);
-        });
-        this.journal("question.ask", {
-          id,
-          asker: input.asker,
-          question: input.question,
-          context: input.context ?? null,
-          at: now
-        });
-        return id;
-      }
-      listQuestions(options) {
-        const clauses = [];
-        const params = [];
-        if (options?.state) {
-          clauses.push("state = ?");
-          params.push(options.state);
-        }
-        if (options?.asker) {
-          clauses.push("asker = ?");
-          params.push(options.asker);
-        }
-        const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        params.push(Math.max(1, Math.min(options?.limit ?? 100, 500)));
-        return this.db.prepare(`SELECT * FROM questions ${where} ORDER BY id DESC LIMIT ?`).all(...params);
-      }
-      getQuestion(id) {
-        return this.db.prepare("SELECT * FROM questions WHERE id = ?").get(id);
-      }
-      answerQuestion(input) {
-        const now = input.now ?? Date.now();
-        this.withRetry(
-          () => this.db.prepare(
-            `UPDATE questions
-           SET state = 'answered', answer = ?, resolved_by = ?,
-               priority_ref = COALESCE(?, priority_ref), updated_at = ?
-           WHERE id = ?`
-          ).run(input.answer, input.resolvedBy, input.priorityRef ?? null, now, input.id)
-        );
-        this.journal("question.answer", {
-          id: input.id,
-          answer: input.answer,
-          by: input.resolvedBy,
-          priority: input.priorityRef ?? null,
-          at: now
-        });
-      }
-      /**
-       * Record the expo's hindsight verdict on a recommendation it made (self-audit):
-       * `validated` (held up) or `contradicted` (a later finding overturned it). Feeds the
-       * expo-effectiveness score. Grades the expo's judgment, not the principal's acceptance.
-       */
-      setQuestionOutcome(input) {
-        const now = input.now ?? Date.now();
-        this.withRetry(
-          () => this.db.prepare(
-            `UPDATE questions
-           SET outcome = ?, outcome_note = ?, outcome_at = ?, updated_at = ?
-           WHERE id = ?`
-          ).run(input.outcome, input.note ?? null, now, now, input.id)
-        );
-        this.journal("question.outcome", {
-          id: input.id,
-          outcome: input.outcome,
-          note: input.note ?? null,
-          at: now
-        });
-      }
-      escalateQuestion(input) {
-        const now = input.now ?? Date.now();
-        this.withRetry(
-          () => this.db.prepare(
-            `UPDATE questions
-           SET state = 'needs_human', recommendation = ?,
-               priority_ref = COALESCE(?, priority_ref), updated_at = ?
-           WHERE id = ?`
-          ).run(input.recommendation ?? null, input.priorityRef ?? null, now, input.id)
-        );
-        this.journal("question.escalate", {
-          id: input.id,
-          recommendation: input.recommendation ?? null,
-          priority: input.priorityRef ?? null,
-          at: now
-        });
-      }
-      /** Answered questions for an asker updated since `since` — for its board delta. */
-      answeredForAsker(asker, since) {
-        return this.db.prepare(
-          `SELECT * FROM questions
-         WHERE asker = ? AND state = 'answered' AND updated_at > ?
-         ORDER BY updated_at ASC`
-        ).all(asker, since);
-      }
-      // --- github PRs (expo's team-awareness poll) ---
-      upsertGithubPr(pr) {
-        const now = pr.now ?? Date.now();
-        const filesJson = pr.files ? JSON.stringify(pr.files) : null;
-        return this.withRetry(() => {
-          const existing = this.db.prepare("SELECT updated_at FROM github_prs WHERE number = ?").get(pr.number);
-          const isNew = existing === void 0;
-          const changed = !isNew && existing.updated_at !== pr.updatedAt;
-          this.db.prepare(
-            `INSERT INTO github_prs (number, title, author, branch, url, state, ticket, files_json, updated_at, seen_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(number) DO UPDATE SET
-             title=excluded.title, author=excluded.author, branch=excluded.branch, url=excluded.url,
-             state=excluded.state, ticket=excluded.ticket, files_json=excluded.files_json,
-             updated_at=excluded.updated_at`
-          ).run(
-            pr.number,
-            pr.title,
-            pr.author,
-            pr.branch ?? null,
-            pr.url,
-            pr.state,
-            pr.ticket ?? null,
-            filesJson,
-            pr.updatedAt,
-            now
-            // seen_at — only applied on INSERT (not in the ON CONFLICT SET)
-          );
-          return { isNew, changed };
-        });
-      }
-      listGithubPrs(options) {
-        const where = options?.state ? "WHERE state = ?" : "";
-        const params = [];
-        if (options?.state) params.push(options.state);
-        params.push(Math.max(1, Math.min(options?.limit ?? 100, 300)));
-        return this.db.prepare(`SELECT * FROM github_prs ${where} ORDER BY updated_at DESC LIMIT ?`).all(...params);
-      }
-      // --- tasks (expo → worktree delegation lifecycle) ---
-      createTask(input) {
-        const now = input.now ?? Date.now();
-        const state = input.assignee ? "assigned" : "open";
-        const id = this.withRetry(() => {
-          const result = this.db.prepare(
-            `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-          ).run(
-            input.createdBy,
-            input.assignee ?? null,
-            input.title,
-            input.body ?? null,
-            state,
-            input.priority ?? null,
-            input.dish ?? null,
-            input.thread ?? null,
-            now,
-            now
-          );
-          return Number(result.lastInsertRowid);
-        });
-        this.journal("task.create", {
-          id,
-          by: input.createdBy,
-          assignee: input.assignee ?? null,
-          title: input.title,
-          body: input.body ?? null,
-          state,
-          priority: input.priority ?? null,
-          dish: input.dish ?? null,
-          thread: input.thread ?? null,
-          at: now
-        });
-        return id;
-      }
-      listTasks(options) {
-        const clauses = [];
-        const params = [];
-        if (options?.state) {
-          clauses.push("state = ?");
-          params.push(options.state);
-        }
-        if (options?.assignee) {
-          clauses.push("assignee = ?");
-          params.push(options.assignee);
-        }
-        if (options?.createdBy) {
-          clauses.push("created_by = ?");
-          params.push(options.createdBy);
-        }
-        if (options?.active) {
-          clauses.push("state IN ('open','assigned','in_progress','returned')");
-        }
-        const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
-        params.push(Math.max(1, Math.min(options?.limit ?? 100, 300)));
-        return this.db.prepare(`SELECT * FROM tasks ${where} ORDER BY updated_at DESC LIMIT ?`).all(...params);
-      }
-      getTask(id) {
-        return this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-      }
-      updateTaskState(input) {
-        const now = input.now ?? Date.now();
-        const started = input.state === "in_progress";
-        const finished = input.state === "returned" || input.state === "done" || input.state === "cancelled";
-        this.withRetry(
-          () => this.db.prepare(
-            `UPDATE tasks
-           SET state = ?,
-               assignee = COALESCE(?, assignee),
-               result = COALESCE(?, result),
-               started_at = CASE WHEN ? AND started_at IS NULL THEN ? ELSE started_at END,
-               finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END,
-               updated_at = ?
-           WHERE id = ?`
-          ).run(
-            input.state,
-            input.assignee ?? null,
-            input.result ?? null,
-            started ? 1 : 0,
-            now,
-            finished ? 1 : 0,
-            now,
-            now,
-            input.id
-          )
-        );
-        this.journal("task.update", {
-          id: input.id,
-          state: input.state,
-          assignee: input.assignee ?? null,
-          result: input.result ?? null,
-          at: now
-        });
-      }
-      /** Tasks freshly assigned to a worktree (for its board delta). */
-      tasksAssignedSince(assignee, since) {
-        return this.db.prepare(
-          `SELECT * FROM tasks
-         WHERE assignee = ? AND state = 'assigned' AND updated_at > ?
-         ORDER BY updated_at ASC`
-        ).all(assignee, since);
-      }
-      /** Tasks a worktree has returned to their creator (for the creator's board delta). */
-      tasksReturnedForCreator(createdBy, since) {
-        return this.db.prepare(
-          `SELECT * FROM tasks
-         WHERE created_by = ? AND state = 'returned' AND updated_at > ?
-         ORDER BY updated_at ASC`
-        ).all(createdBy, since);
-      }
-      // --- todos (expo-managed personal to-do list for the principal) ---
-      /**
-       * Add an item to the principal's to-do list. Idempotent while open: if `dedupKey`
-       * is given and an open todo already carries it, the existing row is returned
-       * untouched (isNew:false) — so the self-managing expo can re-derive the
-       * same item every pass without spawning duplicates.
-       */
-      createTodo(input) {
-        const now = input.now ?? Date.now();
-        const created = this.withRetry(() => {
-          if (input.dedupKey) {
-            const existing = this.db.prepare("SELECT id FROM todos WHERE dedup_key = ? AND state = 'open' LIMIT 1").get(input.dedupKey);
-            if (existing) return { id: existing.id, isNew: false };
-          }
-          const result = this.db.prepare(
-            `INSERT INTO todos (title, detail, state, source, origin_ref, dedup_key, priority_ref, created_at, updated_at)
-           VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?)`
-          ).run(
-            input.title,
-            input.detail ?? null,
-            input.source ?? "expo",
-            input.originRef ?? null,
-            input.dedupKey ?? null,
-            input.priority ?? null,
-            now,
-            now
-          );
-          return { id: Number(result.lastInsertRowid), isNew: true };
-        });
-        if (created.isNew) {
-          this.journal("todo.create", {
-            id: created.id,
-            title: input.title,
-            detail: input.detail ?? null,
-            source: input.source ?? "expo",
-            origin: input.originRef ?? null,
-            dedupKey: input.dedupKey ?? null,
-            priority: input.priority ?? null,
-            at: now
-          });
-        }
-        return created;
-      }
-      listTodos(options) {
-        const where = options?.state ? "WHERE state = ?" : "";
-        const params = [];
-        if (options?.state) params.push(options.state);
-        params.push(Math.max(1, Math.min(options?.limit ?? 100, 300)));
-        return this.db.prepare(`SELECT * FROM todos ${where} ORDER BY updated_at DESC LIMIT ?`).all(...params);
-      }
-      getTodo(id) {
-        return this.db.prepare("SELECT * FROM todos WHERE id = ?").get(id);
-      }
-      /**
-       * Cross an item off (state 'done'), drop it ('dismissed'), or re-open it.
-       * `doneSignal` records HOW completion was inferred — the auto-cross-off stays
-       * transparent and reversible (the principal can re-open with the signal in view).
-       */
-      updateTodoState(input) {
-        const now = input.now ?? Date.now();
-        this.withRetry(
-          () => this.db.prepare(
-            `UPDATE todos
-           SET state = ?, done_signal = COALESCE(?, done_signal), updated_at = ?
-           WHERE id = ?`
-          ).run(input.state, input.doneSignal ?? null, now, input.id)
-        );
-        this.journal("todo.update", {
-          id: input.id,
-          state: input.state,
-          doneSignal: input.doneSignal ?? null,
-          at: now
-        });
-      }
-      // --- journal replay (remote.ts restore path) ---
-      /**
-       * Materialize one journal event into the DB. Inserts carry their original
-       * ids (OR IGNORE), updates re-apply — so replay is idempotent over a fresh
-       * OR an existing DB. Returns false for an unrecognized event type (a newer
-       * journal replayed by an older build skips rather than corrupts).
-       * Deliberately does NOT re-emit to the journal.
-       */
-      applyEvent(type, data) {
-        const f = (key) => {
-          const v = data[key];
-          return typeof v === "string" || typeof v === "number" ? v : null;
-        };
-        const at = Number(data.at ?? Date.now());
-        switch (type) {
-          case "message":
-            this.withRetry(
-              () => this.db.prepare(
-                `INSERT OR IGNORE INTO messages (id, from_id, to_id, subject, body, thread_id, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)`
-              ).run(f("id"), f("from"), f("to"), f("subject"), f("body"), f("thread"), at)
-            );
-            return true;
-          case "cursor":
-            this.withRetry(
-              () => this.db.prepare(
-                `INSERT INTO cursors (agent_id, last_read_message_id) VALUES (?, ?)
-               ON CONFLICT(agent_id) DO UPDATE SET last_read_message_id = excluded.last_read_message_id`
-              ).run(f("agent"), f("last"))
-            );
-            return true;
-          case "journal.add":
-            this.withRetry(
-              () => this.db.prepare(
-                `INSERT OR IGNORE INTO journal (id, agent_id, kind, ref, text, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)`
-              ).run(f("id"), f("agent"), f("kind"), f("ref"), f("text"), at)
-            );
-            return true;
-          case "question.ask":
-            this.withRetry(
-              () => this.db.prepare(
-                `INSERT OR IGNORE INTO questions (id, asker, question, context, state, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'open', ?, ?)`
-              ).run(f("id"), f("asker"), f("question"), f("context"), at, at)
-            );
-            return true;
-          case "question.answer":
-            this.withRetry(
-              () => this.db.prepare(
-                `UPDATE questions SET state = 'answered', answer = ?, resolved_by = ?,
-               priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`
-              ).run(f("answer"), f("by"), f("priority"), at, f("id"))
-            );
-            return true;
-          case "question.escalate":
-            this.withRetry(
-              () => this.db.prepare(
-                `UPDATE questions SET state = 'needs_human', recommendation = ?,
-               priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`
-              ).run(f("recommendation"), f("priority"), at, f("id"))
-            );
-            return true;
-          case "question.outcome":
-            this.withRetry(
-              () => this.db.prepare(
-                `UPDATE questions SET outcome = ?, outcome_note = ?, outcome_at = ?, updated_at = ?
-               WHERE id = ?`
-              ).run(f("outcome"), f("note"), at, at, f("id"))
-            );
-            return true;
-          case "task.create":
-            this.withRetry(
-              () => this.db.prepare(
-                `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-              ).run(
-                f("id"),
-                f("by"),
-                f("assignee"),
-                f("title"),
-                f("body"),
-                f("state"),
-                f("priority"),
-                f("dish"),
-                f("thread"),
-                at,
-                at
-              )
-            );
-            return true;
-          case "task.update":
-            this.withRetry(
-              () => this.db.prepare(
-                `UPDATE tasks SET state = ?, assignee = COALESCE(?, assignee),
-               result = COALESCE(?, result), updated_at = ? WHERE id = ?`
-              ).run(f("state"), f("assignee"), f("result"), at, f("id"))
-            );
-            return true;
-          case "todo.create":
-            this.withRetry(
-              () => this.db.prepare(
-                `INSERT OR IGNORE INTO todos (id, title, detail, state, source, origin_ref, dedup_key, priority_ref, created_at, updated_at)
-               VALUES (?, ?, ?, 'open', ?, ?, ?, ?, ?, ?)`
-              ).run(
-                f("id"),
-                f("title"),
-                f("detail"),
-                f("source") ?? "expo",
-                f("origin"),
-                f("dedupKey"),
-                f("priority"),
-                at,
-                at
-              )
-            );
-            return true;
-          case "focus.set":
-            this.withRetry(
-              () => this.db.prepare(
-                `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, focus)
-               VALUES (?, '', 0, ?, ?, ?)
-               ON CONFLICT(id) DO UPDATE SET focus = excluded.focus`
-              ).run(f("station"), at, at, f("focus"))
-            );
-            return true;
-          case "todo.update":
-            this.withRetry(
-              () => this.db.prepare(
-                `UPDATE todos SET state = ?, done_signal = COALESCE(?, done_signal), updated_at = ?
-               WHERE id = ?`
-              ).run(f("state"), f("doneSignal"), at, f("id"))
-            );
-            return true;
-          default:
-            return false;
-        }
-      }
-      close() {
-        this.db.close();
-      }
-    };
-  }
-});
-
-// src/board.ts
-import { createHash as createHash2 } from "node:crypto";
-import * as path3 from "node:path";
-function computeStateHash(store, now = Date.now()) {
-  const peers = store.listPeers(now).map((p) => {
-    const activeAge = p.last_active ? now - p.last_active : null;
-    const state = !p.online ? "offline" : activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
-    return `${p.id}|${state}|${p.branch ?? ""}|${p.focus ?? ""}`;
-  });
-  const tasks = store.listTasks({ active: true }).map((t) => `${t.id}|${t.assignee ?? ""}|${t.state}`).sort();
-  return createHash2("sha1").update([...peers, ...tasks].join("\n")).digest("hex").slice(0, 12);
-}
-function fmtAge(ms) {
-  if (ms < 6e4) return "just now";
-  const min = Math.floor(ms / 6e4);
-  if (min < 60) return `${min}m`;
-  const hr = Math.floor(min / 60);
-  return hr < 24 ? `${hr}h` : `${Math.floor(hr / 24)}d`;
-}
-function parseFiles(activity2) {
-  if (!activity2) return { files: [], ticket: null };
-  try {
-    const a = JSON.parse(activity2);
-    return { files: a.files ?? [], ticket: a.ticket ?? null };
-  } catch {
-    return { files: [], ticket: null };
-  }
-}
-function buildBoard(store, opts) {
-  const now = opts.now ?? Date.now();
-  const wmKey = "board_since";
-  const since = opts.since ?? (() => {
-    const wm = store.getWatermark(opts.agentId, wmKey);
-    return wm ? Number(wm) : now;
-  })();
-  const peers = store.listPeers(now);
-  const others = peers.filter((p) => p.id !== opts.agentId);
-  const mine = parseFiles(peers.find((p) => p.id === opts.agentId)?.activity ?? null);
-  const journal = store.journalSince(since).filter((j) => j.agent_id !== opts.agentId);
-  const collisionLines = [];
-  const myFiles = new Set(mine.files);
-  for (const p of others) {
-    if (!p.online) continue;
-    const a = parseFiles(p.activity);
-    const sharedFile = a.files.find((f) => myFiles.has(f));
-    if (sharedFile) {
-      collisionLines.push(`\u26A0 ${p.id} also touching ${path3.basename(sharedFile)}`);
-    } else if (mine.ticket && a.ticket === mine.ticket) {
-      collisionLines.push(`\u26A0 ${p.id} also on ${mine.ticket}`);
-    }
-  }
-  const MAX_MSGS = 8;
-  const inbox = store.messagesForSince(opts.agentId, since);
-  const answered = store.answeredForAsker(opts.agentId, since);
-  const openForExpo = isExpo(opts.agentId) ? store.listQuestions({ state: "open" }).filter((q) => q.created_at > since) : [];
-  const MAX_GH = 5;
-  const ghLines = [];
-  for (const pr of store.listGithubPrs({ state: "open" })) {
-    if (pr.updated_at <= since || ghLines.length >= MAX_GH) continue;
-    if (isExpo(opts.agentId)) {
-      ghLines.push(`\u{1F517} ${pr.author}: ${pr.title} (#${pr.number})`);
-      continue;
-    }
-    let files = [];
-    try {
-      files = pr.files_json ? JSON.parse(pr.files_json) : [];
-    } catch {
-      files = [];
-    }
-    const fileHit = files.find((f) => myFiles.has(f));
-    if (fileHit) {
-      ghLines.push(
-        `\u{1F517} PR #${pr.number} by ${pr.author} touches ${path3.basename(fileHit)} (yours): ${pr.title}`
-      );
-    } else if (mine.ticket && pr.ticket === mine.ticket) {
-      ghLines.push(`\u{1F517} PR #${pr.number} by ${pr.author} on ${pr.ticket}: ${pr.title}`);
-    }
-  }
-  const assignedToMe = store.tasksAssignedSince(opts.agentId, since);
-  const returnedToMe = store.tasksReturnedForCreator(opts.agentId, since);
-  if (opts.advance) store.setWatermark(opts.agentId, wmKey, String(now));
-  if (journal.length === 0 && collisionLines.length === 0 && answered.length === 0 && openForExpo.length === 0 && inbox.length === 0 && ghLines.length === 0 && assignedToMe.length === 0 && returnedToMe.length === 0) {
-    return { text: "", journalCount: 0, collisions: 0 };
-  }
-  const lines = ["[hands] update:"];
-  const shownMsgs = inbox.slice(-MAX_MSGS);
-  for (const msg of shownMsgs) {
-    const to = msg.to_id === null ? "all" : "you";
-    const subject = msg.subject ? `${msg.subject} \u2014 ` : "";
-    lines.push(`  \u2709 ${msg.from_id} \u2192 ${to}: ${subject}${msg.body}`);
-  }
-  if (inbox.length > MAX_MSGS) {
-    lines.push(`  \u2709 (+${inbox.length - MAX_MSGS} earlier \u2014 hands_history)`);
-  }
-  for (const line of ghLines) lines.push(`  ${line}`);
-  for (const q of answered) {
-    lines.push(`  \u2714 expo answered "${q.question}" \u2192 ${q.answer}`);
-  }
-  for (const q of openForExpo) {
-    lines.push(`  ? ${q.asker} asks: "${q.question}" \u2014 adjudicate or escalate`);
-  }
-  for (const t of assignedToMe) {
-    lines.push(`  \u{1F4CB} ${t.created_by} fired: "${t.title}" \u2014 start with hands_task_update`);
-  }
-  for (const t of returnedToMe) {
-    lines.push(`  \u{1F4CB} ${t.assignee ?? ""} returned: "${t.title}" \u2014 review it`);
-  }
-  if (journal.length > 0) {
-    const items = journal.slice(-6).map((j) => {
-      const verb = VERB[j.kind] ?? j.kind;
-      const who = j.kind === "memory" ? "memory" : j.agent_id;
-      return `${who} ${verb} "${j.text}" (${fmtAge(now - j.created_at)})`;
-    }).join("; ");
-    lines.push(`  new: ${items}`);
-  }
-  for (const c of collisionLines) lines.push(`  ${c}`);
-  const peersLine = others.map((p) => peerLabel(p, now)).join(" \xB7 ");
-  if (peersLine) lines.push(`  peers: ${peersLine}`);
-  return { text: lines.join("\n"), journalCount: journal.length, collisions: collisionLines.length };
-}
-function peerLabel(p, now) {
-  const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
-  const where = p.branch ?? "?";
-  const who = p.focus ? `${p.id}\xB7${p.focus}` : p.id;
-  if (!p.online) return `${who}\xB7offline`;
-  if (activeAge > IDLE_THRESHOLD_MS) return `${who}\xB7idle ${fmtAge(activeAge)}\xB7${where}`;
-  return `${who}\xB7${where}`;
-}
-var IDLE_THRESHOLD_MS, VERB;
-var init_board = __esm({
-  "src/board.ts"() {
-    "use strict";
-    init_identity();
-    init_store();
-    IDLE_THRESHOLD_MS = 3 * 6e4;
-    VERB = { commit: "committed", memory: "learned", note: "noted" };
-  }
-});
-
-// src/config.ts
-import * as fs3 from "node:fs";
-import * as os2 from "node:os";
-import * as path4 from "node:path";
-function readJson(file2) {
-  let raw;
-  try {
-    raw = fs3.readFileSync(file2, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : null;
-  } catch (err) {
-    process.stderr.write(`[hands] ignoring malformed config ${file2}: ${String(err)}
-`);
-    return null;
-  }
-}
-function merge2(base, layer) {
-  if (!layer) return base;
-  const expoLayer = layer.expo;
-  const stationsLayer = layer.stations;
-  const overrides = { ...base.stations.overrides };
-  for (const [key, value] of Object.entries(stationsLayer?.overrides ?? {})) {
-    if (typeof value === "string") overrides[key] = value;
-  }
-  return {
-    principal: { name: layer.principal?.name ?? base.principal.name },
-    topology: layer.topology === "open" || layer.topology === "strict-hub" ? layer.topology : base.topology,
-    expo: {
-      basename: expoLayer?.basename !== void 0 ? expoLayer.basename : base.expo.basename
-    },
-    stations: {
-      model: stationsLayer?.model ?? base.stations.model,
-      overrides,
-      launcher: stationsLayer?.launcher ?? base.stations.launcher,
-      worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
-      baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
-      allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling
-    },
-    remote: {
-      url: layer.remote?.url !== void 0 ? layer.remote.url : base.remote.url,
-      handle: layer.remote?.handle !== void 0 ? layer.remote.handle : base.remote.handle,
-      project: layer.remote?.project !== void 0 ? layer.remote.project : base.remote.project
-    },
-    merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
-    gh: { poll: layer.gh?.poll ?? base.gh.poll }
-  };
-}
-function userConfigPath(env = process.env) {
-  const home = env.HANDS_TEST_HOME?.trim() || os2.homedir();
-  return path4.join(home, ".claude", CONFIG_BASENAME);
-}
-function repoConfigPath(cwd = process.cwd()) {
-  const info = repoInfo(cwd);
-  return info ? path4.join(info.repoRoot, CONFIG_BASENAME) : null;
-}
-function loadConfig(options) {
-  const cwd = options?.cwd ?? process.cwd();
-  const env = options?.env ?? process.env;
-  const key = `${cwd}\0${env.HANDS_TEST_HOME ?? ""}`;
-  const hit = cache.get(key);
-  if (hit) return hit;
-  let cfg = merge2(DEFAULT_CONFIG, readJson(userConfigPath(env)));
-  const repoFile = repoConfigPath(cwd);
-  if (repoFile) cfg = merge2(cfg, readJson(repoFile));
-  cache.set(key, cfg);
-  return cfg;
-}
-var DEFAULT_CONFIG, CONFIG_BASENAME, cache;
-var init_config = __esm({
-  "src/config.ts"() {
-    "use strict";
-    init_paths();
-    DEFAULT_CONFIG = {
-      principal: { name: "Michael" },
-      topology: "strict-hub",
-      expo: { basename: null },
-      stations: {
-        model: "sonnet",
-        overrides: {},
-        launcher: "auto",
-        worktreeRoot: null,
-        baseBranch: null,
-        allowScaling: true
-      },
-      remote: { url: null, handle: null, project: null },
-      merge: { adminMergeLowRisk: false },
-      gh: { poll: true }
-    };
-    CONFIG_BASENAME = "hands.config.json";
-    cache = /* @__PURE__ */ new Map();
-  }
-});
-
-// src/priorities.ts
-import * as fs5 from "node:fs";
-import * as path5 from "node:path";
-function prioritiesPath(env = process.env) {
-  return path5.join(coordinationDir(env), "priorities.md");
-}
-function stripMarker(line) {
-  return line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim();
-}
-function readPriorities(env = process.env) {
-  const file2 = prioritiesPath(env);
-  let raw;
-  try {
-    raw = fs5.readFileSync(file2, "utf8");
-  } catch {
-    return { items: [], raw: "", exists: false };
-  }
-  const items = raw.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map(stripMarker).filter(Boolean);
-  return { items, raw, exists: true };
-}
-function writePriorities(items, env = process.env) {
-  const dir = coordinationDir(env);
-  fs5.mkdirSync(dir, { recursive: true, mode: 448 });
-  const body = `# Today's priorities (ranked \u2014 the expo adjudicates against these)
-
-${items.map((it, i) => `${i + 1}. ${it}`).join("\n")}
-`;
-  const file2 = prioritiesPath(env);
-  fs5.writeFileSync(file2, body, { mode: 384 });
-  try {
-    fs5.chmodSync(file2, 384);
-  } catch {
-  }
-}
-var init_priorities = __esm({
-  "src/priorities.ts"() {
-    "use strict";
-    init_paths();
-  }
-});
-
-// src/digest.ts
+// src/books-server.ts
 import * as fs7 from "node:fs";
-import * as path7 from "node:path";
-function dayOf(ts) {
-  return new Date(ts).toISOString().slice(0, 10);
-}
-function hhmm(ts) {
-  return new Date(ts).toISOString().slice(11, 16);
-}
-function oneLine(text) {
-  const flat = String(text ?? "").replace(/\s+/g, " ").trim();
-  const points = Array.from(flat);
-  return points.length <= RESULT_MAX ? flat : `${points.slice(0, RESULT_MAX - 1).join("")}\u2026`;
-}
-function agentRank(agent) {
-  if (agent === "expo") return [0, 0, agent];
-  const station = agent.match(/^station-(\d+)$/);
-  if (station) return [1, Number.parseInt(station[1], 10), agent];
-  if (agent === "unattributed") return [3, 0, agent];
-  return [2, 0, agent];
-}
-function compareAgents(a, b) {
-  const [ga, na, sa] = agentRank(a);
-  const [gb, nb, sb] = agentRank(b);
-  return ga - gb || na - nb || sa.localeCompare(sb);
-}
-function describe3(event) {
-  const d = event.data;
-  const t = hhmm(event.ts);
-  switch (event.type) {
-    case "task.create": {
-      const dish = d.dish ? ` (${oneLine(d.dish)})` : "";
-      return `- ${t} ticket #${d.id}${dish} fired: **${oneLine(d.title)}**${d.assignee ? ` \u2192 ${d.assignee}` : " (unassigned)"}`;
-    }
-    case "task.update": {
-      const result = d.result ? ` \u2014 ${oneLine(d.result)}` : "";
-      const verb = d.state === "cancelled" ? "86'd" : d.state === "in_progress" ? "picked up" : String(d.state);
-      return `- ${t} ticket #${d.id} ${verb}${result}`;
-    }
-    case "question.ask":
-      return `- ${t} question #${d.id} asked: ${oneLine(d.question)}`;
-    case "question.escalate":
-      return `- ${t} question #${d.id} escalated${d.recommendation ? ` (rec: ${oneLine(d.recommendation)})` : ""}`;
-    case "question.answer":
-      return `- ${t} question #${d.id} answered by ${d.by}: ${oneLine(d.answer)}`;
-    case "question.outcome":
-      return `- ${t} question #${d.id} outcome: ${d.outcome}${d.note ? ` \u2014 ${oneLine(d.note)}` : ""}`;
-    case "todo.create":
-      return `- ${t} todo #${d.id} added: ${oneLine(d.title)}`;
-    case "todo.update":
-      return `- ${t} todo #${d.id} \u2192 ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
-    case "focus.set":
-      return `- ${t} focus \u2192 ${oneLine(d.focus) || "(cleared)"}`;
-    case "priorities.set": {
-      const items = Array.isArray(d.items) ? d.items : [];
-      const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
-      return `- ${t} specials set (${items.length}): ${list}`;
-    }
-    default:
-      return null;
-  }
-}
-function renderDigest(events, opts) {
-  const day = events.filter((e) => dayOf(e.ts) === opts.date);
-  const focusAsOf = /* @__PURE__ */ new Map();
-  for (const e of events) {
-    if (e.type !== "focus.set" || dayOf(e.ts) > opts.date) continue;
-    const station = String(e.data.station ?? "");
-    const focus = e.data.focus;
-    if (!station) continue;
-    if (typeof focus === "string" && focus.trim()) focusAsOf.set(station, focus.trim());
-    else focusAsOf.delete(station);
-  }
-  const byAgent = /* @__PURE__ */ new Map();
-  const notes = [];
-  let messages = 0;
-  const messagesByAgent = /* @__PURE__ */ new Map();
-  for (const event of day) {
-    const agent = event.agent ?? "unattributed";
-    if (event.type === "digest.note") {
-      notes.push(event);
-      continue;
-    }
-    if (event.type === "message") {
-      messages++;
-      messagesByAgent.set(agent, (messagesByAgent.get(agent) ?? 0) + 1);
-      continue;
-    }
-    if (event.type === "cursor") continue;
-    const owner = event.type === "focus.set" ? String(event.data.station ?? agent) : agent;
-    const bucket = byAgent.get(owner);
-    if (bucket) bucket.push(event);
-    else byAgent.set(owner, [event]);
-  }
-  const lines = [STAMP, `# ${opts.date} \xB7 ${opts.handle} \xB7 ${opts.project}`, ""];
-  if (notes.length > 0) {
-    lines.push("## Notes");
-    for (const note of notes) lines.push(`- ${hhmm(note.ts)} ${oneLine(note.data.text)}`);
-    lines.push("");
-  }
-  const agents = [.../* @__PURE__ */ new Set([...byAgent.keys(), ...messagesByAgent.keys()])].sort(compareAgents);
-  let itemized = 0;
-  for (const agent of agents) {
-    const items = (byAgent.get(agent) ?? []).map(describe3).filter((line) => line !== null);
-    const sent = messagesByAgent.get(agent) ?? 0;
-    if (items.length === 0 && sent === 0) continue;
-    const label = focusAsOf.get(agent);
-    lines.push(label ? `## ${agent} \xB7 ${label}` : `## ${agent}`);
-    lines.push(...items);
-    if (sent > 0) lines.push(`- messages sent: ${sent}`);
-    lines.push("");
-    itemized += items.length;
-  }
-  if (agents.length === 0 && notes.length === 0) {
-    lines.push("_no activity_", "");
-  }
-  const summary = `${itemized} item${itemized === 1 ? "" : "s"} \xB7 ${messages} message${messages === 1 ? "" : "s"}${notes.length > 0 ? ` \xB7 ${notes.length} note${notes.length === 1 ? "" : "s"}` : ""}`;
-  return { date: opts.date, body: `${lines.join("\n")}
-`, summary };
-}
-function renderIndex(days, opts) {
-  const lines = [STAMP, `# ${opts.handle} \xB7 ${opts.project}`, ""];
-  const sorted = [...days].sort((a, b) => b.date.localeCompare(a.date));
-  for (const day of sorted) {
-    lines.push(`- [${day.date}](./${day.date}.md) \u2014 ${day.summary}`);
-  }
-  if (sorted.length === 0) lines.push("_no digests yet_");
-  return `${lines.join("\n")}
-`;
-}
-function writeIfOwn(file2, content) {
-  let existing = null;
-  try {
-    existing = fs7.readFileSync(file2, "utf8");
-  } catch {
-  }
-  if (existing !== null) {
-    if (existing === content) return false;
-    const stamped = existing.match(STAMP_RE);
-    if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
-  }
-  fs7.writeFileSync(file2, content);
-  return true;
-}
-function regenerateDigests(journal, dates) {
-  const events = readEvents(journal.dir, journal.project, journal.handle);
-  if (events.length === 0) return [];
-  const handleDir = path7.join(journal.dir, "journal", journal.project, journal.handle);
-  fs7.mkdirSync(handleDir, { recursive: true });
-  const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
-  const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
-  const changed = [];
-  const index = [];
-  for (const date5 of allDates) {
-    const digest = renderDigest(events, { project: journal.project, handle: journal.handle, date: date5 });
-    index.push({ date: date5, summary: digest.summary });
-    if (!target.includes(date5)) continue;
-    const file2 = path7.join(handleDir, `${date5}.md`);
-    if (writeIfOwn(file2, digest.body)) {
-      changed.push(path7.join("journal", journal.project, journal.handle, `${date5}.md`));
-    }
-  }
-  const readme = renderIndex(index, { project: journal.project, handle: journal.handle });
-  if (writeIfOwn(path7.join(handleDir, "README.md"), readme)) {
-    changed.push(path7.join("journal", journal.project, journal.handle, "README.md"));
-  }
-  return changed;
-}
-var DIGEST_VERSION, STAMP_PREFIX, STAMP, STAMP_RE, RESULT_MAX;
-var init_digest = __esm({
-  "src/digest.ts"() {
-    "use strict";
-    init_remote();
-    DIGEST_VERSION = 1;
-    STAMP_PREFIX = "<!-- hands digest v";
-    STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
-    STAMP_RE = /^<!-- hands digest v(\d+) -->/;
-    RESULT_MAX = 120;
-  }
-});
-
-// src/snapshot.ts
-import * as path8 from "node:path";
-function activity(raw) {
-  if (!raw) return { files: [], ticket: null };
-  try {
-    const a = JSON.parse(raw);
-    return { files: a.files ?? [], ticket: a.ticket ?? null };
-  } catch {
-    return { files: [], ticket: null };
-  }
-}
-function buildSnapshot(store, now = Date.now(), env = process.env) {
-  const peers = store.listPeers(now);
-  const wakes = store.wakeCounts(now);
-  const agents = peers.map((p) => {
-    const { files, ticket } = activity(p.activity);
-    const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
-    const state = !p.online ? "offline" : activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
-    return {
-      id: p.id,
-      state,
-      online: p.online,
-      branch: p.branch,
-      ticket,
-      cwd: p.cwd,
-      pid: p.pid,
-      files,
-      lastActive: p.last_active,
-      lastSeen: p.last_seen_at,
-      wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
-      wakes24h: wakes.get(p.id)?.last24h ?? 0,
-      focus: p.focus
-    };
-  });
-  const collisions = [];
-  const online = agents.filter((a) => a.online);
-  for (let i = 0; i < online.length; i++) {
-    for (let j = i + 1; j < online.length; j++) {
-      const a = online[i];
-      const b = online[j];
-      const shared = a.files.find((f) => b.files.includes(f));
-      if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path8.basename(shared) });
-      } else if (a.ticket && a.ticket === b.ticket) {
-        collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
-      }
-    }
-  }
-  const journal = store.journalSince(0, 40).reverse().map((j) => ({ id: j.id, by: j.agent_id, kind: j.kind, text: j.text, ref: j.ref, at: j.created_at }));
-  const messages = store.history({ limit: 40 }).reverse().map((m) => ({
-    id: m.id,
-    from: m.from_id,
-    to: m.to_id ?? "*",
-    subject: m.subject,
-    body: m.body,
-    at: m.created_at
-  }));
-  const priorities = readPriorities(env).items;
-  const questions = store.listQuestions({ limit: 30 }).map((q) => ({
-    id: q.id,
-    asker: q.asker,
-    question: q.question,
-    state: q.state,
-    answer: q.answer,
-    resolvedBy: q.resolved_by,
-    recommendation: q.recommendation,
-    priority: q.priority_ref,
-    outcome: q.outcome,
-    outcomeNote: q.outcome_note,
-    outcomeAt: q.outcome_at,
-    at: q.created_at
-  }));
-  const github = store.listGithubPrs({ limit: 40 }).map((pr) => {
-    let files = [];
-    try {
-      files = pr.files_json ? JSON.parse(pr.files_json) : [];
-    } catch {
-      files = [];
-    }
-    const fileSet = new Set(files);
-    const relevantTo = [];
-    for (const a of agents) {
-      if (!a.online) continue;
-      if (a.files.some((f) => fileSet.has(f)) || a.ticket && a.ticket === pr.ticket) {
-        relevantTo.push(a.id);
-      }
-    }
-    return {
-      number: pr.number,
-      title: pr.title,
-      author: pr.author,
-      branch: pr.branch,
-      url: pr.url,
-      state: pr.state,
-      ticket: pr.ticket,
-      files: files.length,
-      relevantTo,
-      at: pr.updated_at
-    };
-  });
-  const tasks = store.listTasks({ limit: 40 }).map((t) => ({
-    id: t.id,
-    title: t.title,
-    from: t.created_by,
-    assignee: t.assignee ?? "queue",
-    state: t.state,
-    priority: t.priority_ref,
-    dish: t.dish,
-    result: t.result,
-    at: t.updated_at,
-    startedAt: t.started_at,
-    finishedAt: t.finished_at
-  }));
-  const activeStates = /* @__PURE__ */ new Set(["open", "assigned", "in_progress", "returned"]);
-  const todos = store.listTodos({ limit: 40 }).map((t) => ({
-    id: t.id,
-    title: t.title,
-    detail: t.detail,
-    state: t.state,
-    source: t.source,
-    origin: t.origin_ref,
-    priority: t.priority_ref,
-    doneSignal: t.done_signal,
-    at: t.updated_at
-  }));
-  return {
-    now,
-    agents,
-    journal,
-    messages,
-    collisions,
-    priorities,
-    questions,
-    github,
-    tasks,
-    todos,
-    counts: {
-      agents: agents.length,
-      online: agents.filter((a) => a.online).length,
-      messages: messages.length,
-      journal: journal.length,
-      openQuestions: questions.filter((q) => q.state === "open").length,
-      needsHuman: questions.filter((q) => q.state === "needs_human").length,
-      githubPrs: github.length,
-      activeTasks: tasks.filter((t) => activeStates.has(t.state)).length,
-      returnedTasks: tasks.filter((t) => t.state === "returned").length,
-      openTodos: todos.filter((t) => t.state === "open").length
-    }
-  };
-}
-function buildPublicSnapshot(store, opts) {
-  const now = opts.now ?? Date.now();
-  const full = buildSnapshot(store, now, opts.env);
-  return {
-    pushedAt: now,
-    handle: opts.handle,
-    project: opts.project,
-    crafts: full.agents.filter((a) => a.focus).map((a) => ({ station: a.id, focus: a.focus })),
-    priorities: full.priorities,
-    questions: full.questions,
-    tasks: full.tasks,
-    todos: full.todos,
-    counts: {
-      openQuestions: full.counts.openQuestions,
-      needsHuman: full.counts.needsHuman,
-      activeTasks: full.counts.activeTasks,
-      returnedTasks: full.counts.returnedTasks,
-      openTodos: full.counts.openTodos
-    }
-  };
-}
-var init_snapshot = __esm({
-  "src/snapshot.ts"() {
-    "use strict";
-    init_board();
-    init_priorities();
-    init_store();
-  }
-});
-
-// src/remote.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs8 from "node:fs";
-import * as os4 from "node:os";
 import * as path9 from "node:path";
-function git3(cwd, args) {
-  return execFileSync4("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: GIT_TIMEOUT_MS
-  }).trim();
-}
-function tryGit(cwd, args) {
-  try {
-    return git3(cwd, args);
-  } catch {
-    return null;
-  }
-}
-function sanitizeSegment(raw, fallback = "unnamed") {
-  const clean = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^\.+/, "");
-  return clean || fallback;
-}
-function projectFromOrigin(originUrl) {
-  let p = originUrl.trim().replace(/\.git\/?$/, "");
-  if (!p) return null;
-  const scp = p.match(/^[^@/]+@[^:/]+:(.+)$/);
-  if (scp) p = scp[1];
-  else {
-    try {
-      p = new URL(p).pathname;
-    } catch {
-    }
-  }
-  const segments = p.split("/").filter(Boolean);
-  const last = segments[segments.length - 1];
-  return last ? sanitizeSegment(last) : null;
-}
-function resolveProject(config2, cwd = process.cwd()) {
-  const override = config2.remote.project?.trim();
-  if (override) return sanitizeSegment(override);
-  const cached2 = projectCache.get(cwd);
-  if (cached2 !== void 0) return cached2;
-  let project = null;
-  const root = repoInfo(cwd)?.repoRoot ?? cwd;
-  const origin = tryGit(root, ["remote", "get-url", "origin"]);
-  if (origin) project = projectFromOrigin(origin);
-  if (!project) project = sanitizeSegment(path9.basename(root));
-  projectCache.set(cwd, project);
-  return project;
-}
-function resolveHandle(config2) {
-  const h = config2.remote.handle?.trim();
-  if (h) return sanitizeSegment(h, "local");
-  try {
-    return sanitizeSegment(os4.userInfo().username, "local");
-  } catch {
-    return "local";
-  }
-}
-function journalDir(env = process.env, cwd = process.cwd()) {
-  return path9.join(coordinationDir(env, cwd), "remote");
-}
-function ensureRepo(dir, url2) {
-  try {
-    fs8.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs8.existsSync(path9.join(dir, ".git"))) {
-      git3(dir, ["init", "-q", "-b", "main"]);
-      git3(dir, ["config", "user.name", "hands"]);
-      git3(dir, ["config", "user.email", "hands@localhost"]);
-    }
-    if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
-      git3(dir, ["remote", "add", "origin", url2]);
-    } else {
-      git3(dir, ["remote", "set-url", "origin", url2]);
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
-function syncPull(dir) {
-  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return { ok: false, reason: "offline" };
-  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return { ok: true };
-  if (tryGit(dir, ["rev-parse", "--verify", "HEAD"]) === null) {
-    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null ? { ok: true } : { ok: false, reason: "conflict" };
-  }
-  if (tryGit(dir, ["rebase", "-q", "origin/main"]) !== null) return { ok: true };
-  for (let round = 0; round < 10; round++) {
-    const conflictedRaw = tryGit(dir, ["diff", "--name-only", "--diff-filter=U"]);
-    const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
-    const digestOnly = conflicted.length > 0 && conflicted.every(
-      (f) => f.startsWith("journal/") && (f.endsWith(".md") || f.endsWith("/dashboard.json"))
-    );
-    if (!digestOnly) break;
-    if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
-    if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
-    if (tryGit(dir, ["-c", "core.editor=true", "rebase", "--continue"]) !== null) {
-      return { ok: true };
-    }
-  }
-  tryGit(dir, ["rebase", "--abort"]);
-  return { ok: false, reason: "conflict" };
-}
-function readMarker(dir) {
-  const file2 = path9.join(dir, MARKER_FILE);
-  let raw;
-  try {
-    raw = fs8.readFileSync(file2, "utf8");
-  } catch {
-    return null;
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return typeof parsed?.journal === "number" ? { journal: parsed.journal } : "malformed";
-  } catch {
-    return "malformed";
-  }
-}
-function validateJournal(dir, opts) {
-  const marker = readMarker(dir);
-  if (marker === "malformed") {
-    return { ok: false, reason: `${MARKER_FILE} is malformed \u2014 fix or delete it in the journal repo` };
-  }
-  if (marker) {
-    if (marker.journal > JOURNAL_LAYOUT) {
-      return {
-        ok: false,
-        reason: `journal layout v${marker.journal} was written by a newer hands \u2014 update the plugin`
-      };
-    }
-    if (marker.journal < JOURNAL_LAYOUT) {
-      return {
-        ok: false,
-        reason: `journal layout v${marker.journal} is no longer supported \u2014 start a fresh journal repo`
-      };
-    }
-    return { ok: true };
-  }
-  if (!opts?.write) return { ok: true };
-  let entries = [];
-  try {
-    entries = fs8.readdirSync(dir).filter((e) => e !== ".git");
-  } catch {
-    return { ok: false, reason: `journal dir unreadable: ${dir}` };
-  }
-  const foreign = entries.filter((e) => !OWNED_ROOT.has(e));
-  if (foreign.length > 0 && !opts.adopt) {
-    return {
-      ok: false,
-      needsAdopt: true,
-      reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
-    };
-  }
-  fs8.writeFileSync(path9.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
-`);
-  return { ok: true, bootstrapped: true };
-}
-function debounceMarkerPath(dir) {
-  return path9.join(dir, ".git", "hands-last-push");
-}
-function syncStatusPath(dir) {
-  return path9.join(dir, ".git", "hands-sync-status");
-}
-function writeSyncStatus(dir, result, now) {
-  try {
-    fs8.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
-`);
-  } catch {
-  }
-}
-function readSyncStatus(dir) {
-  try {
-    return JSON.parse(fs8.readFileSync(syncStatusPath(dir), "utf8"));
-  } catch {
-    return null;
-  }
-}
-function changedLogDates(dir, head0, journal) {
-  if (!head0) return void 0;
-  const diff = tryGit(dir, [
-    "diff",
-    "--name-only",
-    `${head0}..HEAD`,
-    "--",
-    path9.join("journal", journal.project, journal.handle, "log")
-  ]);
-  if (diff === null) return void 0;
-  const dates = /* @__PURE__ */ new Set();
-  for (const line of diff.split("\n")) {
-    const m = path9.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
-    if (m) dates.add(m[1]);
-  }
-  return dates;
-}
-function writeIfChanged(file2, content) {
-  try {
-    if (fs8.readFileSync(file2, "utf8") === content) return false;
-  } catch {
-  }
-  fs8.writeFileSync(file2, content);
-  return true;
-}
-function syncPush(journal, opts) {
-  const { dir, project, handle } = journal;
-  const now = opts?.now ?? Date.now();
-  const marker = debounceMarkerPath(dir);
-  if (!opts?.force) {
-    try {
-      if (now - fs8.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
-    } catch {
-    }
-  }
-  const finish = (result) => {
-    writeSyncStatus(dir, result, now);
-    return result;
-  };
-  try {
-    const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
-    const ownPaths = [path9.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs8.existsSync(path9.join(dir, p)));
-    if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
-    let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
-    if (dirty) {
-      git3(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
-    }
-    const pulled = syncPull(dir);
-    if (!pulled.ok) {
-      return finish({
-        status: "error",
-        detail: pulled.reason === "conflict" ? `rebase conflict on non-digest files \u2014 inspect the journal clone at ${dir}` : "fetch failed (offline?)"
-      });
-    }
-    const validation = validateJournal(dir, { write: true, adopt: opts?.adopt });
-    if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
-    if (validation.bootstrapped) {
-      git3(dir, ["add", "--", MARKER_FILE]);
-      git3(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
-      dirty = true;
-    }
-    const digestDates = changedLogDates(dir, head0, journal);
-    const changedDigests = regenerateDigests(journal, digestDates);
-    if (changedDigests.length > 0) {
-      git3(dir, ["add", "--", path9.join("journal", project, handle)]);
-      git3(dir, ["commit", "-q", "-m", "journal: digests"]);
-      dirty = true;
-    }
-    if (opts?.store) {
-      const handleDir = path9.join(dir, "journal", project, handle);
-      fs8.mkdirSync(handleDir, { recursive: true });
-      const snapshotFile = path9.join(handleDir, "dashboard.json");
-      const pub = buildPublicSnapshot(opts.store, { handle, project, now });
-      if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}
-`)) {
-        git3(dir, ["add", "--", snapshotFile]);
-        git3(dir, ["commit", "-q", "-m", "journal: dashboard snapshot"]);
-        dirty = true;
-      }
-    }
-    const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
-    if (!dirty && ahead === "0") {
-      fs8.writeFileSync(marker, "");
-      return finish({ status: "clean" });
-    }
-    git3(dir, ["push", "-q", "-u", "origin", "main"]);
-    fs8.writeFileSync(marker, "");
-    return finish({ status: "pushed" });
-  } catch (err) {
-    return finish({
-      status: "error",
-      detail: err instanceof Error ? err.message.split("\n")[0] : String(err)
-    });
-  }
-}
-function openJournal(options) {
-  const env = options?.env ?? process.env;
-  const cwd = options?.cwd ?? process.cwd();
-  const config2 = options?.config ?? loadConfig({ cwd, env });
-  const url2 = config2.remote.url?.trim();
-  if (!url2) return null;
-  const dir = journalDir(env, cwd);
-  ensureRepo(dir, url2);
-  const project = resolveProject(config2, cwd);
-  const handle = resolveHandle(config2);
-  const agentId = options?.agentId ?? null;
-  const logDir = path9.join(dir, "journal", project, handle, "log");
-  return {
-    dir,
-    project,
-    handle,
-    url: url2,
-    agentId,
-    append(type, data) {
-      try {
-        fs8.mkdirSync(logDir, { recursive: true });
-        const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
-        const event = {
-          v: JOURNAL_VERSION,
-          ts: Date.now(),
-          type,
-          ...agentId ? { agent: agentId } : {},
-          data
-        };
-        fs8.appendFileSync(path9.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
-`, {
-          mode: 384
-        });
-      } catch {
-      }
-    }
-  };
-}
-function readEventsFromDir(logDir, into, onlyFile) {
-  let files = [];
-  try {
-    files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
-  } catch {
-    return;
-  }
-  if (onlyFile) files = files.filter((f) => f === onlyFile);
-  for (const file2 of files) {
-    let body;
-    try {
-      body = fs8.readFileSync(path9.join(logDir, file2), "utf8");
-    } catch {
-      continue;
-    }
-    for (const line of body.split("\n")) {
-      if (!line.trim()) continue;
-      try {
-        const parsed = JSON.parse(line);
-        if (parsed && typeof parsed.type === "string" && parsed.data) into.push(parsed);
-      } catch {
-      }
-    }
-  }
-}
-function readEvents(dir, project, handle) {
-  const events = [];
-  readEventsFromDir(path9.join(dir, "journal", project, handle, "log"), events);
-  return events.sort((a, b) => a.ts - b.ts);
-}
-function craftFiles(craft, env = process.env, cwd = process.cwd()) {
-  const config2 = loadConfig({ cwd, env });
-  const enabled = Boolean(config2.remote.url?.trim());
-  const dir = enabled ? path9.join(
-    journalDir(env, cwd),
-    "journal",
-    resolveProject(config2, cwd),
-    resolveHandle(config2),
-    "crafts"
-  ) : path9.join(coordinationDir(env, cwd), "crafts");
-  const slug = sanitizeSegment(craft, "unnamed");
-  return {
-    dir,
-    slug,
-    book: path9.join(dir, `${slug}.md`),
-    skill: path9.join(dir, `${slug}.skill.md`),
-    durable: enabled
-  };
-}
-function clip(text, max = 120) {
-  const flat = text.replace(/\s+/g, " ").trim();
-  const points = Array.from(flat);
-  return points.length <= max ? flat : `${points.slice(0, max - 1).join("")}\u2026`;
-}
-function summarizeEvent(e) {
-  const d = e.data;
-  const s = (v) => typeof v === "string" ? v : "";
-  switch (e.type) {
-    case "task.create":
-      return clip(`ticket #${d.id} fired${s(d.title) ? `: ${s(d.title)}` : ""}`);
-    case "task.update":
-      return clip(`ticket #${d.id} \u2192 ${s(d.state)}`);
-    case "question.ask":
-      return clip(`asked: ${s(d.question)}`);
-    case "question.answer":
-      return `question #${d.id} answered`;
-    case "question.escalate":
-      return `question #${d.id} escalated`;
-    case "priorities.set":
-      return `specials set (${Array.isArray(d.items) ? d.items.length : 0})`;
-    case "digest.note":
-      return clip(`note: ${s(d.text)}`);
-    case "focus.set":
-      return clip(`${s(d.station)} focus \u2192 ${s(d.focus) || "cleared"}`);
-    case "journal.add":
-      return clip(`${s(d.kind) || "entry"}: ${s(d.text) || s(d.ref)}`);
-    case "todo.create":
-      return clip(`todo for the chef: ${s(d.title)}`);
-    case "todo.update":
-      return `todo #${d.id} \u2192 ${s(d.state)}`;
-    default:
-      return null;
-  }
-}
-function readOtherKitchens(dir, project, ownHandle, opts) {
-  const days = opts?.days ?? 2;
-  const limit = opts?.limitPerHandle ?? 15;
-  let handles = [];
-  try {
-    handles = fs8.readdirSync(path9.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
-  } catch {
-    return [];
-  }
-  const kitchens = [];
-  for (const handle of handles) {
-    const logDir = path9.join(dir, "journal", project, handle, "log");
-    let files = [];
-    try {
-      files = fs8.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
-    } catch {
-    }
-    const events = [];
-    for (const file2 of files) readEventsFromDir(logDir, events, file2);
-    events.sort((a, b) => a.ts - b.ts);
-    const updates = [];
-    for (const e of events) {
-      const summary = summarizeEvent(e);
-      if (summary) updates.push({ ts: e.ts, type: e.type, agent: e.agent ?? null, summary });
-    }
-    const recent = updates.slice(-limit).reverse();
-    kitchens.push({
-      handle,
-      lastTs: events.length > 0 ? events[events.length - 1]?.ts ?? null : null,
-      updates: recent
-    });
-  }
-  return kitchens;
-}
-var JOURNAL_VERSION, JOURNAL_LAYOUT, MARKER_FILE, PUSH_DEBOUNCE_MS, GIT_TIMEOUT_MS, projectCache, OWNED_ROOT;
-var init_remote = __esm({
-  "src/remote.ts"() {
-    "use strict";
-    init_config();
-    init_digest();
-    init_paths();
-    init_priorities();
-    init_snapshot();
-    JOURNAL_VERSION = 1;
-    JOURNAL_LAYOUT = 2;
-    MARKER_FILE = "hands.json";
-    PUSH_DEBOUNCE_MS = 6e4;
-    GIT_TIMEOUT_MS = 2e4;
-    projectCache = /* @__PURE__ */ new Map();
-    OWNED_ROOT = /* @__PURE__ */ new Set([MARKER_FILE, "journal"]);
-  }
-});
-
-// src/provision.ts
-var provision_exports = {};
-__export(provision_exports, {
-  ProvisionError: () => ProvisionError,
-  addStations: () => addStations,
-  launchCommand: () => launchCommand,
-  listStations: () => listStations,
-  removeStation: () => removeStation,
-  scaleStations: () => scaleStations,
-  stationBranch: () => stationBranch,
-  stationRoot: () => stationRoot
-});
-import { execFileSync as execFileSync5, spawn } from "node:child_process";
-import * as fs9 from "node:fs";
-import * as os5 from "node:os";
-import * as path10 from "node:path";
-function git4(cwd, args) {
-  return execFileSync5("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 3e4
-  }).trim();
-}
-function requireRepo(cwd) {
-  const info = repoInfo(cwd);
-  if (!info) throw new ProvisionError(`not inside a git repo: ${cwd}`);
-  return info;
-}
-function stationRoot(cwd = process.cwd(), config2) {
-  const cfg = config2 ?? loadConfig({ cwd });
-  if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path10.join(os5.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
-}
-function stationBranch(index) {
-  return `hands/station-${index}`;
-}
-function listStations(cwd = process.cwd(), config2) {
-  const root = stationRoot(cwd, config2);
-  let names = [];
-  try {
-    names = fs9.readdirSync(root);
-  } catch {
-    return [];
-  }
-  const stations = [];
-  for (const name of names) {
-    const m = name.match(/^station-(\d+)$/);
-    if (!m) continue;
-    const index = Number.parseInt(m[1], 10);
-    stations.push({
-      id: `station-${index}`,
-      index,
-      dir: path10.join(root, name),
-      branch: stationBranch(index),
-      present: true
-    });
-  }
-  return stations.sort((a, b) => a.index - b.index);
-}
-function branchExists(cwd, branch) {
-  try {
-    git4(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function launchCommand(station) {
-  return `cd ${shellQuote(station.dir)} && HANDS_ID=${station.id} claude --model ${shellQuote(station.model)} ${shellQuote("/loop /hands:station")}`;
-}
-function shellQuote(s) {
-  return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
-}
-function tmuxAvailable() {
-  try {
-    execFileSync5("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function launch(plan, launcher, env = process.env) {
-  const command = launchCommand(plan);
-  const mode = launcher === "auto" ? env.TMUX || tmuxAvailable() ? "tmux" : "manual" : launcher;
-  if (mode === "tmux") {
-    try {
-      if (env.TMUX) {
-        execFileSync5("tmux", ["new-window", "-d", "-n", plan.id, command], {
-          stdio: "ignore",
-          timeout: 1e4
-        });
-      } else {
-        execFileSync5(
-          "tmux",
-          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
-          { stdio: "ignore", timeout: 1e4 }
-        );
-      }
-      return { launcher: "tmux", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  if (mode === "iterm") {
-    const script = `tell application "iTerm"
-  activate
-  set newWindow to (create window with default profile)
-  tell current session of newWindow to write text ${JSON.stringify(command)}
-end tell`;
-    try {
-      const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
-      child.unref();
-      return { launcher: "iterm", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  return { launcher: "manual", launched: false };
-}
-function addStations(count, opts) {
-  const cwd = opts?.cwd ?? process.cwd();
-  const cfg = opts?.config ?? loadConfig({ cwd });
-  const info = requireRepo(cwd);
-  const root = stationRoot(cwd, cfg);
-  fs9.mkdirSync(root, { recursive: true });
-  const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
-  const plans = [];
-  let index = 1;
-  for (let created = 0; created < count; index++) {
-    if (taken.has(index)) continue;
-    const id = `station-${index}`;
-    const dir = path10.join(root, id);
-    const branch = stationBranch(index);
-    const base = cfg.stations.baseBranch ?? "HEAD";
-    if (branchExists(info.repoRoot, branch)) {
-      git4(info.repoRoot, ["worktree", "add", dir, branch]);
-    } else {
-      git4(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
-    }
-    const model = cfg.stations.overrides[id] ?? cfg.stations.model;
-    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
-    plans.push({
-      id,
-      dir,
-      branch,
-      model,
-      command: launchCommand({ id, dir, model }),
-      launcher: res.launcher,
-      launched: res.launched
-    });
-    created++;
-  }
-  return plans;
-}
-function removeStation(id, opts) {
-  const cwd = opts?.cwd ?? process.cwd();
-  const cfg = opts?.config ?? loadConfig({ cwd });
-  const m = id.match(/^station-(\d+)$/);
-  if (!m) throw new ProvisionError(`not a station id: ${id} (expected station-<n>)`);
-  const index = Number.parseInt(m[1], 10);
-  const info = requireRepo(cwd);
-  const root = stationRoot(cwd, cfg);
-  const dir = path10.join(root, `station-${index}`);
-  try {
-    execFileSync5("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
-  }
-  try {
-    execFileSync5("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
-  }
-  let removed = false;
-  if (fs9.existsSync(dir)) {
-    const args = ["worktree", "remove", dir];
-    if (opts?.force) args.splice(2, 0, "--force");
-    try {
-      git4(info.repoRoot, args);
-    } catch (err) {
-      throw new ProvisionError(
-        `could not remove ${id}: ${err instanceof Error ? err.message.split("\n")[0] : String(err)} (uncommitted work? re-run with --force to discard it)`
-      );
-    }
-    removed = true;
-  }
-  git4(info.repoRoot, ["worktree", "prune"]);
-  const branch = stationBranch(index);
-  if (branchExists(info.repoRoot, branch)) {
-    try {
-      git4(info.repoRoot, ["branch", "-D", branch]);
-    } catch {
-    }
-  }
-  return { id: `station-${index}`, removed };
-}
-function scaleStations(target, opts) {
-  if (!Number.isInteger(target) || target < 0) throw new ProvisionError(`bad target: ${target}`);
-  const cwd = opts?.cwd ?? process.cwd();
-  const cfg = opts?.config ?? loadConfig({ cwd });
-  const current = listStations(cwd, cfg);
-  if (current.length < target) {
-    return { added: addStations(target - current.length, { cwd, config: cfg, env: opts?.env }), removed: [] };
-  }
-  const removed = [];
-  for (const w of current.slice(target)) {
-    removeStation(w.id, { cwd, config: cfg, force: opts?.force });
-    removed.push(w.id);
-  }
-  return { added: [], removed };
-}
-var ProvisionError;
-var init_provision = __esm({
-  "src/provision.ts"() {
-    "use strict";
-    init_config();
-    init_paths();
-    ProvisionError = class extends Error {
-    };
-  }
-});
-
-// src/tokens.ts
-import * as fs10 from "node:fs";
-import * as os6 from "node:os";
-import * as path11 from "node:path";
-function encodeProjectDir(cwd) {
-  return cwd.replace(/[^A-Za-z0-9]/g, "-");
-}
-var TOKEN_BUCKET_MS, TOKEN_WINDOW_MS, TAIL_CAP, MTIME_SLACK_MS, TokenSampler;
-var init_tokens = __esm({
-  "src/tokens.ts"() {
-    "use strict";
-    TOKEN_BUCKET_MS = 15 * 6e4;
-    TOKEN_WINDOW_MS = 24 * 60 * 6e4;
-    TAIL_CAP = 4 * 1024 * 1024;
-    MTIME_SLACK_MS = 60 * 6e4;
-    TokenSampler = class {
-      projectsDir;
-      now;
-      files = /* @__PURE__ */ new Map();
-      /** agentId → messageId → final usage (last write wins — the dedupe) */
-      messages = /* @__PURE__ */ new Map();
-      constructor(opts) {
-        this.projectsDir = opts?.projectsDir ?? path11.join(os6.homedir(), ".claude", "projects");
-        this.now = opts?.now ?? (() => Date.now());
-      }
-      sample(agents) {
-        const now = this.now();
-        for (const agent of agents) {
-          if (!agent.cwd) continue;
-          const dir = path11.join(this.projectsDir, encodeProjectDir(agent.cwd));
-          let names = [];
-          try {
-            names = fs10.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
-          } catch {
-            continue;
-          }
-          let byMsg = this.messages.get(agent.id);
-          if (!byMsg) {
-            byMsg = /* @__PURE__ */ new Map();
-            this.messages.set(agent.id, byMsg);
-          }
-          for (const name of names) {
-            const file2 = path11.join(dir, name);
-            try {
-              const stat = fs10.statSync(file2);
-              if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
-              this.readAppended(file2, stat.size, byMsg);
-            } catch {
-            }
-          }
-          let sessionDirs = [];
-          try {
-            sessionDirs = fs10.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path11.join(dir, e.name, "subagents"));
-          } catch {
-            sessionDirs = [];
-          }
-          for (const subDir of sessionDirs) {
-            let subNames = [];
-            try {
-              subNames = fs10.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
-            } catch {
-              continue;
-            }
-            for (const name of subNames) {
-              const file2 = path11.join(subDir, name);
-              try {
-                const stat = fs10.statSync(file2);
-                if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
-                this.readAppended(file2, stat.size, byMsg, file2);
-              } catch {
-              }
-            }
-          }
-          for (const [id, m] of byMsg) {
-            if (now - m.ts > TOKEN_WINDOW_MS + TOKEN_BUCKET_MS) byMsg.delete(id);
-          }
-        }
-        return this.series(now, agents);
-      }
-      readAppended(file2, size, byMsg, callFile) {
-        let state = this.files.get(file2);
-        let dropFirstLine = false;
-        if (!state) {
-          state = { offset: Math.max(0, size - TAIL_CAP), partial: "" };
-          dropFirstLine = state.offset > 0;
-          this.files.set(file2, state);
-        }
-        if (size < state.offset) {
-          state.offset = 0;
-          state.partial = "";
-        }
-        if (size <= state.offset) return;
-        const length = size - state.offset;
-        const buffer = Buffer.alloc(length);
-        const fd = fs10.openSync(file2, "r");
-        try {
-          fs10.readSync(fd, buffer, 0, length, state.offset);
-        } finally {
-          fs10.closeSync(fd);
-        }
-        state.offset = size;
-        let text = state.partial + buffer.toString("utf8");
-        if (dropFirstLine) {
-          const nl = text.indexOf("\n");
-          if (nl === -1) {
-            state.partial = "";
-            return;
-          }
-          text = text.slice(nl + 1);
-        }
-        const lines = text.split("\n");
-        state.partial = lines.pop() ?? "";
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const entry = JSON.parse(line);
-            if (entry.type !== "assistant") continue;
-            const usage = entry.message?.usage;
-            if (!usage) continue;
-            const ts = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
-            if (!Number.isFinite(ts)) continue;
-            const id = entry.message?.id ?? entry.uuid ?? `${file2}:${ts}`;
-            byMsg.set(id, {
-              ts,
-              out: usage.output_tokens ?? 0,
-              inTok: usage.input_tokens ?? 0,
-              cacheRead: usage.cache_read_input_tokens ?? 0,
-              ...callFile ? { callFile } : {}
-            });
-          } catch {
-          }
-        }
-      }
-      /**
-       * A pane's summed usage over [from, to] — the per-ticket cost primitive
-       * (main-session AND sub-agent messages: work spawned for a ticket is that
-       * ticket's spend). An approximation by construction: whatever else the pane
-       * did in the interval rides along.
-       */
-      usageBetween(agentId, from, to) {
-        const totals = { out: 0, in: 0, cacheRead: 0 };
-        const byMsg = this.messages.get(agentId);
-        if (!byMsg) return totals;
-        for (const m of byMsg.values()) {
-          if (m.ts < from || m.ts > to) continue;
-          totals.out += m.out;
-          totals.in += m.inTok;
-          totals.cacheRead += m.cacheRead;
-        }
-        return totals;
-      }
-      metaLabels = /* @__PURE__ */ new Map();
-      callLabel(callFile) {
-        const cached2 = this.metaLabels.get(callFile);
-        if (cached2) return cached2;
-        let label = path11.basename(callFile, ".jsonl");
-        try {
-          const meta3 = JSON.parse(
-            fs10.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
-          );
-          if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
-          else if (meta3.agentType) label = meta3.agentType;
-        } catch {
-        }
-        this.metaLabels.set(callFile, label);
-        return label;
-      }
-      series(now, agents) {
-        const bucketCount = Math.floor(TOKEN_WINDOW_MS / TOKEN_BUCKET_MS);
-        const lastBucket = Math.floor(now / TOKEN_BUCKET_MS) * TOKEN_BUCKET_MS;
-        const firstBucket = lastBucket - (bucketCount - 1) * TOKEN_BUCKET_MS;
-        const perAgent = {};
-        const totals24h = {};
-        const subagents = {};
-        for (const agent of agents) {
-          const byMsg = this.messages.get(agent.id);
-          const buckets = Array.from({ length: bucketCount }, (_, i) => ({
-            t: firstBucket + i * TOKEN_BUCKET_MS,
-            out: 0,
-            in: 0,
-            cacheRead: 0
-          }));
-          const totals = { out: 0, in: 0, cacheRead: 0 };
-          const byCall = /* @__PURE__ */ new Map();
-          if (byMsg) {
-            for (const m of byMsg.values()) {
-              const idx = Math.floor((m.ts - firstBucket) / TOKEN_BUCKET_MS);
-              if (idx < 0 || idx >= bucketCount) continue;
-              const b = buckets[idx];
-              b.out += m.out;
-              b.in += m.inTok;
-              b.cacheRead += m.cacheRead;
-              totals.out += m.out;
-              totals.in += m.inTok;
-              totals.cacheRead += m.cacheRead;
-              if (m.callFile) {
-                const call = byCall.get(m.callFile) ?? {
-                  label: this.callLabel(m.callFile),
-                  out: 0,
-                  ts: 0
-                };
-                call.out += m.out;
-                call.ts = Math.max(call.ts, m.ts);
-                byCall.set(m.callFile, call);
-              }
-            }
-          }
-          perAgent[agent.id] = buckets;
-          totals24h[agent.id] = totals;
-          subagents[agent.id] = [...byCall.values()].sort((a, b) => b.ts - a.ts).slice(0, 8);
-        }
-        return { bucketMs: TOKEN_BUCKET_MS, windowMs: TOKEN_WINDOW_MS, perAgent, totals24h, subagents };
-      }
-    };
-  }
-});
-
-// src/serve.ts
-var serve_exports = {};
-__export(serve_exports, {
-  serve: () => serve,
-  snapshotKey: () => snapshotKey
-});
-import * as fs11 from "node:fs";
-import { createServer } from "node:http";
-import * as path12 from "node:path";
-import { fileURLToPath } from "node:url";
-function defaultAssetsDir() {
-  const here = path12.dirname(fileURLToPath(import.meta.url));
-  return [
-    path12.join(here, "assets"),
-    // plugin/dist/server-impl.mjs → sibling assets/
-    path12.join(here, "..", "..", "plugin", "dist", "assets")
-    // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs11.existsSync(d)) ?? null;
-}
-function snapshotKey(snapshot) {
-  const { now: _now, ...rest } = snapshot;
-  return JSON.stringify(rest);
-}
-function serve(opts) {
-  const env = opts?.env ?? process.env;
-  const host = opts?.host ?? "127.0.0.1";
-  const port = opts?.port ?? Number(env.HANDS_PORT ?? 4319);
-  const tickMs = opts?.tickMs ?? 1e3;
-  const booksTickMs = opts?.booksTickMs ?? 6e4;
-  const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
-  const store = new Store({ env });
-  const db = dbPath(env);
-  const principal = loadConfig({ env }).principal.name;
-  const journal = openJournal({ env });
-  let kitchens = [];
-  const tokensTickMs = opts?.tokensTickMs ?? 6e4;
-  const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : void 0);
-  let tokens = null;
-  let taskCosts = {};
-  const refreshTokens = () => {
-    try {
-      const peers = store.listPeers().map((p) => ({ id: p.id, cwd: p.cwd ?? null }));
-      tokens = sampler.sample(peers);
-      const costs = {};
-      const now = Date.now();
-      for (const t of store.listTasks({ limit: 40 })) {
-        if (!t.assignee || t.started_at == null) continue;
-        costs[t.id] = sampler.usageBetween(t.assignee, t.started_at, t.finished_at ?? now).out;
-      }
-      taskCosts = costs;
-    } catch {
-    }
-  };
-  const refreshKitchens = () => {
-    if (!journal) return;
-    try {
-      syncPull(journal.dir);
-      kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
-    } catch {
-    }
-  };
-  const payload = () => {
-    const snapshot = buildSnapshot(store, Date.now(), env);
-    return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, tokens, taskCosts }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
-    };
-  };
-  const clients = /* @__PURE__ */ new Set();
-  let timer = null;
-  let booksTimer = null;
-  let tokensTimer = null;
-  let lastKey = "";
-  let ticks = 0;
-  const tick = () => {
-    let p;
-    try {
-      p = payload();
-    } catch {
-      return;
-    }
-    if (p.key !== lastKey) {
-      lastKey = p.key;
-      for (const res of clients) res.write(`data: ${p.json}
-
-`);
-    } else if (++ticks % 20 === 0) {
-      for (const res of clients) res.write(`:hb
-
-`);
-    }
-  };
-  const server = createServer((req, res) => {
-    const url2 = req.url ?? "/";
-    if (url2 === "/" || url2.startsWith("/index")) {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
-      res.end(SHELL);
-      return;
-    }
-    if (url2.startsWith("/assets/")) {
-      const name = url2.slice("/assets/".length);
-      const type = ASSETS[name];
-      if (!type || !assetsDir) {
-        res.writeHead(404, { "content-type": "text/plain" });
-        res.end("not found");
-        return;
-      }
-      try {
-        const body = fs11.readFileSync(path12.join(assetsDir, name));
-        res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
-        res.end(body);
-      } catch {
-        res.writeHead(404, { "content-type": "text/plain" });
-        res.end("not found");
-      }
-      return;
-    }
-    if (url2.startsWith("/api/events")) {
-      res.writeHead(200, {
-        "content-type": "text/event-stream",
-        "cache-control": "no-store",
-        connection: "keep-alive"
-      });
-      res.write("retry: 2000\n\n");
-      try {
-        const p = payload();
-        lastKey = p.key;
-        res.write(`data: ${p.json}
-
-`);
-      } catch (err) {
-        res.write(`data: ${JSON.stringify({ error: String(err) })}
-
-`);
-      }
-      clients.add(res);
-      if (!timer) timer = setInterval(tick, tickMs);
-      if (journal && !booksTimer) {
-        refreshKitchens();
-        booksTimer = setInterval(refreshKitchens, booksTickMs);
-      }
-      if (!tokensTimer) {
-        refreshTokens();
-        tokensTimer = setInterval(refreshTokens, tokensTickMs);
-      }
-      req.on("close", () => {
-        clients.delete(res);
-        if (clients.size === 0) {
-          if (timer) {
-            clearInterval(timer);
-            timer = null;
-          }
-          if (booksTimer) {
-            clearInterval(booksTimer);
-            booksTimer = null;
-          }
-          if (tokensTimer) {
-            clearInterval(tokensTimer);
-            tokensTimer = null;
-          }
-        }
-      });
-      return;
-    }
-    if (url2.startsWith("/api/state")) {
-      try {
-        res.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" });
-        res.end(payload().json);
-      } catch (err) {
-        res.writeHead(500, { "content-type": "application/json" });
-        res.end(JSON.stringify({ error: String(err) }));
-      }
-      return;
-    }
-    res.writeHead(404, { "content-type": "text/plain" });
-    res.end("not found");
-  });
-  server.requestTimeout = 0;
-  return new Promise((resolve2, reject) => {
-    server.once("error", reject);
-    server.listen(port, host, () => {
-      const addr = server.address();
-      const boundPort = typeof addr === "object" && addr ? addr.port : port;
-      resolve2({
-        port: boundPort,
-        host,
-        url: `http://${host}:${boundPort}/`,
-        close: () => {
-          if (timer) {
-            clearInterval(timer);
-            timer = null;
-          }
-          if (booksTimer) {
-            clearInterval(booksTimer);
-            booksTimer = null;
-          }
-          if (tokensTimer) {
-            clearInterval(tokensTimer);
-            tokensTimer = null;
-          }
-          for (const res of clients) res.end();
-          clients.clear();
-          server.close();
-          store.close();
-        }
-      });
-    });
-  });
-}
-var ASSETS, SHELL;
-var init_serve = __esm({
-  "src/serve.ts"() {
-    "use strict";
-    init_config();
-    init_paths();
-    init_remote();
-    init_snapshot();
-    init_store();
-    init_tokens();
-    ASSETS = {
-      "dashboard.js": "text/javascript; charset=utf-8",
-      "dashboard.css": "text/css; charset=utf-8"
-    };
-    SHELL = `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="icon" href="data:,"/><title>hands</title>
-<link rel="stylesheet" href="/assets/dashboard.css"/>
-</head><body><div id="root"></div>
-<script type="module" src="/assets/dashboard.js"></script></body></html>
-`;
-  }
-});
-
-// src/server.ts
-import * as fs12 from "node:fs";
-import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
 var util;
@@ -10087,8 +7259,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path13, errorMaps, issueData } = params;
-  const fullPath = [...path13, ...issueData.path || []];
+  const { data, path: path10, errorMaps, issueData } = params;
+  const fullPath = [...path10, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -10203,11 +7375,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path13, key) {
+  constructor(parent, value, path10, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path13;
+    this._path = path10;
     this._key = key;
   }
   get path() {
@@ -14130,10 +11302,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path13) {
-  if (!path13)
+function getElementAtPath(obj, path10) {
+  if (!path10)
     return obj;
-  return path13.reduce((acc, key) => acc?.[key], obj);
+  return path10.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -14516,11 +11688,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path13, issues) {
+function prefixIssues(path10, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path13);
+    iss.path.unshift(path10);
     return iss;
   });
 }
@@ -14703,7 +11875,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path13 = []) => {
+  const processError = (error49, path10 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -14713,7 +11885,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path13, ...issue2.path];
+        const fullpath = [...path10, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -14745,8 +11917,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path13 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path13) {
+  const path10 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path10) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -14965,8 +12137,8 @@ var e164 = /^\+[1-9]\d{6,14}$/;
 var dateSource = `(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))`;
 var date = /* @__PURE__ */ new RegExp(`^${dateSource}$`);
 function timeSource(args) {
-  const hhmm2 = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
-  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm2}` : args.precision === 0 ? `${hhmm2}:[0-5]\\d` : `${hhmm2}:[0-5]\\d\\.\\d{${args.precision}}` : `${hhmm2}(?::[0-5]\\d(?:\\.\\d+)?)?`;
+  const hhmm = `(?:[01]\\d|2[0-3]):[0-5]\\d`;
+  const regex = typeof args.precision === "number" ? args.precision === -1 ? `${hhmm}` : args.precision === 0 ? `${hhmm}:[0-5]\\d` : `${hhmm}:[0-5]\\d\\.\\d{${args.precision}}` : `${hhmm}(?::[0-5]\\d(?:\\.\\d+)?)?`;
   return regex;
 }
 function time(args) {
@@ -27152,13 +24324,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path13 = ref.slice(1).split("/").filter(Boolean);
-  if (path13.length === 0) {
+  const path10 = ref.slice(1).split("/").filter(Boolean);
+  if (path10.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path13[0] === defsKey) {
-    const key = path13[1];
+  if (path10[0] === defsKey) {
+    const key = path10[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -30891,7 +28063,7 @@ var Protocol = class {
           return;
         }
         const pollInterval = task2.pollInterval ?? this._options?.defaultTaskPollInterval ?? 1e3;
-        await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+        await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
         options?.signal?.throwIfAborted();
       }
     } catch (error48) {
@@ -30908,7 +28080,7 @@ var Protocol = class {
    */
   request(request, resultSchema, options) {
     const { relatedRequestId, resumptionToken, onresumptiontoken, task, relatedTask } = options ?? {};
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       const earlyReject = (error48) => {
         reject(error48);
       };
@@ -30986,7 +28158,7 @@ var Protocol = class {
           if (!parseResult.success) {
             reject(parseResult.error);
           } else {
-            resolve2(parseResult.data);
+            resolve3(parseResult.data);
           }
         } catch (error48) {
           reject(error48);
@@ -31247,12 +28419,12 @@ var Protocol = class {
       }
     } catch {
     }
-    return new Promise((resolve2, reject) => {
+    return new Promise((resolve3, reject) => {
       if (signal.aborted) {
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
         return;
       }
-      const timeoutId = setTimeout(resolve2, interval);
+      const timeoutId = setTimeout(resolve3, interval);
       signal.addEventListener("abort", () => {
         clearTimeout(timeoutId);
         reject(new McpError(ErrorCode.InvalidRequest, "Request cancelled"));
@@ -32211,7 +29383,7 @@ var McpServer = class {
     let task = createTaskResult.task;
     const pollInterval = task.pollInterval ?? 5e3;
     while (task.status !== "completed" && task.status !== "failed" && task.status !== "cancelled") {
-      await new Promise((resolve2) => setTimeout(resolve2, pollInterval));
+      await new Promise((resolve3) => setTimeout(resolve3, pollInterval));
       const updatedTask = await extra.taskStore.getTask(taskId);
       if (!updatedTask) {
         throw new McpError(ErrorCode.InternalError, `Task ${taskId} not found during polling`);
@@ -32854,1190 +30026,349 @@ var StdioServerTransport = class {
     this.onclose?.();
   }
   send(message) {
-    return new Promise((resolve2) => {
+    return new Promise((resolve3) => {
       const json2 = serializeMessage(message);
       if (this._stdout.write(json2)) {
-        resolve2();
+        resolve3();
       } else {
-        this._stdout.once("drain", resolve2);
+        this._stdout.once("drain", resolve3);
       }
     });
   }
 };
 
-// src/server.ts
-init_board();
-init_config();
-
-// src/github.ts
-import { execFileSync as execFileSync3 } from "node:child_process";
-
-// src/git.ts
+// src/remote.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-function git2(cwd, args) {
+import * as fs6 from "node:fs";
+import * as os3 from "node:os";
+import * as path8 from "node:path";
+
+// src/config.ts
+import * as fs2 from "node:fs";
+import * as os2 from "node:os";
+import * as path2 from "node:path";
+
+// src/paths.ts
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
+// src/digest.ts
+import * as fs3 from "node:fs";
+import * as path3 from "node:path";
+var DIGEST_VERSION = 1;
+var STAMP_PREFIX = "<!-- hands digest v";
+var STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
+
+// src/priorities.ts
+import * as fs4 from "node:fs";
+import * as path4 from "node:path";
+
+// src/snapshot.ts
+import * as path7 from "node:path";
+
+// src/board.ts
+import { createHash as createHash2 } from "node:crypto";
+
+// src/identity.ts
+import * as path5 from "node:path";
+
+// src/board.ts
+import * as path6 from "node:path";
+
+// src/store.ts
+import * as fs5 from "node:fs";
+import { DatabaseSync } from "node:sqlite";
+var ONLINE_WINDOW_MS = 15 * 6e4;
+
+// src/board.ts
+var IDLE_THRESHOLD_MS = 3 * 6e4;
+
+// src/remote.ts
+var GIT_TIMEOUT_MS = 2e4;
+function git(cwd, args) {
+  return execFileSync2("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: GIT_TIMEOUT_MS
+  }).trim();
+}
+function tryGit(cwd, args) {
   try {
-    return execFileSync2("git", args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 3e3
-    }).trim();
+    return git(cwd, args);
   } catch {
     return null;
   }
 }
-function currentBranch(cwd) {
-  const b = git2(cwd, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  return b && b !== "HEAD" ? b : b ?? null;
+function sanitizeSegment(raw, fallback = "unnamed") {
+  const clean = raw.toLowerCase().replace(/[^a-z0-9._-]/g, "-").replace(/^\.+/, "");
+  return clean || fallback;
 }
-function headSha(cwd) {
-  return git2(cwd, ["rev-parse", "HEAD"]);
-}
-function changedFiles(cwd) {
-  const out = git2(cwd, ["status", "--porcelain"]);
-  if (!out) return [];
-  const files = [];
-  for (const line of out.split("\n")) {
-    if (!line.trim()) continue;
-    let p = line.slice(3).trim();
-    const arrow = p.indexOf(" -> ");
-    if (arrow !== -1) p = p.slice(arrow + 4).trim();
-    p = p.replace(/^"(.*)"$/, "$1");
-    if (p) files.push(p);
+function syncPull(dir) {
+  if (tryGit(dir, ["fetch", "-q", "origin"]) === null) return { ok: false, reason: "offline" };
+  if (tryGit(dir, ["rev-parse", "--verify", "origin/main"]) === null) return { ok: true };
+  if (tryGit(dir, ["rev-parse", "--verify", "HEAD"]) === null) {
+    return tryGit(dir, ["reset", "--hard", "-q", "origin/main"]) !== null ? { ok: true } : { ok: false, reason: "conflict" };
   }
-  return files;
-}
-var UNIT = "";
-function newCommits(cwd, sinceSha) {
-  const head = headSha(cwd);
-  if (!head) return [];
-  if (!sinceSha) {
-    const subj = git2(cwd, ["log", "-1", `--format=%s`]) ?? "";
-    return [{ sha: head, subject: subj }];
-  }
-  if (sinceSha === head) return [];
-  const out = git2(cwd, ["log", `--format=%H${UNIT}%s`, `${sinceSha}..HEAD`]);
-  if (out === null) {
-    const subj = git2(cwd, ["log", "-1", `--format=%s`]) ?? "";
-    return [{ sha: head, subject: subj }];
-  }
-  if (!out) return [];
-  return out.split("\n").filter(Boolean).map((line) => {
-    const [sha, subject] = line.split(UNIT);
-    return { sha: sha ?? "", subject: subject ?? "" };
-  });
-}
-function ticketFromBranch(branch) {
-  if (!branch) return null;
-  const m = branch.match(/([A-Za-z]{2,})-(\d+)/);
-  return m ? `${m[1].toUpperCase()}-${m[2]}` : null;
-}
-
-// src/github.ts
-function gh(args, cwd) {
-  return execFileSync3("gh", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 2e4,
-    maxBuffer: 8 * 1024 * 1024
-  });
-}
-var PR_FIELDS = "number,title,author,headRefName,updatedAt,url,files";
-function pollGithub(store, opts) {
-  const now = opts.now ?? Date.now();
-  const limit = String(opts.limit ?? 50);
-  const result = { ok: false, scanned: 0, fromOthers: 0, new: 0, updated: 0 };
-  let login;
-  let repo;
-  try {
-    login = gh(["api", "user", "--jq", ".login"], opts.cwd).trim();
-    repo = gh(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], opts.cwd).trim();
-  } catch (err) {
-    result.error = `gh unavailable: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`;
-    return result;
-  }
-  result.login = login;
-  result.repo = repo;
-  let open = [];
-  let merged = [];
-  try {
-    open = JSON.parse(gh(["pr", "list", "--state", "open", "--json", PR_FIELDS, "--limit", limit], opts.cwd));
-    merged = JSON.parse(
-      gh(["pr", "list", "--state", "merged", "--json", PR_FIELDS, "--limit", "20"], opts.cwd)
+  if (tryGit(dir, ["rebase", "-q", "origin/main"]) !== null) return { ok: true };
+  for (let round = 0; round < 10; round++) {
+    const conflictedRaw = tryGit(dir, ["diff", "--name-only", "--diff-filter=U"]);
+    const conflicted = (conflictedRaw ?? "").split("\n").filter(Boolean);
+    const digestOnly = conflicted.length > 0 && conflicted.every(
+      (f) => f.startsWith("journal/") && (f.endsWith(".md") || f.endsWith("/dashboard.json"))
     );
-  } catch (err) {
-    result.error = `pr list failed: ${err instanceof Error ? err.message.split("\n")[0] : String(err)}`;
-    return result;
-  }
-  const rows = [
-    ...open.map((pr) => ({ pr, state: "open" })),
-    ...merged.map((pr) => ({ pr, state: "merged" }))
-  ];
-  result.scanned = rows.length;
-  for (const { pr, state } of rows) {
-    const author = pr.author?.login ?? "unknown";
-    if (author === login) continue;
-    result.fromOthers++;
-    const res = store.upsertGithubPr({
-      number: pr.number,
-      title: pr.title,
-      author,
-      branch: pr.headRefName ?? null,
-      url: pr.url,
-      state,
-      ticket: ticketFromBranch(`${pr.title} ${pr.headRefName ?? ""}`),
-      files: (pr.files ?? []).map((f) => f.path),
-      updatedAt: Date.parse(pr.updatedAt) || now,
-      now
-    });
-    if (res.isNew) result.new++;
-    else if (res.changed) result.updated++;
-  }
-  result.ok = true;
-  return result;
-}
-
-// src/server.ts
-init_identity();
-
-// src/notify.ts
-init_paths();
-import * as fs4 from "node:fs";
-function notify(recipients, meta3, env = process.env) {
-  const iso = new Date(meta3.now ?? Date.now()).toISOString();
-  const subject = (meta3.subject ?? "").replace(/[\t\n\r]/g, " ");
-  const line = `${iso}	${meta3.from}	${subject}
-`;
-  for (const recipient of recipients) {
-    try {
-      fs4.appendFileSync(notifyPath(recipient, env), line, { mode: 384 });
-      fs4.chmodSync(notifyPath(recipient, env), 384);
-    } catch {
+    if (!digestOnly) break;
+    if (tryGit(dir, ["checkout", "--theirs", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["add", "--", ...conflicted]) === null) break;
+    if (tryGit(dir, ["-c", "core.editor=true", "rebase", "--continue"]) !== null) {
+      return { ok: true };
     }
   }
+  tryGit(dir, ["rebase", "--abort"]);
+  return { ok: false, reason: "conflict" };
 }
-
-// src/server.ts
-init_paths();
-init_priorities();
-
-// src/memory.ts
-init_paths();
-import { createHash as createHash3 } from "node:crypto";
-import * as fs6 from "node:fs";
-import * as os3 from "node:os";
-import * as path6 from "node:path";
-function memoryDir(env = process.env, cwd = process.cwd()) {
-  const override = env.HANDS_MEMORY_DIR?.trim();
-  if (override) return override;
-  const root = repoInfo(cwd)?.repoRoot ?? cwd;
-  return path6.join(os3.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
-}
-function descriptionOf(body) {
-  const m = body.match(/^description:\s*(.+)$/m);
-  return m ? m[1].trim() : "";
-}
-function scanMemory(env = process.env) {
-  const dir = memoryDir(env);
-  let names;
+function listProjects(dir) {
   try {
-    names = fs6.readdirSync(dir);
+    return fs6.readdirSync(path8.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
-  const entries = [];
-  for (const file2 of names) {
-    if (!file2.endsWith(".md") || file2 === "MEMORY.md") continue;
-    try {
-      const body = fs6.readFileSync(path6.join(dir, file2), "utf8");
-      entries.push({
-        name: file2.replace(/\.md$/, ""),
-        hash: createHash3("sha1").update(body).digest("hex").slice(0, 12),
-        description: descriptionOf(body)
-      });
-    } catch {
-    }
-  }
-  return entries;
 }
 
-// src/publish.ts
-var MAX_FILES = 50;
-function runPublish(store, opts) {
-  const env = opts.env ?? process.env;
-  const now = opts.now ?? Date.now();
-  const branch = currentBranch(opts.cwd);
-  const files = changedFiles(opts.cwd).slice(0, MAX_FILES);
-  const ticket = ticketFromBranch(branch);
-  store.setStatus({
-    id: opts.agentId,
-    cwd: opts.cwd,
-    pid: opts.pid ?? process.pid,
-    branch,
-    files,
-    ticket,
-    now
-  });
-  let commitsJournaled = 0;
-  const wmKey = "last_commit_sha";
-  const prevSha = store.getWatermark(opts.agentId, wmKey);
-  const head = headSha(opts.cwd);
-  if (prevSha === null) {
-    if (head) store.setWatermark(opts.agentId, wmKey, head);
-  } else {
-    for (const c of newCommits(opts.cwd, prevSha)) {
-      if (c.sha && !store.journalHasRef("commit", c.sha)) {
-        store.journalAdd({ agentId: opts.agentId, kind: "commit", ref: c.sha, text: c.subject, now });
-        commitsJournaled++;
-      }
-    }
-    if (head) store.setWatermark(opts.agentId, wmKey, head);
-  }
-  let memoriesJournaled = 0;
-  for (const entry of scanMemory(env)) {
-    const key = `mem:${entry.name}`;
-    const prevHash = store.getWatermark("*", key);
-    if (prevHash === null) {
-      store.setWatermark("*", key, entry.hash);
-      continue;
-    }
-    if (prevHash !== entry.hash) {
-      store.journalAdd({
-        agentId: opts.agentId,
-        kind: "memory",
-        ref: entry.name,
-        text: entry.description || entry.name,
-        now
-      });
-      store.setWatermark("*", key, entry.hash);
-      memoriesJournaled++;
-    }
-  }
-  return { agentId: opts.agentId, branch, fileCount: files.length, commitsJournaled, memoriesJournaled };
-}
-
-// src/server.ts
-init_remote();
-init_store();
-var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
-var POLL_INTERVAL_MS = 250;
-var MAX_WAIT_SECONDS = 120;
-function sleep(ms) {
-  return new Promise((resolve2) => setTimeout(resolve2, ms));
-}
+// src/books-server.ts
 function asToolResult(value) {
   return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
 }
-function presentMessage(row) {
-  return {
-    id: row.id,
-    from: row.from_id,
-    to: row.to_id ?? "*",
-    subject: row.subject ?? void 0,
-    body: row.body,
-    thread: row.thread_id ?? void 0,
-    createdAt: new Date(row.created_at).toISOString()
-  };
+function errorResult(error48) {
+  return { ...asToolResult({ ok: false, error: error48 }), isError: true };
 }
-function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
-  if (!isStation(agentId)) return "";
-  const craft = store.getFocus(agentId);
-  if (!craft) {
-    return "\n\nYou hold no craft yet \u2014 the expo assigns one via hands_focus. Until then work tickets generically; once assigned, your craft's book + skill arrive via hands_paths.";
-  }
-  const files = craftFiles(craft, env, cwd);
-  const read = (file2, cap = 6e3) => {
-    try {
-      const body = fs12.readFileSync(file2, "utf8").trim();
-      if (!body) return null;
-      const points = Array.from(body);
-      return points.length <= cap ? body : `${points.slice(0, cap).join("")}
-\u2026(truncated \u2014 trim this file)`;
-    } catch {
-      return null;
-    }
-  };
-  const skill = read(files.skill);
-  const book = read(files.book);
-  const header = `
-
-## Your craft: ${craft}
-The craft is portable \u2014 if the expo reassigns yours mid-session you'll get a waking message; re-read your files via hands_paths (they always resolve from your CURRENT craft). If the book's \`last held\` stamp is not today, READ IN before cooking: what shipped in your covered area since then (your station skill's read-in step).`;
-  if (!skill && !book) {
-    return `${header}
-No book or skill written for this craft yet \u2014 you are founding it.`;
-  }
-  return header + (skill ? `
-
-### Craft skill (self-maintained \u2014 ${files.skill})
-${skill}` : "") + (book ? `
-
-### Prep book (self-maintained \u2014 ${files.book})
-${book}` : "");
+var NOT_CONFIGURED = "not configured \u2014 HANDS_BOOKS_DIR is unset. Run `hands mcp install` from the repo whose books you want to browse (requires books already attached via `hands books <url>`).";
+function resolveBooksConfig(env = process.env) {
+  const dir = env.HANDS_BOOKS_DIR?.trim();
+  if (!dir) return null;
+  return { dir, project: env.HANDS_BOOKS_PROJECT?.trim() || null };
 }
-function buildServer(store, agentId, config2) {
-  const cfg = config2 ?? loadConfig();
-  const principal = cfg.principal.name;
-  const resolveRecipient = (ref) => {
-    const id = resolveAgentRef(ref);
-    if (id === "*" || isExpo(id) || isStation(id)) return { id };
-    const peers = new Set(store.listPeers().map((p) => p.id));
-    if (peers.has(id)) return { id };
-    const byFocus = store.findByFocus(id);
-    if (byFocus.length === 1) return { id: byFocus[0] };
-    if (byFocus.length > 1) {
-      return { error: `focus label "${ref}" is ambiguous \u2014 matches: ${byFocus.join(", ")}` };
-    }
-    return { id };
-  };
-  const deliverWake = (recipients, meta3) => {
-    notify(recipients, meta3);
-    store.recordWakes(recipients);
-    store.markWakePending(recipients);
-  };
+function requireProject(cfg, input) {
+  const project = input?.trim() || cfg.project;
+  if (!project) return { error: "no project given and HANDS_BOOKS_PROJECT is not set \u2014 pass `project`" };
+  return sanitizeSegment(project);
+}
+function journalPath(dir, ...segments) {
+  const root = path9.resolve(dir, "journal");
+  const full = path9.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
+  if (full !== root && !full.startsWith(`${root}${path9.sep}`)) return null;
+  return full;
+}
+function listHandles(dir, project) {
+  const p = journalPath(dir, project);
+  if (!p) return [];
+  try {
+    return fs7.readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch {
+    return [];
+  }
+}
+function listDigestDates(dir, project, handle) {
+  const p = journalPath(dir, project, handle);
+  if (!p) return [];
+  try {
+    return fs7.readdirSync(p).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
+  } catch {
+    return [];
+  }
+}
+function listCraftSlugs(dir, project, handle) {
+  const p = journalPath(dir, project, handle, "crafts");
+  if (!p) return [];
+  try {
+    const files = fs7.readdirSync(p);
+    const slugs = new Set(
+      files.filter((f) => f.endsWith(".md")).map((f) => f.endsWith(".skill.md") ? f.slice(0, -".skill.md".length) : f.slice(0, -".md".length))
+    );
+    return [...slugs].sort();
+  } catch {
+    return [];
+  }
+}
+function readCraftFile(file2) {
+  try {
+    return fs7.readFileSync(file2, "utf8");
+  } catch {
+    return null;
+  }
+}
+function buildBooksServer(cfg) {
   const server = new McpServer(
-    { name: "hands", version: "0.1.0" },
+    { name: "hands-books", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " Keep your CRAFT's files current (paths in hands_paths): its PREP BOOK (distilled knowledge \u2014 rewrite, don't append; \u2264150 lines) and its CRAFT SKILL (its operating manual). Update them on idle wakes and before any /compact \u2014 the craft, not the seat, is how expertise survives reboots, machine moves, and reassignment." : "") + craftContext(agentId, store)
+      instructions: cfg ? `Read-only browser for the hands books \u2014 a durable journal of kitchen activity. Scoped to ${cfg.dir}${cfg.project ? ` (default project "${cfg.project}")` : ""}. Digests are pre-rendered markdown, one per contributor per day; message bodies are never included (a content policy of the books themselves, not this server). Start with books_list_projects / books_list_handles, then books_read_digest. books_list_crafts / books_read_craft browse every handle's crafts in the project (the shared roster read \u2014 each kitchen still writes only its own copy).` : NOT_CONFIGURED
     }
   );
   server.registerTool(
-    "hands_send",
+    "books_list_projects",
     {
-      title: "Send a message to another agent",
-      description: `Enqueue a message to another agent on this repo's bus. \`to\` is a peer agent id (expo, station-2, \u2026 \u2014 see hands_peers), the principal ("${principal}"), or "*" to broadcast to everyone. Do not include secrets. Waking the recipient costs a full model turn \u2014 for an FYI / status update that needs no immediate action, pass wake:false so it is delivered on their next natural drain instead.`,
-      inputSchema: {
-        to: external_exports3.string().describe('recipient agent id, or "*" for broadcast'),
-        body: external_exports3.string(),
-        subject: external_exports3.string().optional(),
-        thread: external_exports3.string().optional(),
-        wake: external_exports3.boolean().optional().describe("false = deliver silently on the recipient's next drain (no wake). Default true.")
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const resolved = resolveRecipient(input.to);
-      if ("error" in resolved) {
-        return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
-      }
-      const to = resolved.id;
-      const broadcast = to === "*";
-      if (cfg.topology === "strict-hub" && isStation(agentId)) {
-        if (broadcast) {
-          return {
-            ...asToolResult({
-              ok: false,
-              error: "Only the expo may broadcast. Send to the expo instead \u2014 it relays what the team needs."
-            }),
-            isError: true
-          };
-        }
-        if (isStation(to)) {
-          return {
-            ...asToolResult({
-              ok: false,
-              error: "Direct station-to-station messaging is disabled. Route via the expo \u2014 use hands_ask for a decision, or hands_send({to:'expo'}) for a handoff."
-            }),
-            isError: true
-          };
-        }
-      }
-      const id = store.insertMessage({
-        from: agentId,
-        to: broadcast ? null : to,
-        body: input.body,
-        subject: input.subject ?? null,
-        thread: input.thread ?? null
-      });
-      const recipients = broadcast ? store.listPeers().map((p) => p.id).filter((peerId) => peerId !== agentId) : [to];
-      const wake = input.wake ?? true;
-      const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
-      if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
-      return asToolResult({
-        ok: true,
-        id,
-        to: broadcast ? "*" : to,
-        delivered: recipients,
-        woken
-      });
-    }
-  );
-  server.registerTool(
-    "hands_receive",
-    {
-      title: "Receive messages addressed to me",
-      description: "Return messages addressed to you (directed + broadcast) since your read cursor. Long-polls up to wait_seconds, returning as soon as a message lands. Advances your cursor when mark_read is true.",
-      inputSchema: {
-        wait_seconds: external_exports3.number().int().min(0).max(MAX_WAIT_SECONDS).optional(),
-        mark_read: external_exports3.boolean().optional()
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      const waitSeconds = input.wait_seconds ?? 25;
-      const markRead = input.mark_read ?? true;
-      const deadline = Date.now() + waitSeconds * 1e3;
-      const cursor = store.getCursor(agentId);
-      if (markRead) store.clearWakePending(agentId);
-      let messages = [];
-      for (; ; ) {
-        store.touch(agentId);
-        messages = store.messagesSince(agentId, cursor);
-        if (messages.length > 0 || Date.now() >= deadline) break;
-        await sleep(POLL_INTERVAL_MS);
-      }
-      if (markRead && messages.length > 0) {
-        store.setCursor(agentId, messages[messages.length - 1].id);
-      }
-      return asToolResult({
-        agent: agentId,
-        count: messages.length,
-        cursor: markRead && messages.length > 0 ? messages[messages.length - 1].id : cursor,
-        messages: messages.map(presentMessage)
-      });
-    }
-  );
-  server.registerTool(
-    "hands_peers",
-    {
-      title: "List registered worktree agents",
-      description: "List every agent registered on this machine's bus and whether it is online (heartbeat within the last 60s).",
+      title: "List projects in the books",
+      description: "Project keys (code repos) present in this books clone.",
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     },
     async () => {
-      store.touch(agentId);
-      const peers = store.listPeers().map((p) => ({
-        id: p.id,
-        focus: p.focus ?? void 0,
-        online: p.online,
-        cwd: p.cwd,
-        pid: p.pid,
-        lastSeenAt: new Date(p.last_seen_at).toISOString(),
-        isSelf: p.id === agentId
-      }));
-      return asToolResult({ me: agentId, peers });
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      return asToolResult({ projects: listProjects(cfg.dir), default: cfg.project });
     }
   );
   server.registerTool(
-    "hands_history",
+    "books_list_handles",
     {
-      title: "Read past messages",
-      description: "Read past messages (audit). Optionally filter by peer (messages to/from that agent) or thread id. Returns up to `limit` most-recent messages in chronological order.",
+      title: "List contributors (handles) for a project",
+      description: "Handles (contributors) with a namespace under the given project.",
+      inputSchema: { project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT") },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async ({ project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      return asToolResult({ project: p, handles: listHandles(cfg.dir, p) });
+    }
+  );
+  server.registerTool(
+    "books_list_days",
+    {
+      title: "List digest days for a handle",
+      description: "Dates (YYYY-MM-DD) with a rendered digest for one handle, newest first.",
       inputSchema: {
-        peer: external_exports3.string().optional(),
-        thread: external_exports3.string().optional(),
-        limit: external_exports3.number().int().min(1).max(500).optional()
+        handle: external_exports3.string(),
+        project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT")
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     },
-    async (input) => {
-      store.touch(agentId);
-      const rows = store.history({
-        peer: input.peer,
-        thread: input.thread,
-        limit: input.limit
-      });
-      return asToolResult({ count: rows.length, messages: rows.map(presentMessage) });
+    async ({ handle, project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      const h = sanitizeSegment(handle);
+      return asToolResult({ project: p, handle: h, days: listDigestDates(cfg.dir, p, h) });
     }
   );
   server.registerTool(
-    "hands_board",
+    "books_read_index",
     {
-      title: "Read the standup board",
-      description: "Snapshot of every agent: who's active (branch + last-active age), recent learnings (commits + memory writes), and any file/ticket collisions with you. Always includes a cheap `stateHash` fingerprint \u2014 if it matches your last pass, nothing moved and you can skip a deeper re-scan. Pass full:true to bundle active tasks + open questions + the priorities digest into this ONE read (instead of separate tasks/questions/priorities calls).",
+      title: "Read a handle's digest index",
+      description: "The per-handle README.md \u2014 a newest-first index of digest days with one-line summaries.",
       inputSchema: {
-        full: external_exports3.boolean().optional().describe("true = also bundle active tasks, open questions, and the priorities digest")
+        handle: external_exports3.string(),
+        project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT")
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     },
-    async (input) => {
-      store.touch(agentId);
-      const now = Date.now();
-      const wakes = store.wakeCounts(now);
-      const peers = store.listPeers(now).map((p2) => {
-        const activeAge = p2.last_active ? now - p2.last_active : null;
-        return {
-          id: p2.id,
-          focus: p2.focus ?? void 0,
-          isSelf: p2.id === agentId,
-          online: p2.online,
-          branch: p2.branch ?? void 0,
-          state: activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle",
-          lastActive: p2.last_active ? new Date(p2.last_active).toISOString() : void 0,
-          // wake accounting: each wake re-processes this agent's whole context,
-          // so cost ≈ wakes × context size. Spot the chatty hotspots here.
-          wakesLastHour: wakes.get(p2.id)?.lastHour ?? 0,
-          wakes24h: wakes.get(p2.id)?.last24h ?? 0
-        };
-      });
-      const journal = store.journalSince(0, 20).map((j) => ({
-        by: j.agent_id,
-        kind: j.kind,
-        text: j.text,
-        at: new Date(j.created_at).toISOString()
-      }));
-      const board = buildBoard(store, { agentId, since: now, advance: false, now });
-      const base = {
-        me: agentId,
-        stateHash: computeStateHash(store, now),
-        peers,
-        recentJournal: journal,
-        collisions: board.collisions
-      };
-      if (!input.full) return asToolResult(base);
-      const activeTasks = store.listTasks({ active: true }).map((t) => ({
-        id: t.id,
-        title: t.title,
-        assignee: t.assignee ?? "queue",
-        state: t.state,
-        priority: t.priority_ref ?? void 0,
-        dish: t.dish ?? void 0,
-        updatedAt: new Date(t.updated_at).toISOString()
-      }));
-      const openQuestions = store.listQuestions({ state: "open" }).map((q) => ({
-        id: q.id,
-        asker: q.asker,
-        question: q.question,
-        context: q.context ?? void 0,
-        askedAt: new Date(q.created_at).toISOString()
-      }));
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
-      const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
-      return asToolResult({
-        ...base,
-        activeTasks,
-        openQuestions,
-        priorities: {
-          items: p.items,
-          set: p.items.length > 0,
-          stale: confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS
-        }
-      });
+    async ({ handle, project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      const h = sanitizeSegment(handle);
+      const file2 = journalPath(cfg.dir, p, h, "README.md");
+      try {
+        if (!file2) throw new Error("path escaped the journal root");
+        return asToolResult({ project: p, handle: h, markdown: fs7.readFileSync(file2, "utf8") });
+      } catch {
+        return errorResult(`no index for ${p}/${h} \u2014 check books_list_handles`);
+      }
     }
   );
   server.registerTool(
-    "hands_paths",
+    "books_read_digest",
     {
-      title: "Where does this agent resolve? (paths + identity + journal health)",
-      description: "Your canonical identity and this repo's bus locations: agentId, coordinationDir, db, your .notify file (arm your Monitor on it), repo root/slug, and the durable-journal sync health. The bus is scoped per repo \u2014 always read paths from here, never guess them.",
+      title: "Read one day's digest",
+      description: "One handle's rendered digest markdown for one date (YYYY-MM-DD).",
+      inputSchema: {
+        handle: external_exports3.string(),
+        date: external_exports3.string().describe("YYYY-MM-DD"),
+        project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async ({ handle, date: date5, project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date5)) return errorResult("date must be YYYY-MM-DD");
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      const h = sanitizeSegment(handle);
+      const file2 = journalPath(cfg.dir, p, h, `${date5}.md`);
+      try {
+        if (!file2) throw new Error("path escaped the journal root");
+        return asToolResult({ project: p, handle: h, date: date5, markdown: fs7.readFileSync(file2, "utf8") });
+      } catch {
+        return errorResult(`no digest for ${p}/${h}/${date5} \u2014 check books_list_days`);
+      }
+    }
+  );
+  server.registerTool(
+    "books_list_crafts",
+    {
+      title: "List crafts across handles",
+      description: "Every craft slug held by any handle in the project \u2014 the shared craft roster read (each kitchen still writes only its own copy; see books_read_craft for the content).",
+      inputSchema: { project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT") },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async ({ project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      const crafts = listHandles(cfg.dir, p).flatMap(
+        (handle) => listCraftSlugs(cfg.dir, p, handle).map((slug) => ({ handle, slug }))
+      );
+      return asToolResult({ project: p, crafts });
+    }
+  );
+  server.registerTool(
+    "books_read_craft",
+    {
+      title: "Read one handle's craft book + skill",
+      description: "A craft's prep book and skill file for one handle \u2014 either half may be null if that file doesn't exist.",
+      inputSchema: {
+        handle: external_exports3.string(),
+        slug: external_exports3.string().describe('craft slug, e.g. from books_list_crafts \u2014 "ordering-api"'),
+        project: external_exports3.string().optional().describe("defaults to HANDS_BOOKS_PROJECT")
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async ({ handle, slug, project }) => {
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      const p = requireProject(cfg, project);
+      if (typeof p !== "string") return errorResult(p.error);
+      const h = sanitizeSegment(handle);
+      const s = sanitizeSegment(slug);
+      const craftsDir = journalPath(cfg.dir, p, h, "crafts");
+      if (!craftsDir) return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
+      const book = readCraftFile(path9.join(craftsDir, `${s}.md`));
+      const skill = readCraftFile(path9.join(craftsDir, `${s}.skill.md`));
+      if (book === null && skill === null) {
+        return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
+      }
+      return asToolResult({ project: p, handle: h, slug: s, book, skill });
+    }
+  );
+  server.registerTool(
+    "books_sync",
+    {
+      title: "Pull the latest books",
+      description: "Fetch + integrate the latest from the books remote into the local clone (read-only towards the remote \u2014 this never pushes).",
       inputSchema: {},
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
     },
     async () => {
-      store.touch(agentId);
-      return asToolResult(pathsReport(agentId, cfg, store.getFocus(agentId)));
+      if (!cfg) return errorResult(NOT_CONFIGURED);
+      return asToolResult(syncPull(cfg.dir));
     }
   );
-  server.registerTool(
-    "hands_ask",
-    {
-      title: "Escalate an open question to the expo",
-      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them.`,
-      inputSchema: {
-        question: external_exports3.string(),
-        context: external_exports3.string().optional().describe("what's blocked, options, your lean")
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const id = store.askQuestion({ asker: agentId, question: input.question, context: input.context ?? null });
-      deliverWake(["expo"], { from: agentId, subject: "question" });
-      return asToolResult({ ok: true, id, routedTo: "expo" });
-    }
-  );
-  server.registerTool(
-    "hands_questions",
-    {
-      title: "List questions on the bus",
-      description: "List questions. Expo inbox = state 'open'. States: open | needs_human | answered. Omit state for all recent.",
-      inputSchema: {
-        state: external_exports3.enum(["open", "needs_human", "answered"]).optional(),
-        limit: external_exports3.number().int().min(1).max(200).optional()
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const rows = store.listQuestions({ state: input.state, limit: input.limit });
-      return asToolResult({
-        count: rows.length,
-        questions: rows.map((q) => ({
-          id: q.id,
-          asker: q.asker,
-          question: q.question,
-          context: q.context ?? void 0,
-          state: q.state,
-          answer: q.answer ?? void 0,
-          resolvedBy: q.resolved_by ?? void 0,
-          priority: q.priority_ref ?? void 0,
-          recommendation: q.recommendation ?? void 0,
-          askedAt: new Date(q.created_at).toISOString()
-        }))
-      });
-    }
-  );
-  server.registerTool(
-    "hands_answer",
-    {
-      title: "Answer a question (resolve it)",
-      description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'expo' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
-      inputSchema: {
-        id: external_exports3.number().int(),
-        answer: external_exports3.string(),
-        by: external_exports3.enum(["expo", "human"]).optional(),
-        priority: external_exports3.string().optional().describe("the priority this maps to")
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const q = store.getQuestion(input.id);
-      if (!q) return { ...asToolResult({ ok: false, error: "no such question" }), isError: true };
-      store.answerQuestion({
-        id: input.id,
-        answer: input.answer,
-        resolvedBy: input.by ?? "expo",
-        priorityRef: input.priority ?? null
-      });
-      deliverWake([q.asker], { from: "expo", subject: "answer" });
-      return asToolResult({ ok: true, id: input.id, asker: q.asker });
-    }
-  );
-  server.registerTool(
-    "hands_escalate",
-    {
-      title: "Bubble a question up to the principal",
-      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). Include your recommendation and the priority it touches. Then present it to him and, once he decides, call hands_answer with by='human'.`,
-      inputSchema: {
-        id: external_exports3.number().int(),
-        recommendation: external_exports3.string().optional(),
-        priority: external_exports3.string().optional()
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const q = store.getQuestion(input.id);
-      if (!q) return { ...asToolResult({ ok: false, error: "no such question" }), isError: true };
-      store.escalateQuestion({
-        id: input.id,
-        recommendation: input.recommendation ?? null,
-        priorityRef: input.priority ?? null
-      });
-      return asToolResult({ ok: true, id: input.id });
-    }
-  );
-  server.registerTool(
-    "hands_rec_outcome",
-    {
-      title: "Record a recommendation's hindsight outcome (expo self-audit)",
-      description: `The expo's introspection. After one of your recommendations has played out, record whether it HELD UP ('validated') or was OVERTURNED by a later finding ('contradicted'), with a short reason. This grades YOUR OWN judgment in hindsight \u2014 not whether ${principal} accepted the advice \u2014 and feeds the expo-effectiveness score on the dashboard. Run it as part of your routine: revisit recent recommendations, and when a station's later finding overturns a call you made, mark it 'contradicted' honestly (that is the signal ${principal} wants to see degrade the score).`,
-      inputSchema: {
-        id: external_exports3.number().int().describe("the question/recommendation id to grade"),
-        outcome: external_exports3.enum(["validated", "contradicted"]),
-        note: external_exports3.string().optional().describe("short reason the call held up or was overturned")
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const q = store.getQuestion(input.id);
-      if (!q) return { ...asToolResult({ ok: false, error: "no such question" }), isError: true };
-      store.setQuestionOutcome({ id: input.id, outcome: input.outcome, note: input.note ?? null });
-      return asToolResult({ ok: true, id: input.id, outcome: input.outcome });
-    }
-  );
-  server.registerTool(
-    "hands_priorities",
-    {
-      title: "Read or set the menu \u2014 the expo's ranked priorities",
-      description: `No args: read the current ranked priorities (+ whether they're stale/unset). Pass \`set\` to replace them (ranked, most-important first). Pass confirm=true to mark the existing list still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
-      inputSchema: {
-        set: external_exports3.array(external_exports3.string()).optional(),
-        confirm: external_exports3.boolean().optional()
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const now = Date.now();
-      if (input.set) {
-        writePriorities(input.set);
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-        store.journal("priorities.set", { items: input.set, at: now });
-      } else if (input.confirm) {
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-      }
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
-      const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
-      const stale = confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS;
-      return asToolResult({
-        items: p.items,
-        set: p.items.length > 0,
-        confirmedAt: confirmedAt ? new Date(confirmedAt).toISOString() : null,
-        stale,
-        needsInput: p.items.length === 0
-      });
-    }
-  );
-  server.registerTool(
-    "hands_delegate",
-    {
-      title: "Fire a ticket to a station (delegate a task)",
-      description: 'Hand a ticket (a unit of real work) to a station \u2014 expo use. `to` = a station agent id (station-1, station-2, \u2026), or omit for the unassigned rail ("any available station"). The first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.',
-      inputSchema: {
-        title: external_exports3.string(),
-        body: external_exports3.string().optional(),
-        to: external_exports3.string().optional(),
-        priority: external_exports3.string().optional(),
-        dish: external_exports3.string().optional().describe('the DISH this ticket helps assemble \u2014 external ref ("ENG-1476", "PR #2455")')
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      if (cfg.topology === "strict-hub" && isStation(agentId)) {
-        return {
-          ...asToolResult({
-            ok: false,
-            error: "Stations don't fire tickets. Hand work upward instead: hands_ask for a decision, or hands_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
-          }),
-          isError: true
-        };
-      }
-      let assignee = null;
-      if (input.to) {
-        const resolved = resolveRecipient(input.to);
-        if ("error" in resolved) {
-          return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
-        }
-        assignee = resolved.id;
-      }
-      const id = store.createTask({
-        createdBy: agentId,
-        assignee,
-        title: input.title,
-        body: input.body ?? null,
-        priority: input.priority ?? null,
-        dish: input.dish ?? null
-      });
-      if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
-      return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue" });
-    }
-  );
-  server.registerTool(
-    "hands_tasks",
-    {
-      title: "List delegated tasks",
-      description: "List tickets (tasks). A station checks its own with assignee=<me>; the expo omits filters or uses active=true. States: open | assigned | in_progress | returned | done | cancelled.",
-      inputSchema: {
-        state: external_exports3.enum(["open", "assigned", "in_progress", "returned", "done", "cancelled"]).optional(),
-        assignee: external_exports3.string().optional(),
-        active: external_exports3.boolean().optional().describe("only open/assigned/in_progress/returned"),
-        limit: external_exports3.number().int().min(1).max(200).optional()
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const rows = store.listTasks({
-        state: input.state,
-        assignee: input.assignee,
-        active: input.active,
-        limit: input.limit
-      });
-      return asToolResult({
-        count: rows.length,
-        tasks: rows.map((t) => ({
-          id: t.id,
-          title: t.title,
-          body: t.body ?? void 0,
-          from: t.created_by,
-          assignee: t.assignee ?? "queue",
-          state: t.state,
-          result: t.result ?? void 0,
-          priority: t.priority_ref ?? void 0,
-          dish: t.dish ?? void 0,
-          updatedAt: new Date(t.updated_at).toISOString()
-        }))
-      });
-    }
-  );
-  server.registerTool(
-    "hands_task_update",
-    {
-      title: "Advance a ticket (fire / plate / serve / 86)",
-      description: "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), 'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it.",
-      inputSchema: {
-        id: external_exports3.number().int(),
-        state: external_exports3.enum(["in_progress", "returned", "done", "cancelled"]),
-        result: external_exports3.string().optional().describe("the artifact/summary when returning")
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const task = store.getTask(input.id);
-      if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
-      const claim = input.state === "in_progress" && !task.assignee ? agentId : null;
-      store.updateTaskState({
-        id: input.id,
-        state: input.state,
-        assignee: claim,
-        result: input.result ?? null
-      });
-      if (input.state === "returned") {
-        deliverWake([task.created_by], { from: agentId, subject: "task returned" });
-      }
-      return asToolResult({ ok: true, id: input.id, state: input.state });
-    }
-  );
-  server.registerTool(
-    "hands_todos",
-    {
-      title: "Read the principal's to-do list",
-      description: `List the personal to-do items the expo is tracking for ${principal}. No args: everything (open first). Pass state to filter: open | done | dismissed. Read-only \u2014 the expo manages the list via hands_todo_add / hands_todo_update.`,
-      inputSchema: {
-        state: external_exports3.enum(["open", "done", "dismissed"]).optional(),
-        limit: external_exports3.number().int().min(1).max(200).optional()
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const rows = store.listTodos({ state: input.state, limit: input.limit });
-      const rank = (s) => s === "open" ? 0 : 1;
-      rows.sort((a, b) => rank(a.state) - rank(b.state) || b.updated_at - a.updated_at);
-      return asToolResult({
-        count: rows.length,
-        open: rows.filter((t) => t.state === "open").length,
-        todos: rows.map((t) => ({
-          id: t.id,
-          title: t.title,
-          detail: t.detail ?? void 0,
-          state: t.state,
-          source: t.source,
-          origin: t.origin_ref ?? void 0,
-          priority: t.priority_ref ?? void 0,
-          doneSignal: t.done_signal ?? void 0,
-          updatedAt: new Date(t.updated_at).toISOString()
-        }))
-      });
-    }
-  );
-  server.registerTool(
-    "hands_todo_add",
-    {
-      title: "Add an item to the principal's to-do list",
-      description: `Add a concrete thing only ${principal} can personally do (a decision, a merge/review click, a reply he owes) to his to-do list. Expo-managed. Idempotent while open: pass a stable \`dedupKey\` (e.g. the PR#, question id, or a normalized title) so re-deriving the same item each pass never duplicates it \u2014 an existing open match is returned untouched. Set \`origin\` (what surfaced it) and \`priority\` (which ranked priority it maps to) for provenance.`,
-      inputSchema: {
-        title: external_exports3.string(),
-        detail: external_exports3.string().optional(),
-        dedupKey: external_exports3.string().optional().describe("stable identity to prevent re-adds while open"),
-        origin: external_exports3.string().optional().describe("what spawned it \u2014 PR#, question id, priority text"),
-        priority: external_exports3.string().optional(),
-        source: external_exports3.enum(["expo", "human"]).optional()
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const { id, isNew } = store.createTodo({
-        title: input.title,
-        detail: input.detail ?? null,
-        dedupKey: input.dedupKey ?? null,
-        originRef: input.origin ?? null,
-        priority: input.priority ?? null,
-        source: input.source ?? "expo"
-      });
-      return asToolResult({ ok: true, id, isNew });
-    }
-  );
-  server.registerTool(
-    "hands_todo_update",
-    {
-      title: "Cross off / dismiss / re-open a to-do",
-      description: "Change a to-do's state. 'done' crosses it off \u2014 pass `doneSignal` describing HOW you inferred completion (e.g. 'PR #2354 merged', 'commit abc123', 'escalation #7 answered') so the auto-cross-off stays transparent and reversible. 'dismissed' drops an item that's no longer relevant; 'open' re-opens one.",
-      inputSchema: {
-        id: external_exports3.number().int(),
-        state: external_exports3.enum(["open", "done", "dismissed"]),
-        doneSignal: external_exports3.string().optional().describe("how completion was inferred (for 'done')")
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const todo = store.getTodo(input.id);
-      if (!todo) return { ...asToolResult({ ok: false, error: "no such todo" }), isError: true };
-      store.updateTodoState({ id: input.id, state: input.state, doneSignal: input.doneSignal ?? null });
-      return asToolResult({ ok: true, id: input.id, state: input.state });
-    }
-  );
-  server.registerTool(
-    "hands_focus",
-    {
-      title: "Assign a station's craft (set/swap its focus label)",
-      description: `Assign a station its CRAFT \u2014 the named, portable specialization it holds ("saucier", "ordering API"). The craft, not the seat, owns the prep book + craft skill under crafts/, so reassigning moves the whole skillset and history to that station: an existing name restores its files, a new name founds fresh ones. Shown on the board and in the books, and addressable in hands_send/delegate as a convenience (the station-<n> id stays the durable key). Swapping a RUNNING station's craft: set it here, then send a waking message so it re-reads via hands_paths. Keep one craft on one active seat at a time \u2014 two seats writing one book is the same mistake as two machines on one handle. A station may set its own; the expo may set anyone's. Pass focus: null to clear.`,
-      inputSchema: {
-        station: external_exports3.string().optional().describe("target station id (default: yourself)"),
-        focus: external_exports3.string().min(1).max(80).nullable()
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      const target = input.station ? resolveAgentRef(input.station) : agentId;
-      if (target !== agentId && !isExpo(agentId)) {
-        return {
-          ...asToolResult({ ok: false, error: "only the expo may set another agent's focus" }),
-          isError: true
-        };
-      }
-      if (!isStation(target) && !isExpo(target)) {
-        return {
-          ...asToolResult({ ok: false, error: `not a station id: ${target}` }),
-          isError: true
-        };
-      }
-      store.setFocus(target, input.focus);
-      return asToolResult({ ok: true, station: target, focus: input.focus });
-    }
-  );
-  if (isExpo(agentId)) {
-    server.registerTool(
-      "hands_digest_note",
-      {
-        title: "Add a prose note to today's journal digest (expo only)",
-        description: "Record a short narrative note (2\u20135 lines) into the durable journal's daily digest \u2014 the end-of-day wrap-up a human reads when browsing the journal repo. Renders under 'Notes' in journal/<project>/<handle>/<date>.md on the next sync. No-op guidance: requires remote journaling (config remote.url); notes are plaintext in the journal repo.",
-        inputSchema: { text: external_exports3.string().min(1).max(2e3) },
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-      },
-      async (input) => {
-        store.touch(agentId);
-        if (!cfg.remote.url?.trim()) {
-          return {
-            ...asToolResult({ ok: false, error: "remote journaling is not configured (remote.url)" }),
-            isError: true
-          };
-        }
-        store.journal("digest.note", { text: input.text, at: Date.now() });
-        return asToolResult({ ok: true, rendersOn: "next journal sync" });
-      }
-    );
-    server.registerTool(
-      "hands_gh_poll",
-      {
-        title: "Poll GitHub for other engineers' PRs (expo only)",
-        description: "Record what OTHER engineers are shipping (open + recently-merged PRs on this repo, excluding the principal's) for the dashboard team lane and per-station relevance matching. Network call \u2014 run once every few passes, not every tick" + (cfg.gh.poll ? "." : ". NOTE: gh.poll is disabled in this repo's config \u2014 skip it."),
-        inputSchema: {},
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
-      },
-      async () => {
-        store.touch(agentId);
-        const r = pollGithub(store, { cwd: process.cwd() });
-        if (!r.ok) return asToolResult({ ok: false, error: r.error });
-        return asToolResult({
-          ok: true,
-          repo: r.repo,
-          fromOthers: r.fromOthers,
-          new: r.new,
-          updated: r.updated
-        });
-      }
-    );
-  }
-  if (isExpo(agentId) && cfg.stations.allowScaling) {
-    const presentPlans = (plans) => plans.map((p) => ({
-      id: p.id,
-      model: p.model,
-      launched: p.launched,
-      launcher: p.launcher,
-      // when not auto-launched, this is the command to hand to the principal
-      pasteCommand: p.launched ? void 0 : p.command
-    }));
-    server.registerTool(
-      "hands_station_add",
-      {
-        title: "Open more stations (expo only)",
-        description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu (ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
-        inputSchema: { count: external_exports3.number().int().min(1).max(12).optional() },
-        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-      },
-      async (input) => {
-        store.touch(agentId);
-        const { addStations: addStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
-        try {
-          return asToolResult({ ok: true, added: presentPlans(addStations2(input.count ?? 1)) });
-        } catch (err) {
-          return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
-        }
-      }
-    );
-    server.registerTool(
-      "hands_station_remove",
-      {
-        title: "Close a station (expo only)",
-        description: "Stop a station's session and remove its managed workspace. Refuses if the station has uncommitted work unless force:true. Idempotent.",
-        inputSchema: {
-          id: external_exports3.string().describe("station-<n>"),
-          force: external_exports3.boolean().optional().describe("true = discard uncommitted work")
-        },
-        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
-      },
-      async (input) => {
-        store.touch(agentId);
-        const { removeStation: removeStation2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
-        try {
-          return asToolResult({ ok: true, ...removeStation2(input.id, { force: input.force }) });
-        } catch (err) {
-          return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
-        }
-      }
-    );
-    server.registerTool(
-      "hands_scale",
-      {
-        title: "Scale the station line (expo only)",
-        description: "Reconcile the line to exactly `target` stations \u2014 adds or opens/closes as needed (highest index retired first; refuses to discard uncommitted work unless force:true).",
-        inputSchema: {
-          target: external_exports3.number().int().min(0).max(12),
-          force: external_exports3.boolean().optional()
-        },
-        annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false }
-      },
-      async (input) => {
-        store.touch(agentId);
-        const { scaleStations: scaleStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
-        try {
-          const res = scaleStations2(input.target, { force: input.force });
-          return asToolResult({ ok: true, added: presentPlans(res.added), removed: res.removed });
-        } catch (err) {
-          return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
-        }
-      }
-    );
-  }
   return server;
 }
-function resolveSelf() {
-  return resolveAgentId({ expoBasename: loadConfig().expo.basename });
-}
-function pathsReport(agentId, cfg, focus) {
-  const info = repoInfo();
-  const enabled = Boolean(cfg.remote.url?.trim());
-  const journal = enabled ? readSyncStatus(journalDir()) : null;
-  const craft = focus ?? null;
-  const files = craft ? craftFiles(craft) : null;
-  return {
-    cwd: process.cwd(),
-    agentId,
-    repoRoot: info?.repoRoot ?? null,
-    isMainWorktree: info?.isMainWorktree ?? null,
-    slug: info?.slug ?? "_global",
-    coordinationDir: coordinationDir(),
-    db: dbPath(),
-    notify: notifyPath(agentId),
-    /** the craft roster — every craft's book + skill live here */
-    craftsDir: craftFiles("roster").dir,
-    ...isStation(agentId) ? {
-      craft,
-      craftSlug: files?.slug ?? null,
-      book: files?.book ?? null,
-      skillFile: files?.skill ?? null
-    } : {},
-    journalProject: enabled ? resolveProject(cfg) : null,
-    /** the books clone — digest pages under journal/<project>/<handle>/<date>.md (read-in source) */
-    booksDir: enabled ? journalDir() : null,
-    journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : enabled ? "never-synced" : "disabled"
-  };
-}
-function runCli(subcommand, argv) {
-  if (subcommand === "paths") {
-    const id = resolveSelf();
-    let focus = null;
-    if (fs12.existsSync(dbPath())) {
-      const s = new Store();
-      try {
-        focus = s.getFocus(id);
-      } finally {
-        s.close();
-      }
-    }
-    process.stdout.write(`${JSON.stringify(pathsReport(id, loadConfig(), focus), null, 2)}
-`);
-    return 0;
-  }
-  const agentId = resolveSelf();
-  const store = new Store();
-  const journal = openJournal({ agentId });
-  if (journal) store.setJournal(journal.append);
-  try {
-    if (subcommand === "publish") {
-      runPublish(store, { agentId, cwd: process.cwd() });
-      if (journal) syncPush(journal, { store });
-      return 0;
-    }
-    if (subcommand === "board") {
-      const sinceArg = argv.find((a) => a.startsWith("--since="));
-      const since = sinceArg ? Number(sinceArg.slice("--since=".length)) : void 0;
-      const advance = !argv.includes("--peek");
-      const { text } = buildBoard(store, { agentId, since, advance });
-      if (text) process.stdout.write(`${text}
-`);
-      return 0;
-    }
-    if (subcommand === "gh-poll") {
-      const r = pollGithub(store, { cwd: process.cwd() });
-      if (!r.ok) {
-        process.stdout.write(`gh-poll: ${r.error}
-`);
-        return 0;
-      }
-      process.stdout.write(
-        `gh-poll: ${r.repo} \u2014 ${r.fromOthers} PRs from others (${r.new} new, ${r.updated} updated)
-`
-      );
-      return 0;
-    }
-    process.stderr.write(`[hands] unknown subcommand: ${subcommand}
-`);
-    return 2;
-  } finally {
-    store.close();
-  }
-}
 async function main() {
-  const subcommand = process.argv[2];
-  if (subcommand === "publish" || subcommand === "board" || subcommand === "gh-poll" || subcommand === "paths") {
-    process.exit(runCli(subcommand, process.argv.slice(3)));
-  }
-  if (subcommand === "serve") {
-    const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
-    const handle = await serve2();
-    process.stdout.write(`hands dashboard \u2192 ${handle.url}
-(Ctrl-C to stop)
-`);
-    if (!process.argv.includes("--no-open") && process.platform === "darwin") {
-      const { spawn: spawn2 } = await import("node:child_process");
-      try {
-        spawn2("open", [handle.url], { detached: true, stdio: "ignore" }).unref();
-      } catch {
-      }
-    }
-    return;
-  }
-  const agentId = resolveSelf();
-  const store = new Store();
-  const journal = openJournal({ agentId });
-  if (journal) store.setJournal(journal.append);
-  store.registerAgent({ id: agentId, cwd: process.cwd(), pid: process.pid });
-  const server = buildServer(store, agentId);
+  const server = buildBooksServer(resolveBooksConfig());
   await server.connect(new StdioServerTransport());
 }
 var invokedDirectly = (() => {
@@ -34045,8 +30376,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs12.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs12.realpathSync(fileURLToPath2(import.meta.url))).href;
+    const entry = pathToFileURL(fs7.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs7.realpathSync(fileURLToPath(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
@@ -34054,12 +30385,12 @@ var invokedDirectly = (() => {
 })();
 if (invokedDirectly) {
   main().catch((err) => {
-    console.error("[hands] fatal:", err);
+    console.error("[hands-books] fatal:", err);
     process.exit(1);
   });
 }
 export {
-  buildServer,
-  craftContext,
-  pathsReport
+  buildBooksServer,
+  journalPath,
+  resolveBooksConfig
 };

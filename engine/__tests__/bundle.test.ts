@@ -35,6 +35,7 @@ describe("committed plugin bundles", () => {
       "server-impl.mjs",
       "cli.mjs",
       "cli-impl.mjs",
+      "books-server.mjs",
       "assets/dashboard.js",
       "assets/dashboard.css",
     ];

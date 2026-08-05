@@ -118,6 +118,26 @@ journal/<project>/<handle>/crafts/<name>.skill.md        a craft's own SKILL (se
   live.
 - **Plaintext.** Private repo only; never put secrets on the bus.
 
+## Browsing the books elsewhere (Claude Desktop, any MCP client)
+
+`hands mcp install` installs a **read-only** MCP server — `hands_books`'s little sibling,
+`hands-books` — so you (or anyone with read access to the books repo) can browse digests from
+outside the source repo, no station/expo bus required:
+
+```bash
+hands mcp install            # writes into Claude Desktop's config; requires books already
+                              # attached (hands books <url>) — restart Desktop after
+hands mcp install --print    # print the server-registration JSON instead, for any other client
+```
+
+It resolves the repo's `remote.url`/`project`/`handle` once, from inside the repo (works for a
+real git host or a plain local path), freshens the local clone, and bakes the resolved journal
+directory into the installed server's env — the server itself never re-derives identity from cwd
+or git, which matters because Desktop launches it from nowhere near your repo. Tools:
+`books_list_projects`, `books_list_handles`, `books_list_days`, `books_read_index`,
+`books_read_digest`, `books_sync` (pulls the clone; never pushes). Independent of the live bus —
+no `node:sqlite`, no Node ≥ 22.5 requirement, no side effect on start.
+
 ## Configuration
 
 `hands.config.json` at the repo root (user fallback `~/.claude/hands.config.json`).
