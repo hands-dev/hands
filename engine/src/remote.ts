@@ -562,6 +562,15 @@ export function openJournal(options?: {
     url,
     agentId,
     append(type, data) {
+      // `cursor` fires on every inbox drain that has messages — pure local
+      // read-position bookkeeping, already treated as not digest/feed-worthy
+      // (digest.ts's render skip, summarizeEvent's null below). Dropping it
+      // here — rather than at store.ts's setCursor call site — keeps the
+      // "what's worth an NDJSON line" decision in one place, and covers any
+      // future bookkeeping-only event types the same way. `applyEvent`'s
+      // "cursor" case stays intact so journals written before this change
+      // (which do contain cursor lines) still replay without erroring.
+      if (type === "cursor") return;
       try {
         fs.mkdirSync(logDir, { recursive: true });
         const day = new Date().toISOString().slice(0, 10);
