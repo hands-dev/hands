@@ -56,7 +56,7 @@ declare global {
 
 export function App() {
   const pollUrl = typeof window !== "undefined" ? window.__HANDS_POLL_URL__ : undefined;
-  const { snapshot, connected } = useSnapshot({ pollUrl });
+  const { snapshot, connected, isFetching, lastError } = useSnapshot({ pollUrl });
 
   if (!snapshot) {
     return (
@@ -99,8 +99,16 @@ export function App() {
               </a>
             ))}
           </nav>
-          <div className="mt-auto text-xs text-muted-foreground">
-            last pushed {ago(now, snapshot.pushedAt)}
+          <div className="mt-auto space-y-1.5">
+            <LiveBadge connected={connected} />
+            <div className="text-xs text-muted-foreground">
+              {isFetching ? "syncing…" : `last pushed ${ago(now, snapshot.pushedAt)}`}
+            </div>
+            {lastError ? (
+              <div className="text-xs text-destructive" title={lastError}>
+                poll failed — showing last good snapshot
+              </div>
+            ) : null}
           </div>
         </aside>
 
