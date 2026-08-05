@@ -182,9 +182,31 @@ switch a pane's model yourself.
 3. **Track via the rail** so you never double-fire, and follow up when a station goes quiet on an
    in-progress ticket.
 
-**"What's on the rail?"** — when the principal asks (or in your wrap-up), answer from the bundled
-read, grouped by dish: *"ENG-1476: #7 in progress at station-2·developer API, #8 returned —
-awaiting hands · unattached: #9 docs → station-3 · specials coverage: P1×2, P2×1, P3 unstaffed."*
+**"What's on the rail?"** — when the principal asks (or in your wrap-up), answer in this exact
+shape every time (deterministic + grep-friendly, hands#52 — copy varies, structure never does).
+Pull straight from the bundled read; group `activeTasks` by `dish` in the read's own order (no
+re-sorting — same input, same output), one ticket per line:
+
+```
+Rail: <dish>: #<id> <title> — <station>[·<craft>] (<state>)[; #<id> <title> — <station> (<state>)]
+Rail: unattached: #<id> <title> — <station-or-"queue"> (<state>)
+Specials coverage: P1×<n>, P2×<n>, P3×<n>[, P<k> unstaffed]
+Needs you: <n> open[, <n> needs_human] — #<id> <one-line>[, #<id> <one-line>][ | none]
+Stations: <onDuty>/<total> on duty
+```
+
+One `Rail:` line per dish (blank dish → `unattached`), ticket entries within a line joined by `; `.
+The last three lines are always present, even when a section is empty — write `none` rather than
+omitting the line, so a missing line always means "no data fetched," never "nothing to report."
+Example:
+
+```
+Rail: ENG-1476: #7 fix auth redirect — station-2·developer API (in_progress); #8 add retry — station-2·developer API (returned)
+Rail: unattached: #9 docs pass — station-3 (assigned)
+Specials coverage: P1×2, P2×1, P3 unstaffed
+Needs you: 1 open — #14 admin-merge on flaky CI?
+Stations: 5/6 on duty
+```
 
 ## 4. Utilization beat — every ~15 minutes, only when state changed
 
@@ -198,14 +220,20 @@ find "$m" -mmin +15 | grep -q . && echo DUE || echo skip
 ```
 
 **skip** → move on. **DUE** → `touch "$m"`, then compare the bundled read's `stateHash` against
-`$C/expo.last-util-hash`: **UNCHANGED** → say "utilization: unchanged", move on. **CHANGED** →
+`$C/expo.last-util-hash`: **UNCHANGED** → say `Utilization: unchanged`, move on. **CHANGED** →
 store the new hash and judge: idle capacity while a higher special is starved → before firing
 generic work, check the roster for a **dormant craft** that covers the starved special and cast
 it onto the idle seat (restored expertise beats a cold start). A station off-specials while #1 is
 thin → `wake:false` heads-up + escalate with a recommendation. `collisions` (two stations in the
 same files) → stagger or refocus one before they trample each other. Well-balanced → say so.
-Always surface a one-line read:
-*"5/6 on duty — P1×3, P2×1, P3 unstaffed; pulled station-2 onto P1."*
+Always surface a one-line read, this exact shape (deterministic + grep-friendly, hands#52 — the
+`Utilization:` beat's own line, distinct from a `Rail:` dump):
+
+```
+Utilization: <onDuty>/<total> on duty — P1×<n>, P2×<n>, P3×<n>[, P<k> unstaffed][; <action taken>]
+```
+
+*"Utilization: 5/6 on duty — P1×3, P2×1, P3 unstaffed; pulled station-2 onto P1."*
 
 **Scale the line (if enabled):** when config `stations.allowScaling` exposes `hands_station_add` /
 `hands_scale` / `hands_station_remove`: under-staffed specials with nobody idle → open stations (relay
