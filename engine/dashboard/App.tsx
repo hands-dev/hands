@@ -3,14 +3,22 @@ import { JournalFeed } from "@/components/journal-feed";
 import { OtherKitchens } from "@/components/kitchens";
 import { NeedsYou, OpenQuestions } from "@/components/questions-lane";
 import { Specials } from "@/components/specials";
-import { StatCards } from "@/components/stat-cards";
-import { StationsGrid } from "@/components/stations-grid";
+import { StatCards, StatCardsHosted } from "@/components/stat-cards";
+import { StationsGrid, StationsGridHosted } from "@/components/stations-grid";
 import { TicketRail } from "@/components/ticket-rail";
 import { TokenBurn } from "@/components/token-burn";
 import { Todos } from "@/components/todos";
 import { Badge } from "@/components/ui/badge";
+import { ago } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { useSnapshot } from "./use-snapshot.js";
+
+const NAV_HOSTED = [
+  { href: "#overview", label: "Overview" },
+  { href: "#line", label: "The line" },
+  { href: "#rail", label: "The rail" },
+  { href: "#pass", label: "At the pass" },
+];
 
 const NAV = [
   { href: "#overview", label: "Overview" },
@@ -34,8 +42,21 @@ function LiveBadge({ connected }: { connected: boolean }) {
   );
 }
 
+declare global {
+  interface Window {
+    /**
+     * Hosted deployments (hands-website) set this before the module script
+     * tag, mirroring shellHtml()'s local shell — lets the SAME compiled
+     * bundle poll a hosted JSON route instead of the local SSE stream, with
+     * no per-deployment rebuild.
+     */
+    __HANDS_POLL_URL__?: string;
+  }
+}
+
 export function App() {
-  const { snapshot, connected } = useSnapshot();
+  const pollUrl = typeof window !== "undefined" ? window.__HANDS_POLL_URL__ : undefined;
+  const { snapshot, connected } = useSnapshot({ pollUrl });
 
   if (!snapshot) {
     return (
@@ -51,6 +72,76 @@ export function App() {
   const settledTasks = snapshot.tasks
     .filter((t) => t.state === "done" || t.state === "cancelled")
     .slice(0, 8);
+
+  if (snapshot.mode === "hosted") {
+    // "principal" has no hosted equivalent (see PublicSnapshot's doc
+    // comment) — the pushed GitHub handle is the closest available identity
+    // string for the same display slots.
+    const principal = snapshot.handle;
+    const now = Date.now();
+    return (
+      <div className="flex min-h-dvh">
+        <aside className="sticky top-0 hidden h-dvh w-52 shrink-0 flex-col gap-6 border-r bg-card px-4 py-5 lg:flex">
+          <div>
+            <div className="text-base font-semibold tracking-tight">Hands</div>
+            <div className="truncate text-xs text-muted-foreground" title={snapshot.project}>
+              {snapshot.handle}
+            </div>
+          </div>
+          <nav className="flex flex-col gap-1 text-sm">
+            {NAV_HOSTED.map((item) => (
+              <a
+                key={item.href}
+                href={item.href}
+                className="rounded-md px-2 py-1.5 text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
+          <div className="mt-auto text-xs text-muted-foreground">
+            last pushed {ago(now, snapshot.pushedAt)}
+          </div>
+        </aside>
+
+        <div className="min-w-0 flex-1">
+          <header className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-6 py-3 backdrop-blur">
+            <span className="text-sm font-semibold lg:hidden">Hands</span>
+            <span className="text-sm text-muted-foreground">
+              The pass · {snapshot.handle} · last pushed {ago(now, snapshot.pushedAt)}
+            </span>
+            <span className="ml-auto lg:hidden">
+              <LiveBadge connected={connected} />
+            </span>
+          </header>
+
+          <main id="overview" className="space-y-4 px-6 py-5">
+            <div id="line">
+              <StationsGridHosted crafts={snapshot.crafts} />
+            </div>
+            <NeedsYou questions={needsHuman} principal={principal} now={now} />
+            <StatCardsHosted counts={snapshot.counts} />
+
+            <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+              <div className="min-w-0 space-y-4">
+                <div id="rail">
+                  <TicketRail tasks={[...activeTasks, ...settledTasks]} now={now} />
+                </div>
+              </div>
+              <div className="min-w-0 space-y-4">
+                <Specials items={snapshot.priorities} />
+                <div id="pass">
+                  <OpenQuestions questions={open} now={now} />
+                </div>
+                <Todos todos={snapshot.todos} principal={principal} now={now} />
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    );
+  }
+
   const kitchen = snapshot.db.split("/").slice(-2, -1)[0] ?? "kitchen";
 
   return (

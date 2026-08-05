@@ -13,7 +13,7 @@ import { fmtTokens } from "@/lib/format";
 import { orderedSeriesIds, seriesColor } from "@/lib/series";
 import { ago } from "@/lib/time";
 import { cn } from "@/lib/utils";
-import type { Collision, SnapshotAgent } from "../../src/snapshot.js";
+import type { Collision, PublicCraft, SnapshotAgent } from "../../src/snapshot.js";
 import type { TokenSeries } from "../../src/tokens.js";
 
 function StateDot({ state }: { state: SnapshotAgent["state"] }) {
@@ -145,5 +145,62 @@ export function StationsGrid({
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Hosted-mode replacement for StationsGrid: no live presence (pid/cwd/online
+ * are meaningless off-machine — see PublicSnapshot's own doc comment), so no
+ * state dot, wake counts, ticket/branch line, or token sparkline — just who
+ * holds which craft right now, as of the last push.
+ */
+export function StationsGridHosted({ crafts }: { crafts: PublicCraft[] }) {
+  const expo = crafts.find((c) => c.station === "expo");
+  const stations = crafts.filter((c) => c.station !== "expo");
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>The line</CardTitle>
+        <CardDescription>Stations and their current craft, as of the last push</CardDescription>
+        <CardAction>
+          <Badge variant="secondary">{crafts.length} holding a craft</Badge>
+        </CardAction>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {crafts.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No craft assignments pushed yet.</p>
+        ) : (
+          <>
+            {expo ? (
+              <div className="mx-auto max-w-sm">
+                <StationCraftCell craft={expo} />
+              </div>
+            ) : null}
+            {stations.length > 0 ? (
+              <div className="flex flex-wrap justify-between gap-3">
+                {stations.map((c) => (
+                  <div key={c.station} className="min-w-56 flex-1">
+                    <StationCraftCell craft={c} />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function StationCraftCell({ craft }: { craft: PublicCraft }) {
+  return (
+    <div className="rounded-lg border p-3">
+      <div className="flex items-center gap-2">
+        <span className="font-medium">{craft.station}</span>
+        <span className="truncate text-sm text-muted-foreground">
+          {craft.focus ?? <span className="italic">no craft held</span>}
+        </span>
+      </div>
+    </div>
   );
 }

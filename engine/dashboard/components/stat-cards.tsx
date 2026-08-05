@@ -1,6 +1,7 @@
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { fmtTokens } from "@/lib/format";
 import type { DashboardPayload } from "../../src/serve.js";
+import type { PublicSnapshot } from "../../src/snapshot.js";
 
 function Stat({ label, value, hint }: { label: string; value: string; hint: string }) {
   return (
@@ -38,6 +39,26 @@ export function StatCards({ snapshot }: { snapshot: DashboardPayload }) {
         value={fmtTokens(out24)}
         hint={`output · ${fmtTokens(cache24)} cache-read`}
       />
+    </div>
+  );
+}
+
+/**
+ * Hosted-mode replacement: no live agents/tokens off-machine (see
+ * PublicSnapshot's own doc comment), so "on duty"/"wakes"/"token burn" have
+ * no hosted equivalent — just the counts PublicSnapshot actually carries.
+ */
+export function StatCardsHosted({ counts }: { counts: PublicSnapshot["counts"] }) {
+  return (
+    <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <Stat
+        label="On the rail"
+        value={String(counts.activeTasks)}
+        hint={`${counts.returnedTasks} at the pass`}
+      />
+      <Stat label="Open questions" value={String(counts.openQuestions)} hint="awaiting an answer" />
+      <Stat label="Needs human" value={String(counts.needsHuman)} hint="escalated" />
+      <Stat label="Open to-dos" value={String(counts.openTodos)} hint="on the book" />
     </div>
   );
 }

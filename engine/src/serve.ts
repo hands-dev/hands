@@ -33,6 +33,8 @@ export interface BooksSyncStatus {
 
 /** The one wire shape — served by /api/state and pushed on /api/events. */
 export type DashboardPayload = Snapshot & {
+  /** discriminates against HostedDashboardPayload (dashboard/use-snapshot.ts) */
+  mode: "local";
   db: string;
   principal: string;
   /** other handles' recent books activity (empty when the books are off) */
@@ -207,7 +209,17 @@ export function serve(opts?: {
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, booksSync, tokens, taskCosts }),
+      json: JSON.stringify({
+        ...snapshot,
+        mode: "local",
+        db,
+        principal,
+        kitchens,
+        crafts,
+        booksSync,
+        tokens,
+        taskCosts,
+      }),
       key:
         snapshotKey(snapshot) +
         JSON.stringify(kitchens) +
