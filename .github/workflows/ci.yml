@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # store.ts uses node:sqlite, stable no earlier than Node 22.5
+          # (see BOOTSTRAP.md / README.md).
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: engine/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run check-types
+
+      # The full suite, including bundle.test.ts — it rebuilds the plugin
+      # bundles into a temp dir and byte-compares against the COMMITTED
+      # plugin/dist (a marketplace install is a plain file copy, no build
+      # step, so dist must always be committed and current). This is the
+      # bundle-freshness gate: a PR that changed src/ without `npm run
+      # bundle` fails here instead of forcing a rebase dance after the fact.
+      - run: npx vitest run
