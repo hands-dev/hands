@@ -9582,10 +9582,12 @@ function serve(opts) {
   const store = new Store({ env });
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
-  const principal = loadConfig({ env }).principal.name;
-  const journal = openJournal({ env });
+  const config2 = opts?.config ?? loadConfig({ env });
+  const principal = config2.principal.name;
+  const journal = openJournal({ env, config: config2 });
   let kitchens = [];
   let crafts = [];
+  let booksSync = journal ? { lastAttempt: null, lastSuccess: null, ok: true, reason: null } : null;
   const tokensTickMs = opts?.tokensTickMs ?? 6e4;
   const sampler = new TokenSampler(opts?.projectsDir ? { projectsDir: opts.projectsDir } : void 0);
   let tokens = null;
@@ -9606,18 +9608,31 @@ function serve(opts) {
   };
   const refreshKitchens = () => {
     if (!journal) return;
+    const now = Date.now();
     try {
-      syncPull(journal.dir);
+      const pulled = syncPull(journal.dir);
       kitchens = readOtherKitchens(journal.dir, journal.project, journal.handle);
       crafts = readOtherCrafts(journal.dir, journal.project, journal.handle);
+      booksSync = {
+        lastAttempt: now,
+        lastSuccess: pulled.ok ? now : booksSync?.lastSuccess ?? null,
+        ok: pulled.ok,
+        reason: pulled.ok ? null : pulled.reason ?? "error"
+      };
     } catch {
+      booksSync = {
+        lastAttempt: now,
+        lastSuccess: booksSync?.lastSuccess ?? null,
+        ok: false,
+        reason: "error"
+      };
     }
   };
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     return {
-      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, tokens, taskCosts }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
+      json: JSON.stringify({ ...snapshot, db, principal, kitchens, crafts, booksSync, tokens, taskCosts }),
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
     };
   };
   const clients = /* @__PURE__ */ new Set();
