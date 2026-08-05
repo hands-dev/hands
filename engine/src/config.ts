@@ -2,14 +2,20 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { repoInfo } from "./paths.js";
+import { readCredentials } from "./credentials.js";
 
 /**
  * hands configuration. Layered lowest→highest precedence:
- *   built-in defaults  ←  ~/.claude/hands.config.json (user)  ←  <repoRoot>/hands.config.json (repo)
+ *   built-in defaults  ←  login-derived (hands login)  ←  ~/.claude/hands.config.json (user)  ←  <repoRoot>/hands.config.json (repo)
  *
  * Everything is optional in the files; the merged result is always fully
  * populated. The repo file is the natural home — it travels with the project —
  * while the user file covers machine-wide preferences (e.g. principal name).
+ * The login layer sits BELOW both — see the #26/#32 plan §3 — so it only
+ * ever fills a gap neither config file already set; a hand-edited
+ * `remote.url` always wins, and a user who has never run `hands login`
+ * gets byte-identical behavior to before this layer existed (see
+ * config.test.ts's "behavior-neutral when logged out" case).
  */
 export interface HandsConfig {
   /** The human decider the expo escalates to. */
@@ -170,8 +176,25 @@ export function repoConfigPath(
 }
 
 /**
- * Load the merged config for a working directory. Cheap (two small file reads)
- * but cached per cwd anyway, since the server calls it on every tool build.
+ * The `hands login` layer — fills remote.url/handle from the CLI's local
+ * credential store (~/.hands/credentials.json) when a login happened AND it
+ * resolved a cloud books repo, so `hands books <url>` was never required to
+ * try the product. Never touches anything the user/repo config already set
+ * (see `merge`'s precedence) and returns null (no-op) whenever there's no
+ * credentials file or no cloudBooksUrl on it — the common case for every
+ * user who has never run `hands login`.
+ */
+function readLoginDerivedLayer(env: NodeJS.ProcessEnv): DeepPartial<HandsConfig> | null {
+  const creds = readCredentials(env);
+  if (!creds?.cloudBooksUrl) return null;
+  const url = creds.cloudBooksUrl.endsWith(".git") ? creds.cloudBooksUrl : `${creds.cloudBooksUrl}.git`;
+  return { remote: { url, handle: creds.githubLogin, project: null } };
+}
+
+/**
+ * Load the merged config for a working directory. Cheap (three small file
+ * reads) but cached per cwd anyway, since the server calls it on every tool
+ * build.
  */
 const cache = new Map<string, HandsConfig>();
 
@@ -182,7 +205,8 @@ export function loadConfig(options?: { cwd?: string; env?: NodeJS.ProcessEnv }):
   const hit = cache.get(key);
   if (hit) return hit;
 
-  let cfg = merge(DEFAULT_CONFIG, readJson(userConfigPath(env)));
+  let cfg = merge(DEFAULT_CONFIG, readLoginDerivedLayer(env));
+  cfg = merge(cfg, readJson(userConfigPath(env)));
   const repoFile = repoConfigPath(cwd, env);
   if (repoFile) cfg = merge(cfg, readJson(repoFile));
   cache.set(key, cfg);

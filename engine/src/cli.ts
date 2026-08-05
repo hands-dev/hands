@@ -11,6 +11,9 @@
  *   hands restore             rebuild local bus state from the remote journal
  *   hands sync                push pending journal appends now
  *   hands mcp install         install a read-only books MCP for Claude Desktop
+ *   hands login               sign in with GitHub (optional — free tier never needs it)
+ *   hands logout              clear the local sign-in
+ *   hands whoami               show the signed-in identity (local only, no network call)
  *   hands paths               where this cwd resolves (debug)
  *
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
@@ -276,6 +279,41 @@ function cmdMcp(argv: string[]): void {
   out("  restart Claude Desktop to pick it up");
 }
 
+/**
+ * Sign in with GitHub via browser-handoff OAuth against the same Descope
+ * project the hosted books MCP authenticates against — see engine/src/
+ * login.ts. Entirely optional: `hands.config.json`'s `remote.url` (hand-set
+ * via `hands books`) always wins over anything login would derive, and
+ * every other command works identically whether or not this has ever run.
+ */
+async function cmdLogin(): Promise<void> {
+  const { login, localWhoami } = await import("./login.js");
+  const existing = localWhoami();
+  if (existing.loggedIn) {
+    out(`already signed in as ${existing.githubLogin} (${existing.tier} tier) — run \`hands logout\` first to switch accounts`);
+    return;
+  }
+  const result = await login({ out });
+  if (!result.ok) fail(result.reason);
+  out(`✔ signed in as ${result.githubLogin} (${result.tier} tier)`);
+}
+
+async function cmdLogout(): Promise<void> {
+  const { logout } = await import("./login.js");
+  out(logout() ? "✔ signed out" : "not signed in — nothing to do");
+}
+
+/** Local-only identity check (cached from the last `hands login` / `hands sync`'s refresh) — never calls the network, so it's safe to run often. */
+async function cmdWhoami(): Promise<void> {
+  const { localWhoami } = await import("./login.js");
+  const status = localWhoami();
+  if (!status.loggedIn) {
+    out("not signed in — run: hands login");
+    return;
+  }
+  out(`${status.githubLogin} (${status.tier} tier)`);
+}
+
 function cmdPaths(): void {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
@@ -314,6 +352,12 @@ async function main(): Promise<void> {
         return cmdDigest(rest);
       case "mcp":
         return cmdMcp(rest);
+      case "login":
+        return await cmdLogin();
+      case "logout":
+        return await cmdLogout();
+      case "whoami":
+        return await cmdWhoami();
       case "serve":
       case "dashboard": {
         const { serve } = await import("./serve.js");
@@ -338,6 +382,9 @@ async function main(): Promise<void> {
         out("  hands digest [--date D]  re-render journal digests (normally automatic on sync)");
         out("  hands mcp install [--print]  install a read-only books MCP for Claude Desktop (or");
         out("                                any MCP client, with --print) — requires books attached");
+        out("  hands login               sign in with GitHub (optional — free tier never needs it)");
+        out("  hands logout              clear the local sign-in");
+        out("  hands whoami               show the signed-in identity (local only, no network call)");
         out("  hands serve               live dashboard → http://localhost:4319");
         out("  hands paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
