@@ -31,7 +31,8 @@ hands init           # scaffold config (or restore your committed hands.config.j
 ```
 
 If `hands.config.json` is committed in the project repo, init leaves it alone — the journal
-url + handle come back with the clone.
+url + handle come back with the clone. Either way, init enrols the repo in the launcher's registry
+(`~/.hands/projects.json`), so `hands <project>` reaches it from anywhere on the new machine.
 
 ## Step 3 — Restore coordination state from the journal
 
@@ -52,9 +53,15 @@ mkdir -p "$MEM" && cp memory/*.md "$MEM/"
 
 ## Step 5 — Run
 
-- Main checkout: `/hands:expo` (or `/loop /hands:expo`).
-- Stations: `hands station add -n <N>` — no `git worktree` commands, ever.
+- Main checkout: `hands` (or `/hands:expo` from inside a session).
+- From anywhere else: `hands <project>` — the registry knows where it lives.
+- Stations: `hands station add -n <N>` — no `git worktree` commands, ever. Each new station
+  worktree is seeded with a permission allowlist before its session starts, so it comes up able to
+  work rather than parked on a prompt.
+- A specific seat: `hands station-<n>` (or `hands <project> station-<n>`).
 - Dashboard: `hands serve` → http://localhost:4319
+- Verify the restore landed: `hands doctor` — config, registry, bus database, per-station
+  permissions and activity, and whether the plugin build matches this checkout.
 
 ## Step 6 — Re-auth other MCP servers (human, as needed)
 

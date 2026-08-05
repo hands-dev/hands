@@ -1,5 +1,7 @@
 # Hands
 
+**[hands-cc.dev](https://hands-cc.dev)**
+
 **Extra hands for your repo.** An expo/station agent fleet for Claude Code, run like a kitchen:
 the repo's main checkout is the **expo** — the expeditor at the pass, all of the context and none
 of the cooking. **Stations** are autonomous Claude instances that know exactly two things: their
@@ -32,12 +34,46 @@ Then, per repo (from its main checkout) — one slash command:
 ## Run the kitchen
 
 ```bash
-/hands:expo               # main checkout — or /loop /hands:expo for always-on
+hands                     # open the pass here (expo) — the launcher does the rest
 hands station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
 /hands:dashboard          # live admin dashboard (SSE) → http://localhost:4319  (or: hands serve)
                           # incl. per-pane token burn, read from Claude Code's own transcripts
 /hands:feedback           # hit a rough edge? files your note as a GitHub issue for the maintainer
 ```
+
+**Reaching a kitchen from anywhere.** `hands init` enrolls a repo by name, so you never have to
+remember where it lives:
+
+```bash
+hands ampersand              # cd there and open the pass, from any directory
+hands ampersand station-2    # open that station's seat instead
+hands station-2              # same, when you're already in the kitchen
+hands register               # enroll a repo that was set up before the launcher existed
+```
+
+An unrecognized word is an error naming that word, not a usage dump — and `hands go <project>` is
+the explicit form for scripts, or for a project whose name collides with a subcommand.
+
+Sessions the launcher opens come up **ready to work**: each station worktree is seeded with a
+permission allowlist (reads, read-only shell, the bus tools) before its session spawns, so a
+station never stalls on a permission prompt before it can read its own files. `Edit`/`Write` still
+prompt, and pushing, force-resetting, and merging are denied outright — a station proposes on its
+own branch; a human ships.
+
+**When something's off:**
+
+```bash
+hands doctor [--fix]      # what's actually wrong, and repair what's safe to repair
+hands logs station-2      # what that station is really doing, from its own transcript
+hands restart station-2   # recycle a wedged seat in its existing pane
+hands ls                  # registered kitchens
+```
+
+`hands logs` reads the pane's Claude Code transcript rather than the bus, because the bus only
+shows what a station *chose to say* — a station parked on a prompt, thrashing on one file, or
+wedged mid-tool looks identical over MCP to one that's simply thinking. `doctor` checks the things
+that fail *quietly*: unseeded worktrees, a plugin build older than your checkout, a write-ahead log
+that stopped checkpointing, seats that are up but haven't moved in half an hour.
 
 The expo asks for **today's specials** (the ranked priorities — they change day to day with what's
 available and what the day calls for), then works the pass: fires **tickets** to stations, reviews

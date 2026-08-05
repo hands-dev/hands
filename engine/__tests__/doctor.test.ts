@@ -1,0 +1,161 @@
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { runDoctor } from "../src/doctor.js";
+import { addStations } from "../src/provision.js";
+import { resetRepoInfoCache } from "../src/paths.js";
+
+let root: string;
+let repo: string;
+let handsHome: string;
+let env: NodeJS.ProcessEnv;
+
+const CONFIG = {
+  principal: { name: "Michael" },
+  topology: "strict-hub",
+  stations: { model: "sonnet", overrides: {}, launcher: "manual", allowScaling: true },
+  merge: { adminMergeLowRisk: false },
+  gh: { poll: false },
+};
+
+function check(name: string, report: ReturnType<typeof runDoctor>) {
+  return report.checks.find((c) => c.name === name);
+}
+
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-doctor-"));
+  handsHome = fs.mkdtempSync(path.join(os.tmpdir(), "hands-doctor-home-"));
+  fs.mkdirSync(path.join(root, "kitchen"), { recursive: true });
+  repo = fs.realpathSync(path.join(root, "kitchen"));
+  execFileSync("git", ["init", "-q"], { cwd: repo });
+  env = { HANDS_TEST_HOME: handsHome, HANDS_HOME: path.join(root, "coord") };
+  resetRepoInfoCache();
+});
+
+afterEach(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(handsHome, { recursive: true, force: true });
+  resetRepoInfoCache();
+});
+
+function writeConfig() {
+  fs.writeFileSync(path.join(repo, "hands.config.json"), JSON.stringify(CONFIG, null, 2));
+}
+
+describe("runDoctor", () => {
+  it("fails outside a git repo instead of reporting a healthy-looking nothing", () => {
+    const plain = path.join(root, "plain");
+    fs.mkdirSync(plain, { recursive: true });
+    const report = runDoctor({ cwd: plain, env });
+    expect(report.worst).toBe("fail");
+    expect(check("repo", report)?.severity).toBe("fail");
+  });
+
+  it("fails when the kitchen has no config", () => {
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("config", report)?.severity).toBe("fail");
+    expect(check("config", report)?.detail).toContain("hands init");
+  });
+
+  it("passes config and reports the principal once configured", () => {
+    writeConfig();
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("config", report)?.severity).toBe("ok");
+    expect(check("config", report)?.detail).toContain("Michael");
+  });
+
+  it("warns when the kitchen isn't reachable by name", () => {
+    writeConfig();
+    const report = runDoctor({ cwd: repo, env });
+    const registry = check("registry", report);
+    expect(registry?.severity).toBe("warn");
+    expect(registry?.fixable).toBeTruthy();
+  });
+
+  it("flags a stale plugin build against the checkout it's supposedly building", () => {
+    writeConfig();
+    // mark the repo as self-hosting (it contains the plugin manifest)
+    fs.mkdirSync(path.join(repo, "plugin", ".claude-plugin"), { recursive: true });
+    fs.writeFileSync(path.join(repo, "plugin", ".claude-plugin", "plugin.json"), "{}");
+    execFileSync("git", ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"], { cwd: repo });
+
+    const report = runDoctor({
+      cwd: repo,
+      env,
+      entry: "/home/u/.claude/plugins/cache/hands/hands/deadbee/dist/cli.mjs",
+    });
+    const build = check("build", report);
+    expect(build?.severity).toBe("warn");
+    expect(build?.detail).toContain("aren't live");
+  });
+
+  it("reports running-from-source without crying skew", () => {
+    writeConfig();
+    const report = runDoctor({ cwd: repo, env, entry: "/repo/engine/src/cli.ts" });
+    expect(check("build", report)?.severity).toBe("ok");
+  });
+});
+
+describe("the station permission check — the fourteen-hour regression", () => {
+  let worktreeRoot: string;
+
+  /** Real station worktree via the real provisioner, then strip its settings. */
+  function unseededStation(): string {
+    worktreeRoot = path.join(root, "worktrees");
+    fs.writeFileSync(
+      path.join(repo, "hands.config.json"),
+      JSON.stringify({ ...CONFIG, stations: { ...CONFIG.stations, worktreeRoot } }, null, 2),
+    );
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+      { cwd: repo },
+    );
+    const [plan] = addStations(1, { cwd: repo, env: { ...env, TMUX: "" } });
+    if (!plan) throw new Error("provisioner returned no station");
+    // addStations seeds; remove it so we're testing the unseeded state
+    fs.rmSync(path.join(plan.dir, ".claude"), { recursive: true, force: true });
+    return plan.dir;
+  }
+
+  it("FAILS a station with no permission allowlist, and says why it matters", () => {
+    unseededStation();
+    const report = runDoctor({ cwd: repo, env });
+    const perms = report.checks.find((c) => c.name === "station-1.permissions");
+    expect(perms).toBeDefined();
+    expect(perms?.severity).toBe("fail");
+    expect(perms?.detail).toContain("stall");
+    expect(report.worst).toBe("fail");
+  });
+
+  it("--fix seeds a missing allowlist rather than only complaining", () => {
+    const dir = unseededStation();
+    const settings = path.join(dir, ".claude", "settings.local.json");
+    expect(fs.existsSync(settings)).toBe(false);
+
+    const report = runDoctor({ cwd: repo, env, fix: true });
+
+    expect(fs.existsSync(settings)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(settings, "utf8")).permissions.allow.length).toBeGreaterThan(0);
+    expect(report.checks.find((c) => c.name === "station-1.permissions")?.severity).toBe("ok");
+  });
+
+  it("passes a station the provisioner seeded normally", () => {
+    worktreeRoot = path.join(root, "worktrees");
+    fs.writeFileSync(
+      path.join(repo, "hands.config.json"),
+      JSON.stringify({ ...CONFIG, stations: { ...CONFIG.stations, worktreeRoot } }, null, 2),
+    );
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+      { cwd: repo },
+    );
+    addStations(1, { cwd: repo, env: { ...env, TMUX: "" } });
+
+    const report = runDoctor({ cwd: repo, env });
+    expect(report.checks.find((c) => c.name === "station-1.permissions")?.severity).toBe("ok");
+  });
+});

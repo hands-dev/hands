@@ -1,7 +1,11 @@
 #!/usr/bin/env node
 /**
- * hands CLI — provisioning + setup. The user thinks in stations:
+ * hands CLI — launcher + provisioning + setup. The user thinks in stations:
  *
+ *   hands [<project>]         open the pass (expo) here, or in a registered kitchen
+ *   hands [<project>] station-N  open a station's seat
+ *   hands go <project> [...]  explicit form (scripts / names that collide with subcommands)
+ *   hands register [path]     enroll a kitchen so it resolves by name
  *   hands init                per-repo config scaffold
  *   hands books <url>         attach the books (durable journal) to this repo's config
  *   hands station add [-n N]   open N stations (worktree hidden inside)
@@ -19,6 +23,7 @@
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
  * the human/expo-facing lifecycle tool (on the Bash PATH via plugin/bin).
  */
+import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import { CONFIG_BASENAME, loadConfig } from "./config.js";
 import { resolveAgentId } from "./identity.js";
@@ -26,12 +31,18 @@ import { dbPath, repoInfo } from "./paths.js";
 import { pathsReport } from "./server.js";
 import {
   addStations,
+  launch,
+  launchCommand,
   type LaunchPlan,
   listStations,
   ProvisionError,
   removeStation,
   scaleStations,
 } from "./provision.js";
+import { listRegisteredProjects, registerProject, resolveProject } from "./projects.js";
+import { seedStationPermissions } from "./seed-permissions.js";
+import { idleMs, recentActivity } from "./station-logs.js";
+import { runDoctor } from "./doctor.js";
 import { regenerateDigests } from "./digest.js";
 import {
   githubUsername,
@@ -329,6 +340,239 @@ function cmdPaths(): void {
   out(JSON.stringify(pathsReport(agentId, cfg, focus), null, 2));
 }
 
+const STATION_ID = /^station-\d+$/;
+
+/**
+ * Split argv into bare words and flags, consuming the VALUE of any flag that
+ * takes one. Without this, `hands logs station-2 -n 12` reads "12" as a project
+ * name — the same bug `--name` had.
+ */
+function parseArgs(argv: string[], valueFlags: readonly string[]): { words: string[]; flags: Map<string, string> } {
+  const words: string[] = [];
+  const flags = new Map<string, string>();
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === undefined) continue;
+    if (valueFlags.includes(arg)) {
+      flags.set(arg, argv[++i] ?? "");
+      continue;
+    }
+    if (arg.startsWith("-")) {
+      flags.set(arg, "");
+      continue;
+    }
+    words.push(arg);
+  }
+  return { words, flags };
+}
+
+/** Resolve `[<project>] <station-N>`-style args to a concrete seat, for logs/restart. */
+function requireStation(argv: string[], verb: string): { repoRoot: string; id: string; dir: string } {
+  const { words } = parseArgs(argv, ["-n"]);
+  const seat = words.find((w) => STATION_ID.test(w));
+  if (!seat) fail(`usage: hands ${verb} [<project>] <station-N>`);
+  const projectWord = words.find((w) => !STATION_ID.test(w));
+  let repoRoot: string;
+  if (projectWord) {
+    const project = resolveProject(projectWord);
+    if (!project) fail(`no project named "${projectWord}"`);
+    repoRoot = project.repoRoot;
+  } else {
+    const info = repoInfo(process.cwd());
+    if (!info) fail(`not inside a git repo — use \`hands ${verb} <project> ${seat}\``);
+    repoRoot = info.repoRoot;
+  }
+  const cfg = loadConfig({ cwd: repoRoot });
+  const match = listStations(repoRoot, cfg).find((s) => s.id === seat);
+  if (!match) fail(`no ${seat} in ${repoRoot}`);
+  return { repoRoot, id: match.id, dir: match.dir };
+}
+
+/**
+ * `hands logs [<project>] <station-N>` — what the station is actually doing,
+ * from its own transcript rather than what it chose to say on the bus (#60).
+ */
+function cmdLogs(argv: string[]): void {
+  const { id, dir } = requireStation(argv, "logs");
+  const { flags } = parseArgs(argv, ["-n"]);
+  const limit = Number(flags.get("-n")) || 20;
+  const { file, events } = recentActivity(dir, { limit });
+
+  if (!file) {
+    out(`${id}: no transcript yet — it has never taken a turn`);
+    return;
+  }
+  if (argv.includes("--json")) {
+    out(JSON.stringify({ station: id, file, events }, null, 2));
+    return;
+  }
+  const idle = idleMs(dir);
+  out(`${id} — ${events.length} recent event(s)${idle === null ? "" : `, last activity ${Math.round(idle / 1000)}s ago`}`);
+  out("");
+  for (const e of events) {
+    const t = e.at ? new Date(e.at).toISOString().slice(11, 19) : "  --  ";
+    const mark = e.kind === "error" ? "✗" : e.kind === "tool" ? "→" : e.kind === "result" ? "←" : "·";
+    out(`  ${t} ${mark} ${e.label}`);
+    if (e.kind === "error" && e.detail) out(`             ${e.detail}`);
+  }
+}
+
+/** `hands restart [<project>] <station-N>` — recycle a wedged seat. */
+function cmdRestart(argv: string[]): void {
+  const { repoRoot, id, dir } = requireStation(argv, "restart");
+  const cfg = loadConfig({ cwd: repoRoot });
+  // Re-seed on the way through: a seat opened before seeding existed, or one
+  // whose settings were removed, would otherwise come back up just as stuck.
+  const seeded = seedStationPermissions(dir);
+  if (seeded.written) out(`  seeded missing permission allowlist`);
+  const model = cfg.stations.overrides[id] ?? cfg.stations.model;
+  const command = launchCommand({ id, dir, model }, "station");
+  // tmux names each station's window by its id (see provision.ts), so a
+  // respawn targets the existing pane rather than piling up new ones.
+  try {
+    execFileSync("tmux", ["respawn-pane", "-k", "-t", id, command], {
+      stdio: "ignore",
+      timeout: 10_000,
+    });
+    out(`✔ ${id} restarted in its existing pane`);
+    return;
+  } catch {
+    // no such window, or no tmux — fall back to a normal launch
+  }
+  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, "station");
+  if (res.launched) out(`✔ ${id} relaunched (${res.launcher})`);
+  else out(`launcher unavailable — paste this into a terminal:\n\n  ${command}\n`);
+}
+
+/** `hands ls` — registered kitchens and whether they're reachable. */
+function cmdLs(): void {
+  const projects = listRegisteredProjects();
+  if (projects.length === 0) {
+    out("no kitchens registered — run `hands register` from a repo's main checkout");
+    return;
+  }
+  for (const p of projects) {
+    const configured = fs.existsSync(path.join(p.repoRoot, CONFIG_BASENAME));
+    let seats = "";
+    try {
+      if (configured) {
+        const stations = listStations(p.repoRoot, loadConfig({ cwd: p.repoRoot }));
+        seats = stations.length ? ` · ${stations.length} station(s)` : " · no stations";
+      }
+    } catch {
+      // an unreadable config shouldn't break the listing
+    }
+    out(`${p.name.padEnd(18)} ${p.repoRoot}${configured ? "" : "  (no hands.config.json)"}${seats}`);
+  }
+}
+
+/** `hands doctor [--fix]` — see doctor.ts; every check maps to a real failure. */
+function cmdDoctor(argv: string[]): void {
+  const report = runDoctor({ fix: argv.includes("--fix") });
+  for (const c of report.checks) {
+    const mark = c.severity === "ok" ? "✔" : c.severity === "warn" ? "!" : "✗";
+    out(`${mark} ${c.name.padEnd(24)} ${c.detail}`);
+  }
+  out("");
+  const fixable = report.checks.filter((c) => c.fixable);
+  if (fixable.length > 0 && !argv.includes("--fix")) {
+    out(`${fixable.length} issue(s) are repairable — re-run with --fix`);
+  }
+  if (report.worst === "fail") process.exit(1);
+}
+
+/**
+ * Bring up a session in `dir`. Stations run their configured tier; the expo
+ * inherits the principal's own default (there is no expo model config, and
+ * choosing one for them would silently downgrade the pass).
+ */
+function launchAt(dir: string, mode: "expo" | "station", id: string, model?: string): void {
+  const cfg = loadConfig({ cwd: dir });
+  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, mode);
+  if (res.launched) {
+    out(`✔ ${id} → ${dir} (${res.launcher})`);
+    return;
+  }
+  // `manual` is the zero-assumption fallback, not a failure: print the exact
+  // command so the principal can paste it into whatever terminal they use.
+  out(`launcher unavailable — paste this into a terminal:\n\n  ${launchCommand({ id, dir, model }, mode)}\n`);
+}
+
+/** Open a station seat by id within `repoRoot`, or fail naming what exists. */
+function launchStation(repoRoot: string, stationId: string): void {
+  const cfg = loadConfig({ cwd: repoRoot });
+  const stations = listStations(repoRoot, cfg);
+  const match = stations.find((s) => s.id === stationId);
+  if (!match) {
+    const known = stations.map((s) => s.id).join(", ") || "none open";
+    fail(`no ${stationId} in ${repoRoot} — stations: ${known}`);
+  }
+  if (!match.present) fail(`${stationId}'s worktree is missing (${match.dir}) — re-open it with \`hands station add\``);
+  launchStationSeat(repoRoot, match.id, match.dir, cfg);
+}
+
+function launchStationSeat(
+  _repoRoot: string,
+  id: string,
+  dir: string,
+  cfg: ReturnType<typeof loadConfig>,
+): void {
+  // Seed here too, not just at `station add`: a seat opened by hand, or one
+  // created before seeding existed, would otherwise still stall on prompts.
+  seedStationPermissions(dir);
+  launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model);
+}
+
+/**
+ * Resolve a bare word as a kitchen or a station and launch it.
+ * Returns false when it resolves to neither, so the caller can fall through to
+ * usage rather than this swallowing every typo.
+ */
+function tryLaunch(cmd: string | undefined, rest: string[]): boolean {
+  // `hands` bare → the pass, here.
+  if (!cmd) {
+    const info = repoInfo(process.cwd());
+    if (!info || !fs.existsSync(path.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    launchAt(info.repoRoot, "expo", "expo");
+    return true;
+  }
+
+  // `hands station-2` → that seat in the current kitchen.
+  if (STATION_ID.test(cmd)) {
+    const info = repoInfo(process.cwd());
+    if (!info) fail(`not inside a git repo — use \`hands <project> ${cmd}\``);
+    launchStation(info.repoRoot, cmd);
+    return true;
+  }
+
+  // `hands ampersand [station-2]` → someone else's kitchen.
+  const project = resolveProject(cmd);
+  if (!project) return false;
+  const seat = rest[0];
+  if (seat && STATION_ID.test(seat)) launchStation(project.repoRoot, seat);
+  else launchAt(project.repoRoot, "expo", "expo");
+  return true;
+}
+
+/** `hands go <project> [station-N]` — explicit form, for scripts and names that collide with subcommands. */
+function cmdGo(argv: string[]): void {
+  const [name, ...rest] = argv;
+  if (!name) fail("usage: hands go <project> [station-N]");
+  if (!tryLaunch(name, rest)) {
+    fail(`no project named "${name}" — register it with \`hands register\` from its main checkout`);
+  }
+}
+
+/** `hands register [path]` — enroll a kitchen so `hands <name>` resolves it. */
+function cmdRegister(argv: string[]): void {
+  const { words, flags } = parseArgs(argv, ["--name"]);
+  const target = words[0] ?? process.cwd();
+  const entry = registerProject(target, { name: flags.get("--name") || undefined });
+  if (!entry) fail(`not a git repo: ${target}`);
+  out(`✔ registered "${entry.name}" → ${entry.repoRoot}`);
+  out(`  open it from anywhere with: hands ${entry.name}`);
+}
+
 async function main(): Promise<void> {
   const [cmd, ...rest] = process.argv.slice(2);
   try {
@@ -367,8 +611,40 @@ async function main(): Promise<void> {
       }
       case "paths":
         return cmdPaths();
+      case "go":
+        return cmdGo(rest);
+      case "register":
+        return cmdRegister(rest);
+      case "ls":
+        return cmdLs();
+      case "logs":
+        return cmdLogs(rest);
+      case "restart":
+        return cmdRestart(rest);
+      case "doctor":
+        return cmdDoctor(rest);
       default: {
+        // Not a subcommand — try to read it as a kitchen or a station before
+        // giving up. `hands` bare inside a kitchen opens the pass; `hands
+        // ampersand` opens someone else's; `hands station-2` opens a seat.
+        const askedForHelp = cmd === "--help" || cmd === "-h" || cmd === "help";
+        if (!askedForHelp && tryLaunch(cmd, rest)) return;
+        if (cmd && !askedForHelp) {
+          fail(
+            `no project or station named "${cmd}" — register this repo with \`hands register\`, or see \`hands\` for commands`,
+          );
+        }
         out("hands — an expo/station agent fleet for Claude Code");
+        out("");
+        out("  hands [<project>]         open the pass (expo) here, or in <project>");
+        out("  hands [<project>] station-N  open a station's seat");
+        out("  hands go <project> [station-N]  same, explicit (for scripts / name collisions)");
+        out("  hands register [path]     enroll a kitchen so it resolves by name");
+        out("  hands ls                  registered kitchens");
+        out("");
+        out("  hands doctor [--fix]      health check (--fix repairs what's safe to repair)");
+        out("  hands logs <station-N>    what a station is actually doing (its own transcript)");
+        out("  hands restart <station-N>  recycle a wedged station");
         out("");
         out(`  hands init                scaffold ${CONFIG_BASENAME}`);
         out("  hands books [<url>]       attach the books (durable journal) to this repo's config");
@@ -387,7 +663,8 @@ async function main(): Promise<void> {
         out("  hands whoami               show the signed-in identity (local only, no network call)");
         out("  hands serve               live dashboard → http://localhost:4319");
         out("  hands paths               show where this directory resolves (debug)");
-        process.exit(cmd ? 2 : 0);
+        // Asking for help is not an error; an unrecognized word is.
+        process.exit(cmd && !askedForHelp ? 2 : 0);
       }
     }
   } catch (err) {

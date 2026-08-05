@@ -117,4 +117,34 @@ describe("station provisioning (manual launcher)", () => {
     const cmd = launchCommand({ id: "station-1", dir: "/tmp/has space/w", model: "sonnet" });
     expect(cmd).toContain("'/tmp/has space/w'");
   });
+
+  it("launchCommand defaults to station mode so existing callers are unaffected", () => {
+    const cmd = launchCommand({ id: "station-1", dir: "/tmp/w", model: "sonnet" });
+    expect(cmd).toContain("/loop /hands:station");
+    expect(cmd).not.toContain("/hands:expo");
+  });
+
+  it("launchCommand emits the expo loop in expo mode", () => {
+    const cmd = launchCommand({ id: "expo", dir: "/tmp/w" }, "expo");
+    expect(cmd).toContain("/loop /hands:expo");
+    expect(cmd).not.toContain("/hands:station");
+  });
+
+  it("omits --model when none is given, so the expo inherits the principal's default", () => {
+    expect(launchCommand({ id: "expo", dir: "/tmp/w" }, "expo")).not.toContain("--model");
+    expect(launchCommand({ id: "station-1", dir: "/tmp/w", model: "sonnet" })).toContain(
+      "--model sonnet",
+    );
+  });
+
+  it("seeds a permission allowlist into every station worktree it creates", () => {
+    const [plan] = addStations(1, { cwd: repo, config: cfg });
+    if (!plan) throw new Error("addStations returned no plan");
+    const settings = path.join(plan.dir, ".claude", "settings.local.json");
+    expect(fs.existsSync(settings)).toBe(true);
+    // The regression this guards: a station spawned without this file stalls on
+    // a permission prompt before it can read anything. Cost ~14h on 2026-08-05.
+    const parsed = JSON.parse(fs.readFileSync(settings, "utf8"));
+    expect(parsed.permissions.allow).toContain("mcp__plugin_hands_hands__hands_receive");
+  });
 });
