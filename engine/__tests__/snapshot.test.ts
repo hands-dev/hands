@@ -66,4 +66,27 @@ describe("buildSnapshot", () => {
     expect(snap.collisions).toEqual([{ a: "wtA", b: "wtB", kind: "ticket", detail: "ENG-9" }]);
     store.close();
   });
+
+  it("surfaces unacked expo commands per station, clearing once the cursor passes them", () => {
+    const store = new Store({ env });
+    const now = 3_000_000_000_000;
+    store.setStatus({ id: "expo", cwd: "/e", pid: 1, now });
+    store.setStatus({ id: "wt1", cwd: "/w1", pid: 2, now });
+
+    const id1 = store.insertMessage({ from: "expo", to: "wt1", body: "merge conflict on #12", now });
+    store.insertMessage({ from: "expo", to: "wt1", body: "swap to #39", now: now + 1000 });
+    // A non-expo sender's directed message shouldn't count as a "command".
+    store.insertMessage({ from: "wt1", to: "wt1", body: "self note", now: now + 2000 });
+
+    let snap = buildSnapshot(store, now, env);
+    const wt1 = snap.agents.find((a) => a.id === "wt1")!;
+    expect(wt1.pendingCommands.map((c) => c.body)).toEqual(["merge conflict on #12", "swap to #39"]);
+    expect(snap.agents.find((a) => a.id === "expo")!.pendingCommands).toEqual([]);
+
+    // Draining past the first command leaves only the second pending.
+    store.setCursor("wt1", id1);
+    snap = buildSnapshot(store, now, env);
+    expect(snap.agents.find((a) => a.id === "wt1")!.pendingCommands.map((c) => c.body)).toEqual(["swap to #39"]);
+    store.close();
+  });
 });
