@@ -1,0 +1,154 @@
+name: Sync dashboard assets to hands-website
+
+# Vendors the compiled dashboard SPA + its public snapshot types into
+# hands-dev/hands-website on every push to main that touches the dashboard
+# source — committed copy + CI sync-PR, no npm package (plan #36, ticket 1).
+# hands-website statically serves the vendored assets; there's no build-time
+# coupling, so a plain PR is the whole mechanism.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "engine/dashboard/**"
+      - "engine/src/snapshot.ts"
+      - "engine/scripts/bundle.mjs"
+      - "engine/scripts/extract-public-types.mjs"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build + vendor locally but skip the push/PR against hands-website (upload the vendored files as an artifact instead)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-dashboard-assets
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+    steps:
+      - name: Check for the cross-repo sync credential
+        # Provisioning this secret is Michael's step, not a build blocker for
+        # hands-dev/hands itself — but a missing/expired token must fail
+        # loud and specific here, not surface as an opaque 403 three steps
+        # down inside `gh pr create`.
+        run: |
+          if [ -z "${{ secrets.HANDS_WEBSITE_SYNC_TOKEN }}" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "::error::HANDS_WEBSITE_SYNC_TOKEN is not set — cannot sync vendored assets to hands-website. Provision this secret (repo Settings → Secrets and variables → Actions) with a token that has contents:write + pull-requests:write on hands-dev/hands-website. Re-run this workflow (or wait for the next qualifying push) once it's set." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          path: hands
+
+      - uses: actions/setup-node@v7
+        with:
+          # matches ci.yml — store.ts's node:sqlite floor, harmless but
+          # irrelevant here since this job never imports server.ts/store.ts
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: hands/engine/package-lock.json
+
+      - name: Build the dashboard SPA + extract its public types
+        working-directory: hands/engine
+        run: |
+          npm ci
+          npm run bundle
+          node scripts/extract-public-types.mjs ../../vendor-out/hands-dashboard-snapshot.d.ts
+
+      - name: Validate the extracted .d.ts actually compiles
+        # hands-website has no PR CI, so a truncated/malformed extraction
+        # (the brace-depth counter has a known latent gap around braces
+        # inside doc comments) would otherwise first surface as a broken
+        # production Vercel build, post-merge. Catch it here instead, before
+        # anything is vendored anywhere.
+        working-directory: hands/engine
+        run: npx tsc --noEmit --skipLibCheck --strict ../../vendor-out/hands-dashboard-snapshot.d.ts
+
+      - name: Collect the built assets
+        run: |
+          mkdir -p vendor-out
+          cp hands/plugin/dist/assets/dashboard.js vendor-out/dashboard.js
+          cp hands/plugin/dist/assets/dashboard.css vendor-out/dashboard.css
+          # For inspection in dry-run mode only — the real sync path below
+          # regenerates this fresh, and only once it's confirmed there's an
+          # actual change to commit (see the note there for why).
+          {
+            echo "source: hands-dev/hands@${{ github.sha }}"
+            echo "built:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > vendor-out/VERSION
+          ls -la vendor-out
+
+      - name: Upload vendored files (dry run)
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hands-dashboard-vendor
+          path: vendor-out
+
+      - uses: actions/checkout@v7
+        if: env.DRY_RUN != 'true'
+        with:
+          repository: hands-dev/hands-website
+          token: ${{ secrets.HANDS_WEBSITE_SYNC_TOKEN }}
+          path: hands-website
+
+      - name: Vendor into hands-website and open (or update) the sync PR
+        if: env.DRY_RUN != 'true'
+        working-directory: hands-website
+        env:
+          GH_TOKEN: ${{ secrets.HANDS_WEBSITE_SYNC_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          BRANCH="bot/dashboard-assets-sync"
+
+          mkdir -p public/hands-dashboard types
+          cp ../vendor-out/dashboard.js public/hands-dashboard/dashboard.js
+          cp ../vendor-out/dashboard.css public/hands-dashboard/dashboard.css
+          cp ../vendor-out/hands-dashboard-snapshot.d.ts types/hands-dashboard-snapshot.d.ts
+
+          git config user.name "hands-dashboard-sync[bot]"
+          git config user.email "actions@github.com"
+          git checkout -B "$BRANCH"
+          # `git diff` never reports untracked files, so on a first-ever sync
+          # (brand new paths) it would silently see "no changes" and skip —
+          # stage first, THEN diff against HEAD, so a new file counts too.
+          # VERSION is deliberately excluded here (and not yet written) —
+          # its timestamp always differs, which would defeat this check on
+          # every single run regardless of whether the real assets changed.
+          git add public/hands-dashboard/dashboard.js public/hands-dashboard/dashboard.css types/hands-dashboard-snapshot.d.ts
+          if git diff --cached --quiet; then
+            echo "vendored files unchanged — nothing to sync (leaving the existing VERSION stamp as-is)"
+            exit 0
+          fi
+
+          # Only now, with a real change confirmed, stamp VERSION and fold
+          # it into the same commit.
+          {
+            echo "source: hands-dev/hands@${SOURCE_SHA}"
+            echo "built:  $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > public/hands-dashboard/VERSION
+          git add public/hands-dashboard/VERSION
+          git commit -m "sync: vendor dashboard assets + types from hands-dev/hands@${SOURCE_SHA:0:7}"
+          git push -f origin "$BRANCH"
+
+          # Reuse the one standing sync PR if it's already open, rather than
+          # accumulating a new PR per push.
+          existing="$(gh pr list --repo hands-dev/hands-website --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh pr create --repo hands-dev/hands-website \
+              --head "$BRANCH" --base main \
+              --title "sync: vendor dashboard assets + types" \
+              --body "Automated sync from hands-dev/hands@${SOURCE_SHA} (\`.github/workflows/sync-dashboard-assets.yml\`). Vendors \`public/hands-dashboard/{dashboard.js,dashboard.css,VERSION}\` + \`types/hands-dashboard-snapshot.d.ts\`."
+          else
+            echo "updated existing sync PR #$existing"
+          fi
