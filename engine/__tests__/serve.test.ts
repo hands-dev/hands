@@ -201,6 +201,54 @@ describe("other kitchens (books multiplayer)", () => {
   }, 20_000);
 });
 
+describe("other kitchens' crafts (books multiplayer)", () => {
+  it("surfaces another handle's craft book/skill over SSE, refreshed on the books tick", async () => {
+    // a shared bare books remote
+    const remote = path.join(home, "crafts-books.git");
+    fs.mkdirSync(remote);
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", remote]);
+
+    // casey's kitchen writes a craft's book + skill under its own namespace, then pushes
+    const casey = openJournal({
+      env: { HANDS_HOME: path.join(home, "casey-home") },
+      cwd: process.cwd(),
+      config: { ...DEFAULT_CONFIG, remote: { url: remote, handle: "casey", project: "proj" } },
+      agentId: "station-1",
+    })!;
+    const craftsDir = path.join(casey.dir, "journal", casey.project, casey.handle, "crafts");
+    fs.mkdirSync(craftsDir, { recursive: true });
+    fs.writeFileSync(path.join(craftsDir, "saucier.md"), "casey's saucier book\ncovers: sauces\n");
+    fs.writeFileSync(path.join(craftsDir, "saucier.skill.md"), "casey's saucier skill\n");
+    expect(syncPush(casey, { force: true }).status).toBe("pushed");
+
+    // our serve reads the same books via user-level config (michael's handle)
+    const userClaude = path.join(home, "user", ".claude");
+    fs.mkdirSync(userClaude, { recursive: true });
+    fs.writeFileSync(
+      path.join(userClaude, "hands.config.json"),
+      JSON.stringify({ remote: { url: remote, handle: "michael", project: "proj" } }),
+    );
+    resetConfigCache();
+    const serveEnv = { HANDS_HOME: home, HANDS_TEST_HOME: path.join(home, "user") };
+    handle = await serve({ port: 0, env: serveEnv, tickMs: 25, booksTickMs: 100 });
+
+    const stream = sse(`${handle.url}api/events`);
+    // crafts arrive on the first refresh after connect (initial frame may be empty)
+    let crafts: Array<{ handle: string; slug: string; book: string | null; skill: string | null }> = [];
+    for (let i = 0; i < 10 && !crafts.some((c) => c.handle === "casey"); i++) {
+      const frame = JSON.parse(await stream.next()) as { crafts: typeof crafts };
+      crafts = frame.crafts;
+    }
+    const caseyCraft = crafts.find((c) => c.handle === "casey" && c.slug === "saucier");
+    expect(caseyCraft).toBeDefined();
+    expect(caseyCraft!.book).toContain("casey's saucier book");
+    expect(caseyCraft!.skill).toContain("casey's saucier skill");
+
+    stream.close();
+    resetConfigCache();
+  }, 20_000);
+});
+
 describe("snapshotKey (SSE change detection)", () => {
   it("ignores `now` but keys on the derived idle flip", () => {
     const store = new Store({ env });

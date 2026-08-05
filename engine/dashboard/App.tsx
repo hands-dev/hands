@@ -1,3 +1,4 @@
+import { OtherCrafts } from "@/components/crafts";
 import { JournalFeed } from "@/components/journal-feed";
 import { OtherKitchens } from "@/components/kitchens";
 import { NeedsYou, OpenQuestions } from "@/components/questions-lane";
@@ -19,6 +20,7 @@ const NAV = [
   { href: "#pass", label: "At the pass" },
   { href: "#book", label: "The book" },
   { href: "#kitchens", label: "Other kitchens" },
+  { href: "#crafts", label: "Other crafts" },
 ];
 
 function LiveBadge({ connected }: { connected: boolean }) {
@@ -123,6 +125,9 @@ export function App() {
               </div>
               <div id="kitchens">
                 <OtherKitchens kitchens={snapshot.kitchens} now={snapshot.now} />
+              </div>
+              <div id="crafts">
+                <OtherCrafts crafts={snapshot.crafts} />
               </div>
             </div>
           </div>
