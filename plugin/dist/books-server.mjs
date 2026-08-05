@@ -30275,9 +30275,10 @@ function buildBooksServer(cfg) {
       const p = requireProject(cfg, project);
       if (typeof p !== "string") return errorResult(p.error);
       const h = sanitizeSegment(handle);
-      const file2 = journalPath(cfg.dir, p, h, "README.md");
+      const handleDir = journalPath(cfg.dir, p, h);
       try {
-        if (!file2) throw new Error("path escaped the journal root");
+        if (!handleDir) throw new Error("path escaped the journal root");
+        const file2 = path10.join(handleDir, "README.md");
         return asToolResult({ project: p, handle: h, markdown: fs8.readFileSync(file2, "utf8") });
       } catch {
         return errorResult(`no index for ${p}/${h} \u2014 check books_list_handles`);
