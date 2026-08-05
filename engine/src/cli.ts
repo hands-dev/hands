@@ -10,6 +10,7 @@
  *   hands scale <N>           reconcile the brigade to exactly N stations
  *   hands restore             rebuild local bus state from the remote journal
  *   hands sync                push pending journal appends now
+ *   hands mcp install         install a read-only books MCP for Claude Desktop
  *   hands paths               where this cwd resolves (debug)
  *
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
@@ -39,6 +40,14 @@ import {
   syncPush,
   validateJournal,
 } from "./remote.js";
+import {
+  booksMcpEntry,
+  desktopConfigPath,
+  resolveBooksServerEntry,
+  resolveBooksTarget,
+  serverName,
+  writeDesktopConfig,
+} from "./mcp-install.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { Store } from "./store.js";
@@ -226,6 +235,47 @@ function cmdDigest(argv: string[]): void {
   out("(committed + pushed on the next sync — or run: hands sync)");
 }
 
+/**
+ * Bridge the live, cwd/git-derived books config to a standalone MCP server
+ * registration a client outside the repo (Claude Desktop) can run. Requires
+ * books already attached (`hands books <url>`) — this only ever points a
+ * viewer at an existing journal, never creates one.
+ */
+function cmdMcp(argv: string[]): void {
+  const sub = argv[0];
+  if (sub !== "install") fail("usage: hands mcp install [--print]");
+  const rest = argv.slice(1);
+
+  const resolved = resolveBooksTarget();
+  if (!resolved.ok) fail(resolved.reason);
+  const { target } = resolved;
+
+  const entryPath = resolveBooksServerEntry();
+  if (!entryPath) {
+    fail(
+      "could not find the books MCP server bundle — run `npm run bundle` in engine/ (dev checkout) " +
+        "or reinstall the hands plugin",
+    );
+  }
+
+  const name = serverName(target.project);
+  const entry = booksMcpEntry(entryPath, target);
+
+  if (flag(rest, "--print")) {
+    out(JSON.stringify({ [name]: entry }, null, 2));
+    out("");
+    out('paste the above into any MCP client\'s config under "mcpServers"');
+    return;
+  }
+
+  const configPath = desktopConfigPath();
+  const written = writeDesktopConfig(configPath, name, entry);
+  if (!written.ok) fail(written.reason);
+  out(`✔ installed "${name}" → ${configPath}`);
+  out(`  reads: ${target.dir} (project "${target.project}")`);
+  out("  restart Claude Desktop to pick it up");
+}
+
 function cmdPaths(): void {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
@@ -262,6 +312,8 @@ async function main(): Promise<void> {
         return cmdSync(rest);
       case "digest":
         return cmdDigest(rest);
+      case "mcp":
+        return cmdMcp(rest);
       case "serve":
       case "dashboard": {
         const { serve } = await import("./serve.js");
@@ -284,6 +336,8 @@ async function main(): Promise<void> {
         out("  hands sync [--adopt]      push pending journal appends now (--adopt initializes a");
         out("                                non-empty repo as a journal — explicit by design)");
         out("  hands digest [--date D]  re-render journal digests (normally automatic on sync)");
+        out("  hands mcp install [--print]  install a read-only books MCP for Claude Desktop (or");
+        out("                                any MCP client, with --print) — requires books attached");
         out("  hands serve               live dashboard → http://localhost:4319");
         out("  hands paths               show where this directory resolves (debug)");
         process.exit(cmd ? 2 : 0);
