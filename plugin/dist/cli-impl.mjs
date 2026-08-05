@@ -21803,6 +21803,21 @@ var init_store = __esm({
         ).all(agentId, agentId, cursor);
       }
       /**
+       * Directed messages from expo to `agentId` still past its receive cursor —
+       * "pending/unacked commands" for the dashboard (hands#55). Unlike
+       * messagesForSince, this DOES use the cursor: a station that's read a
+       * command (even without acting on it) shouldn't keep showing as pending
+       * forever, and a station that's simply behind shows every command it
+       * hasn't drained yet, however old.
+       */
+      pendingFromExpo(agentId) {
+        return this.db.prepare(
+          `SELECT * FROM messages
+         WHERE to_id = ? AND from_id = 'expo' AND id > ?
+         ORDER BY id ASC`
+        ).all(agentId, this.getCursor(agentId));
+      }
+      /**
        * Messages addressed to `agentId` created after `sinceTs` — for the board's
        * awareness view. Independent of the receive cursor (which is how a station
        * *handles* messages), so showing a message never marks it handled.
@@ -22828,7 +22843,8 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       lastSeen: p.last_seen_at,
       wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
       wakes24h: wakes.get(p.id)?.last24h ?? 0,
-      focus: p.focus
+      focus: p.focus,
+      pendingCommands: p.id === "expo" ? [] : store.pendingFromExpo(p.id).map((m) => ({ id: m.id, subject: m.subject, body: m.body, at: m.created_at }))
     };
   });
   const collisions = [];

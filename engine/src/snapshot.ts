@@ -21,6 +21,15 @@ export interface SnapshotAgent {
   wakes24h: number;
   /** the station's evolving specialization label */
   focus: string | null;
+  /** directed messages from expo this agent hasn't drained yet (hands#55) */
+  pendingCommands: SnapshotPendingCommand[];
+}
+
+export interface SnapshotPendingCommand {
+  id: number;
+  subject: string | null;
+  body: string;
+  at: number;
 }
 
 export interface SnapshotMessage {
@@ -166,6 +175,10 @@ export function buildSnapshot(
       wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
       wakes24h: wakes.get(p.id)?.last24h ?? 0,
       focus: p.focus,
+      pendingCommands:
+        p.id === "expo"
+          ? []
+          : store.pendingFromExpo(p.id).map((m) => ({ id: m.id, subject: m.subject, body: m.body, at: m.created_at })),
     };
   });
 

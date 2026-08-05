@@ -29,6 +29,31 @@ function StateDot({ state }: { state: SnapshotAgent["state"] }) {
   );
 }
 
+/** A pending command sitting this long without being drained is "old" (hands#55's motivating case). */
+const STALE_COMMAND_MS = 15 * 60_000;
+
+function PendingCommands({ commands, now }: { commands: SnapshotAgent["pendingCommands"]; now: number }) {
+  if (commands.length === 0) return null;
+  const oldest = commands[0]!;
+  const stale = now - oldest.at > STALE_COMMAND_MS;
+  const title = commands
+    .map((c) => `${c.subject ?? c.body.slice(0, 60)} — ${ago(now, c.at)}`)
+    .join("\n");
+  return (
+    <div className="mt-1.5 pl-4">
+      <span
+        title={title}
+        className={cn(
+          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium",
+          stale ? "bg-destructive/15 text-destructive" : "bg-amber-500/15 text-amber-600",
+        )}
+      >
+        ⏳ {commands.length} pending from expo · oldest {ago(now, oldest.at)}
+      </span>
+    </div>
+  );
+}
+
 function StationCell({
   agent,
   now,
@@ -65,6 +90,7 @@ function StationCell({
           {ago(now, agent.lastActive ?? agent.lastSeen)}
         </span>
       </div>
+      <PendingCommands commands={agent.pendingCommands} now={now} />
       {buckets ? (
         <div className="mt-2">
           <Sparkline
