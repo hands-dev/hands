@@ -8898,6 +8898,7 @@ function openJournal(options) {
     url: url2,
     agentId,
     append(type, data) {
+      if (type === "cursor") return;
       try {
         fs8.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);

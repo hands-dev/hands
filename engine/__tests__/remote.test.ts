@@ -83,10 +83,12 @@ function populate(store: Store): void {
   store.journalAdd({ agentId: "station-1", kind: "commit", ref: "abc123", text: "fix thing", now: 8000 });
 }
 
+// NOTE: `cursor` (read-position bookkeeping) is deliberately excluded here —
+// it's not journaled (see the dedicated test below), so it does not survive
+// a restore/replay into a fresh store.
 function snapshotState(store: Store) {
   return {
     messages: store.history({ limit: 50 }).map((m) => [m.id, m.from_id, m.to_id, m.body]),
-    cursor: store.getCursor("expo"),
     question: store.getQuestion(1),
     tasks: store.listTasks().map((t) => [t.id, t.state, t.assignee, t.result]),
     todos: store.listTodos().map((t) => [t.id, t.state, t.done_signal]),
@@ -112,6 +114,28 @@ describe("journal append + replay round-trip", () => {
     const res = replayInto(b, events, envB);
     expect(res.skipped).toBe(0);
     expect(snapshotState(b)).toEqual(snapshotState(a));
+    a.close();
+    b.close();
+  });
+
+  it("never appends `cursor` events — bookkeeping only, not restored on replay (hands#45)", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    const a = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "busA-")) } });
+    a.setJournal(j.append);
+    populate(a); // includes store.setCursor("expo", 1)
+    expect(a.getCursor("expo")).toBe(1);
+
+    const events = readEvents(j.dir, j.project, "michael");
+    expect(events.some((e: JournalEvent) => e.type === "cursor")).toBe(false);
+
+    const envB = { HANDS_HOME: fs.mkdtempSync(path.join(root, "busB-")) };
+    const b = new Store({ env: envB });
+    replayInto(b, events, envB);
+    // cursor position never rode the journal, so a restore doesn't recover it —
+    // an accepted tradeoff for keeping every drain from writing an NDJSON line
+    expect(b.getCursor("expo")).toBe(0);
+
     a.close();
     b.close();
   });
