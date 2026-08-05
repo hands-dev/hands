@@ -562,10 +562,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path21) {
-  if (!path21)
+function getElementAtPath(obj, path22) {
+  if (!path22)
     return obj;
-  return path21.reduce((acc, key) => acc?.[key], obj);
+  return path22.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -877,11 +877,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path21, issues) {
+function prefixIssues(path22, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path21);
+    iss.path.unshift(path22);
     return iss;
   });
 }
@@ -1123,7 +1123,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path21 = []) => {
+  const processError = (error49, path22 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1133,7 +1133,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path21, ...issue2.path];
+        const fullpath = [...path22, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1165,8 +1165,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path21 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path21) {
+  const path22 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path22) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13860,13 +13860,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path21 = ref.slice(1).split("/").filter(Boolean);
-  if (path21.length === 0) {
+  const path22 = ref.slice(1).split("/").filter(Boolean);
+  if (path22.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path21[0] === defsKey) {
-    const key = path21[1];
+  if (path22[0] === defsKey) {
+    const key = path22[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17829,8 +17829,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path21) {
-      let input = path21;
+    function removeDotSegments(path22) {
+      let input = path22;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18082,8 +18082,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path21, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path21 && path21 !== "/" ? path21 : void 0;
+        const [path22, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -21482,12 +21482,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats2(ajv, list, fs21, exportName) {
+    function addFormats2(ajv, list, fs22, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs21[f]);
+        ajv.addFormat(f, fs22[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -27659,7 +27659,7 @@ function convertStandardElicitationSchema(schema) {
 function isAnnotationOnlyJsonSchemaKeyword(key) {
   return ANNOTATION_ONLY_JSON_SCHEMA_KEYWORDS.has(key) || key.startsWith("x-");
 }
-function walkProperty(node, path21, vendor, unsupported) {
+function walkProperty(node, path22, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -27667,8 +27667,8 @@ function walkProperty(node, path21, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path21}.${key}`);
-  } else unsupported.push(`${path21}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path22}.${key}`);
+  } else unsupported.push(`${path22}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -27685,11 +27685,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema2, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path21 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path21}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path22 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path22}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path21 ? `${path21}.${key}` : key;
+    const childPath = path22 ? `${path22}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -28302,9 +28302,9 @@ var init_src_D_zzAWoS = __esm({
         });
         const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
         if (!parsed.success) for (const issue2 of parsed.error.issues) {
-          const path21 = issue2.path.map(String);
-          const key = path21.length > 0 ? path21.join(".") : "_meta";
-          if (path21.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+          const path22 = issue2.path.map(String);
+          const key = path22.length > 0 ? path22.join(".") : "_meta";
+          if (path22.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
           issues.push({
             key,
             problem: issue2.message
@@ -32459,8 +32459,8 @@ var init_ajvProvider_97rDpkRx = __esm({
         for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
         return ind;
       }
-      function removeDotSegments(path21) {
-        let input = path21;
+      function removeDotSegments(path22) {
+        let input = path22;
         const output = [];
         let nextSlash = -1;
         let len = 0;
@@ -32613,8 +32613,8 @@ var init_ajvProvider_97rDpkRx = __esm({
           wsComponent.secure = void 0;
         }
         if (wsComponent.resourceName) {
-          const [path21, query] = wsComponent.resourceName.split("?");
-          wsComponent.path = path21 && path21 !== "/" ? path21 : void 0;
+          const [path22, query] = wsComponent.resourceName.split("?");
+          wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
           wsComponent.query = query;
           wsComponent.resourceName = void 0;
         }
@@ -36602,11 +36602,11 @@ var init_ajvProvider_97rDpkRx = __esm({
         if (!f) throw new Error(`Unknown format "${name}"`);
         return f;
       };
-      function addFormats2(ajv, list, fs21, exportName) {
+      function addFormats2(ajv, list, fs22, exportName) {
         var _a2;
         var _b;
         (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
-        for (const f of list) ajv.addFormat(f, fs21[f]);
+        for (const f of list) ajv.addFormat(f, fs22[f]);
       }
       module.exports = exports = formatsPlugin;
       Object.defineProperty(exports, "__esModule", { value: true });
@@ -37631,9 +37631,9 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs19 from "node:fs";
-import * as os11 from "node:os";
-import * as path19 from "node:path";
+import * as fs20 from "node:fs";
+import * as os12 from "node:os";
+import * as path20 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -37667,10 +37667,10 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path19.join(info.repoRoot, CONFIG_BASENAME);
+      const configPath = path20.join(info.repoRoot, CONFIG_BASENAME);
       const entry = registerProject(info.repoRoot);
       if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
-      if (fs19.existsSync(configPath)) {
+      if (fs20.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: hands books <url>)");
       } else {
@@ -37694,11 +37694,11 @@ async function runInit(argv) {
         if (journalUrl.trim()) {
           const handle = flags.handle ?? await ask(
             "Books handle (your fleet's namespace)?",
-            githubUsername() ?? os11.userInfo().username
+            githubUsername() ?? os12.userInfo().username
           );
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs19.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs20.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
@@ -37727,8 +37727,8 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import { execFileSync as execFileSync7 } from "node:child_process";
-import * as os12 from "node:os";
+import { execFileSync as execFileSync8 } from "node:child_process";
+import * as os13 from "node:os";
 
 // src/server.ts
 import * as fs14 from "node:fs";
@@ -38093,8 +38093,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path21, errorMaps, issueData } = params;
-  const fullPath = [...path21, ...issueData.path || []];
+  const { data, path: path22, errorMaps, issueData } = params;
+  const fullPath = [...path22, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -38209,11 +38209,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path21, key) {
+  constructor(parent, value, path22, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path21;
+    this._path = path22;
     this._key = key;
   }
   get path() {
@@ -48610,6 +48610,88 @@ function runDoctor(opts) {
   return { checks, worst: worstOf(checks) };
 }
 
+// src/version.ts
+import { execFileSync as execFileSync7 } from "node:child_process";
+import * as fs18 from "node:fs";
+import * as os10 from "node:os";
+import * as path18 from "node:path";
+import { fileURLToPath as fileURLToPath3 } from "node:url";
+var STAMP_BASENAME = "BUILD.json";
+function classifyInstall(entry, home = os10.homedir()) {
+  if (!entry) return "unknown";
+  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path18.join(home, ".hands", "lib"))) {
+    return "standalone";
+  }
+  if (/[/\\]plugins[/\\]cache[/\\]/.test(entry)) return "plugin";
+  if (/\.tsx?$/.test(entry) || /[/\\]engine[/\\]src[/\\]/.test(entry)) return "source";
+  return "unknown";
+}
+function readStamp(dir) {
+  try {
+    const raw = fs18.readFileSync(path18.join(dir, STAMP_BASENAME), "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.version !== "string" || typeof parsed.builtAt !== "string") return null;
+    return {
+      version: parsed.version,
+      commit: typeof parsed.commit === "string" ? parsed.commit : null,
+      builtAt: parsed.builtAt
+    };
+  } catch {
+    return null;
+  }
+}
+function gitShort(cwd) {
+  try {
+    return execFileSync7("git", ["rev-parse", "--short", "HEAD"], {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3e3
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+function buildInfo(opts) {
+  const entry = opts?.entry ?? process.argv[1] ?? fileURLToPath3(import.meta.url);
+  const kind = classifyInstall(entry, opts?.home ?? os10.homedir());
+  const stamp = readStamp(path18.dirname(entry));
+  if (stamp) {
+    return { version: stamp.version, commit: stamp.commit, builtAt: stamp.builtAt, kind, entry };
+  }
+  return {
+    version: "dev",
+    commit: gitShort(opts?.cwd ?? process.cwd()),
+    builtAt: null,
+    kind,
+    entry
+  };
+}
+function otherInstall(current, home = os10.homedir()) {
+  if (current !== "standalone") {
+    const stamp = readStamp(path18.join(home, ".hands", "lib"));
+    if (stamp) return { kind: "standalone", stamp };
+  }
+  if (current !== "plugin") {
+    const cacheRoot = path18.join(home, ".claude", "plugins", "cache", "hands", "hands");
+    try {
+      for (const dir of fs18.readdirSync(cacheRoot)) {
+        const stamp = readStamp(path18.join(cacheRoot, dir, "dist"));
+        if (stamp) return { kind: "plugin", stamp };
+      }
+    } catch {
+    }
+  }
+  return null;
+}
+function describe4(info) {
+  const bits = [info.version];
+  if (info.commit) bits.push(`(${info.commit})`);
+  bits.push(`\xB7 ${info.kind}`);
+  if (info.builtAt) bits.push(`\xB7 built ${info.builtAt}`);
+  return bits.join(" ");
+}
+
 // src/cli.ts
 init_digest();
 init_remote();
@@ -48618,10 +48700,10 @@ init_remote();
 init_config();
 init_paths();
 init_remote();
-import * as fs18 from "node:fs";
-import * as os10 from "node:os";
-import * as path18 from "node:path";
-import { fileURLToPath as fileURLToPath3 } from "node:url";
+import * as fs19 from "node:fs";
+import * as os11 from "node:os";
+import * as path19 from "node:path";
+import { fileURLToPath as fileURLToPath4 } from "node:url";
 var NO_BOOKS_REASON = "no books attached \u2014 run: hands books <path-or-url> to enable books first";
 function resolveBooksTarget(opts) {
   const cwd = opts?.cwd ?? process.cwd();
@@ -48633,7 +48715,7 @@ function resolveBooksTarget(opts) {
   if (!config2.remote.url?.trim()) return { ok: false, reason: NO_BOOKS_REASON };
   const j = openJournal({ cwd, env, config: config2 });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
-  if (!fs18.existsSync(path18.join(j.dir, ".git"))) {
+  if (!fs19.existsSync(path19.join(j.dir, ".git"))) {
     return { ok: false, reason: `could not set up the journal clone at ${j.dir}` };
   }
   syncPull(j.dir);
@@ -48641,25 +48723,25 @@ function resolveBooksTarget(opts) {
   if (!shape.ok) return { ok: false, reason: shape.reason ?? "journal repo failed validation" };
   return { ok: true, target: { dir: j.dir, project: j.project, handle: j.handle, url: j.url } };
 }
-function resolveBooksServerEntry(here = path18.dirname(fileURLToPath3(import.meta.url))) {
-  const bundled = path18.join(here, "books-server.mjs");
-  if (fs18.existsSync(bundled)) return bundled;
-  const devFallback = path18.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
-  if (fs18.existsSync(devFallback)) return devFallback;
+function resolveBooksServerEntry(here = path19.dirname(fileURLToPath4(import.meta.url))) {
+  const bundled = path19.join(here, "books-server.mjs");
+  if (fs19.existsSync(bundled)) return bundled;
+  const devFallback = path19.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
+  if (fs19.existsSync(devFallback)) return devFallback;
   return null;
 }
 function desktopConfigPath(env = process.env) {
   const override = env.HANDS_TEST_DESKTOP_CONFIG?.trim();
   if (override) return override;
-  const home = os10.homedir();
+  const home = os11.homedir();
   if (process.platform === "darwin") {
-    return path18.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+    return path19.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
   }
   if (process.platform === "win32") {
-    const appData = env.APPDATA?.trim() || path18.join(home, "AppData", "Roaming");
-    return path18.join(appData, "Claude", "claude_desktop_config.json");
+    const appData = env.APPDATA?.trim() || path19.join(home, "AppData", "Roaming");
+    return path19.join(appData, "Claude", "claude_desktop_config.json");
   }
-  return path18.join(home, ".config", "Claude", "claude_desktop_config.json");
+  return path19.join(home, ".config", "Claude", "claude_desktop_config.json");
 }
 function serverName(project) {
   return `hands-books-${project}`;
@@ -48674,7 +48756,7 @@ function booksMcpEntry(serverEntryPath, target) {
 function writeDesktopConfig(configPath, name, entry) {
   let parsed = {};
   try {
-    parsed = JSON.parse(fs18.readFileSync(configPath, "utf8"));
+    parsed = JSON.parse(fs19.readFileSync(configPath, "utf8"));
   } catch (err) {
     if (err.code !== "ENOENT") {
       return { ok: false, reason: `${configPath} is not valid JSON \u2014 fix or remove it, then retry (${String(err)})` };
@@ -48683,16 +48765,16 @@ function writeDesktopConfig(configPath, name, entry) {
   const servers = parsed.mcpServers && typeof parsed.mcpServers === "object" ? parsed.mcpServers : {};
   servers[name] = entry;
   parsed.mcpServers = servers;
-  fs18.mkdirSync(path18.dirname(configPath), { recursive: true });
-  fs18.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
+  fs19.mkdirSync(path19.dirname(configPath), { recursive: true });
+  fs19.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
 `);
   return { ok: true };
 }
 
 // src/cli.ts
 init_store();
-import * as fs20 from "node:fs";
-import * as path20 from "node:path";
+import * as fs21 from "node:fs";
+import * as path21 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -48762,11 +48844,11 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path20.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs20.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
+  const configPath = path21.join(info.repoRoot, CONFIG_BASENAME);
+  if (!fs21.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
-    cfg = JSON.parse(fs20.readFileSync(configPath, "utf8"));
+    cfg = JSON.parse(fs21.readFileSync(configPath, "utf8"));
   } catch (err) {
     fail(`${configPath} is not valid JSON: ${String(err)}`);
   }
@@ -48774,7 +48856,7 @@ function cmdBooks(argv) {
   const url2 = argv.find((a) => !a.startsWith("--"));
   if (!url2) {
     if (typeof remote.url === "string" && remote.url) {
-      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os12.userInfo().username)}")`);
+      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os13.userInfo().username)}")`);
     } else {
       out2("no books attached \u2014 attach with: hands books <private-git-url> [--handle <name>]");
     }
@@ -48785,9 +48867,9 @@ function cmdBooks(argv) {
   cfg.remote = {
     ...remote,
     url: url2,
-    handle: handleArg ?? remote.handle ?? githubUsername() ?? os12.userInfo().username
+    handle: handleArg ?? remote.handle ?? githubUsername() ?? os13.userInfo().username
   };
-  fs20.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs21.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
   out2("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
@@ -48798,7 +48880,7 @@ function requireRemote() {
   if (!j) {
     fail("no books attached \u2014 run: hands books git@github.com:you/hands-books.git");
   }
-  if (!fs20.existsSync(path20.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs21.existsSync(path21.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -48910,7 +48992,7 @@ function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
   let focus = null;
-  if (fs20.existsSync(dbPath())) {
+  if (fs21.existsSync(dbPath())) {
     const store = new Store();
     try {
       focus = store.getFocus(agentId);
@@ -48990,7 +49072,7 @@ function cmdRestart(argv) {
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
   const command = launchCommand({ id, dir, model }, "station");
   try {
-    execFileSync7("tmux", ["respawn-pane", "-k", "-t", id, command], {
+    execFileSync8("tmux", ["respawn-pane", "-k", "-t", id, command], {
       stdio: "ignore",
       timeout: 1e4
     });
@@ -49012,7 +49094,7 @@ function cmdLs() {
     return;
   }
   for (const p of projects) {
-    const configured = fs20.existsSync(path20.join(p.repoRoot, CONFIG_BASENAME));
+    const configured = fs21.existsSync(path21.join(p.repoRoot, CONFIG_BASENAME));
     let seats = "";
     try {
       if (configured) {
@@ -49022,6 +49104,19 @@ function cmdLs() {
     } catch {
     }
     out2(`${p.name.padEnd(18)} ${p.repoRoot}${configured ? "" : "  (no hands.config.json)"}${seats}`);
+  }
+}
+function cmdVersion() {
+  const info = buildInfo();
+  out2(`hands ${describe4(info)}`);
+  out2(`  ${info.entry}`);
+  const other = otherInstall(info.kind);
+  if (!other) return;
+  const same = other.stamp.commit && other.stamp.commit === info.commit;
+  out2("");
+  out2(`also installed: ${other.kind} \u2014 ${other.stamp.version}${other.stamp.commit ? ` (${other.stamp.commit})` : ""}`);
+  if (!same) {
+    out2("  \u26A0 the two installs are different builds \u2014 `hands` and your sessions' MCP server may disagree");
   }
 }
 function cmdDoctor(argv) {
@@ -49067,7 +49162,7 @@ function launchStationSeat(_repoRoot, id, dir, cfg) {
 function tryLaunch(cmd, rest) {
   if (!cmd) {
     const info = repoInfo(process.cwd());
-    if (!info || !fs20.existsSync(path20.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    if (!info || !fs21.existsSync(path21.join(info.repoRoot, CONFIG_BASENAME))) return false;
     launchAt(info.repoRoot, "expo", "expo");
     return true;
   }
@@ -49150,6 +49245,10 @@ async function main2() {
         return cmdRestart(rest);
       case "doctor":
         return cmdDoctor(rest);
+      case "version":
+      case "--version":
+      case "-v":
+        return cmdVersion();
       default: {
         const askedForHelp = cmd === "--help" || cmd === "-h" || cmd === "help";
         if (!askedForHelp && tryLaunch(cmd, rest)) return;
@@ -49169,6 +49268,7 @@ async function main2() {
         out2("  hands doctor [--fix]      health check (--fix repairs what's safe to repair)");
         out2("  hands logs <station-N>    what a station is actually doing (its own transcript)");
         out2("  hands restart <station-N>  recycle a wedged station");
+        out2("  hands version             which build is running (and whether two installs disagree)");
         out2("");
         out2(`  hands init                scaffold ${CONFIG_BASENAME}`);
         out2("  hands books [<url>]       attach the books (durable journal) to this repo's config");

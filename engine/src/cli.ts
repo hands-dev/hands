@@ -43,6 +43,7 @@ import { listRegisteredProjects, registerProject, resolveProject } from "./proje
 import { seedStationPermissions } from "./seed-permissions.js";
 import { idleMs, recentActivity } from "./station-logs.js";
 import { runDoctor } from "./doctor.js";
+import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
   githubUsername,
@@ -466,6 +467,26 @@ function cmdLs(): void {
   }
 }
 
+/**
+ * `hands version` — which build is running, and whether a second install
+ * disagrees with it. The second half is the point: a standalone CLI and a
+ * plugin cache at different vintages means the command you type and the MCP
+ * server your sessions talk to are different software.
+ */
+function cmdVersion(): void {
+  const info = buildInfo();
+  out(`hands ${describe(info)}`);
+  out(`  ${info.entry}`);
+  const other = otherInstall(info.kind);
+  if (!other) return;
+  const same = other.stamp.commit && other.stamp.commit === info.commit;
+  out("");
+  out(`also installed: ${other.kind} — ${other.stamp.version}${other.stamp.commit ? ` (${other.stamp.commit})` : ""}`);
+  if (!same) {
+    out("  ⚠ the two installs are different builds — `hands` and your sessions' MCP server may disagree");
+  }
+}
+
 /** `hands doctor [--fix]` — see doctor.ts; every check maps to a real failure. */
 function cmdDoctor(argv: string[]): void {
   const report = runDoctor({ fix: argv.includes("--fix") });
@@ -623,6 +644,10 @@ async function main(): Promise<void> {
         return cmdRestart(rest);
       case "doctor":
         return cmdDoctor(rest);
+      case "version":
+      case "--version":
+      case "-v":
+        return cmdVersion();
       default: {
         // Not a subcommand — try to read it as a kitchen or a station before
         // giving up. `hands` bare inside a kitchen opens the pass; `hands
@@ -645,6 +670,7 @@ async function main(): Promise<void> {
         out("  hands doctor [--fix]      health check (--fix repairs what's safe to repair)");
         out("  hands logs <station-N>    what a station is actually doing (its own transcript)");
         out("  hands restart <station-N>  recycle a wedged station");
+        out("  hands version             which build is running (and whether two installs disagree)");
         out("");
         out(`  hands init                scaffold ${CONFIG_BASENAME}`);
         out("  hands books [<url>]       attach the books (durable journal) to this repo's config");

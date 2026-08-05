@@ -1,0 +1,120 @@
+name: Sync installer to hands-website
+
+# Vendors install.sh into hands-dev/hands-website so `curl -fsSL
+# https://hands-cc.dev/install.sh | sh` serves the current script. Same
+# mechanism as sync-dashboard-assets.yml: committed copy + a standing sync PR,
+# no build-time coupling.
+#
+# Only install.sh is vendored — NOT the CLI bundle. The installer pulls the
+# ~2MB payload from raw.githubusercontent at a pinned ref, so the website repo
+# doesn't accumulate a multi-megabyte binary on every push to main.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "install.sh"
+      - ".github/workflows/sync-installer.yml"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate locally but skip the push/PR against hands-website"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-installer
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+    steps:
+      - name: Check for the cross-repo sync credential
+        run: |
+          if [ -z "${{ secrets.HANDS_WEBSITE_SYNC_TOKEN }}" ] && [ "$DRY_RUN" != "true" ]; then
+            echo "::error::HANDS_WEBSITE_SYNC_TOKEN is not set — cannot sync install.sh to hands-website. Provision this secret (repo Settings → Secrets and variables → Actions) with a token that has contents:write + pull-requests:write on hands-dev/hands-website." >&2
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
+        with:
+          path: hands
+
+      - name: Lint the installer
+        # This script runs on strangers' machines, piped straight into sh,
+        # before anything of ours exists. A syntax error here is a broken
+        # first impression that no amount of docs recovers from.
+        working-directory: hands
+        run: |
+          sh -n install.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -s sh install.sh || true
+          fi
+
+      - name: Smoke-test the installer end to end
+        # Install from THIS checkout's bundles into a scratch prefix and run the
+        # result. Catches a payload rename or a broken shim before it reaches
+        # the website — the installer is the one artifact with no other CI.
+        working-directory: hands
+        run: |
+          set -eux
+          HANDS_BASE="file://$PWD/plugin/dist" HANDS_PREFIX="$RUNNER_TEMP/hands-smoke" sh install.sh
+          "$RUNNER_TEMP/hands-smoke/bin/hands" version
+          "$RUNNER_TEMP/hands-smoke/bin/hands" --help >/dev/null
+
+      - name: Upload installer (dry run)
+        if: env.DRY_RUN == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hands-installer
+          path: hands/install.sh
+
+      - uses: actions/checkout@v7
+        if: env.DRY_RUN != 'true'
+        with:
+          repository: hands-dev/hands-website
+          token: ${{ secrets.HANDS_WEBSITE_SYNC_TOKEN }}
+          path: hands-website
+
+      - name: Vendor into hands-website and open (or update) the sync PR
+        if: env.DRY_RUN != 'true'
+        working-directory: hands-website
+        env:
+          GH_TOKEN: ${{ secrets.HANDS_WEBSITE_SYNC_TOKEN }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          BRANCH="bot/installer-sync"
+
+          mkdir -p public
+          cp ../hands/install.sh public/install.sh
+
+          git config user.name "hands-installer-sync[bot]"
+          git config user.email "actions@github.com"
+          git checkout -B "$BRANCH"
+          # Stage before diffing: `git diff` never reports untracked files, so a
+          # first-ever sync would otherwise read as "no changes" and skip.
+          git add public/install.sh
+          if git diff --cached --quiet; then
+            echo "install.sh unchanged — nothing to sync"
+            exit 0
+          fi
+
+          git commit -m "sync: vendor install.sh from hands-dev/hands@${SOURCE_SHA:0:7}"
+          git push -f origin "$BRANCH"
+
+          existing="$(gh pr list --repo hands-dev/hands-website --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$existing" ]; then
+            gh pr create --repo hands-dev/hands-website \
+              --head "$BRANCH" --base main \
+              --title "sync: vendor install.sh" \
+              --body "Automated sync from hands-dev/hands@${SOURCE_SHA} (\`.github/workflows/sync-installer.yml\`). Serves \`https://hands-cc.dev/install.sh\`."
+          else
+            echo "updated existing sync PR #$existing"
+          fi
