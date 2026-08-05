@@ -102,7 +102,7 @@ export function App() {
           </div>
           <NeedsYou questions={needsHuman} principal={snapshot.principal} now={snapshot.now} />
           <StatCards snapshot={snapshot} />
-          <TokenBurn tokens={snapshot.tokens} />
+          <TokenBurn tokens={snapshot.tokens} agents={snapshot.agents} />
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
             <div className="min-w-0 space-y-4">
