@@ -1,6 +1,6 @@
 ---
 name: feedback
-description: Send feedback about the hands plugin to its maintainer — collects the principal's note, stamps light context (handle, repo, date), and files it as a GitHub issue on heymichaelp/hands, which lands in the maintainer's email via GitHub notifications. Use when the principal says /hands:feedback, "send feedback", "report a bug in hands", "this plugin is broken", or similar.
+description: Send feedback about the hands plugin to its maintainer — collects the principal's note, stamps light context (handle, repo, date), and files it as a GitHub issue on hands-dev/hands, which lands in the maintainer's email via GitHub notifications. Use when the principal says /hands:feedback, "send feedback", "report a bug in hands", "this plugin is broken", or similar.
 ---
 
 # Feedback — a note to the chef
@@ -28,7 +28,7 @@ repo — no new credentials, no config: `gh` is already the one CLI hands requir
 4. **File.**
 
    ```bash
-   gh issue create --repo heymichaelp/hands --title "feedback: <gist>" \
+   gh issue create --repo hands-dev/hands --title "feedback: <gist>" \
      --label feedback --body "<body + footer>"
    ```
 
@@ -43,5 +43,5 @@ repo — no new credentials, no config: `gh` is already the one CLI hands requir
 - Never file without the principal's explicit yes on the composed text (step 3).
 - Never include secrets, env values, file contents, or transcript excerpts in the
   body — the principal's words plus the three-field footer, nothing else.
-- The target repo is always `heymichaelp/hands`, never the repo the session is in.
+- The target repo is always `hands-dev/hands`, never the repo the session is in.
 - One issue per send; don't batch unrelated feedback into one ticket.

@@ -18,7 +18,7 @@ Placeholders: `<REPO_SSH>` = the project repo (e.g. `git@github.com:org/project.
 ## Step 1 — Install the plugin
 
 ```
-/plugin marketplace add heymichaelp/hands
+/plugin marketplace add hands-dev/hands
 /plugin install hands@hands
 ```
 
