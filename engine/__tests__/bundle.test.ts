@@ -30,6 +30,10 @@ describe("committed plugin bundles", () => {
   it("are fresh relative to src/ (run `npm run bundle` if this fails)", async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hands-bundle-"));
     await buildBundles(tmp);
+    // BUILD.json is deliberately NOT in this list: it stamps commit + build
+    // time, so it differs on every run by design and would defeat the whole
+    // check. Don't add it. (Same reasoning as the VERSION file excluded from
+    // the change-detection in .github/workflows/sync-dashboard-assets.yml.)
     const files = [
       "server.mjs",
       "server-impl.mjs",
@@ -44,5 +48,14 @@ describe("committed plugin bundles", () => {
       const committed = fs.readFileSync(path.join(committedDir, file), "utf8");
       expect(committed, `${file} is stale — run: cd hands && npm run bundle`).toBe(fresh);
     }
+  }, 60_000);
+
+  it("stamps the build so `hands version` can say which one is running", async () => {
+    tmp ||= fs.mkdtempSync(path.join(os.tmpdir(), "hands-bundle-"));
+    if (!fs.existsSync(path.join(tmp, "BUILD.json"))) await buildBundles(tmp);
+    const stamp = JSON.parse(fs.readFileSync(path.join(tmp, "BUILD.json"), "utf8"));
+    expect(typeof stamp.version).toBe("string");
+    expect(typeof stamp.builtAt).toBe("string");
+    expect(Number.isNaN(Date.parse(stamp.builtAt))).toBe(false);
   }, 60_000);
 });

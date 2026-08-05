@@ -38,6 +38,17 @@ if (maj < 22 || (maj === 22 && (min ?? 0) < 5)) {
 ${extra}await import("./${impl}");
 `;
 
+/** Short HEAD at build time, for the build stamp. Null outside a repo (e.g. a tarball build). */
+function gitShort() {
+  const res = spawnSync("git", ["rev-parse", "--short", "HEAD"], {
+    cwd: pkgDir,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  const out = res.stdout?.trim();
+  return res.status === 0 && out ? out : null;
+}
+
 export async function buildBundles(outDir = defaultOut) {
   fs.mkdirSync(outDir, { recursive: true });
   const shared = {
@@ -75,6 +86,23 @@ export async function buildBundles(outDir = defaultOut) {
     NODE_FLOOR_CHECK("server-impl.mjs", 'process.env.HANDS_FORCE_MAIN = "1";\n'),
   );
   fs.writeFileSync(path.join(outDir, "cli.mjs"), NODE_FLOOR_CHECK("cli-impl.mjs"));
+
+  // Stamp the build so `hands version` / `hands doctor` can say WHICH build is
+  // running and flag skew between a standalone install and a plugin cache.
+  // Without this, "that command doesn't exist" is indistinguishable from
+  // "you're running a different vintage than the one you edited".
+  fs.writeFileSync(
+    path.join(outDir, "BUILD.json"),
+    `${JSON.stringify(
+      {
+        version: JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")).version,
+        commit: gitShort(),
+        builtAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    )}\n`,
+  );
 
   // Dashboard SPA — browser JS via esbuild…
   fs.mkdirSync(path.join(outDir, "assets"), { recursive: true });

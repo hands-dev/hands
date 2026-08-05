@@ -1,5 +1,20 @@
 #!/usr/bin/env bash
 # hands CLI shim — on the Bash PATH whenever the plugin is enabled.
 # The version gate lives in dist/cli.mjs; this just resolves the plugin root.
+#
+# A standalone install (hands-cc.dev/install.sh → ~/.hands/lib) wins when
+# present. The plugin's copy only moves when you remember to update the plugin,
+# and a stale copy is invisible — the symptom is "that command doesn't exist"
+# while your checkout plainly has it. A standalone install is one the user
+# updated deliberately, so it's the likelier intent.
+#
+# HANDS_USE_PLUGIN_CLI=1 forces this plugin's own build (for debugging the
+# plugin itself). `hands version` reports which one ran either way, and says so
+# when the two are different builds.
 set -euo pipefail
+
+if [ "${HANDS_USE_PLUGIN_CLI:-}" != "1" ] && [ -f "${HOME}/.hands/lib/cli.mjs" ]; then
+  exec node --no-warnings "${HOME}/.hands/lib/cli.mjs" "$@"
+fi
+
 exec node --no-warnings "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/dist/cli.mjs" "$@"

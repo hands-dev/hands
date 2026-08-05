@@ -31,6 +31,17 @@ Then, per repo (from its main checkout) — one slash command:
                   # (or skip it — /hands:expo bootstraps itself on first run)
 ```
 
+**Or install just the CLI**, without the plugin — same `hands` command, no Claude Code required:
+
+```bash
+curl -fsSL https://hands-cc.dev/install.sh | sh    # → ~/.hands/bin/hands
+```
+
+Both can coexist, and when they do the standalone install wins: the plugin's copy only moves when
+you remember to update the plugin, and a stale copy is invisible — the symptom is *"that command
+doesn't exist"* while your checkout plainly has it. `hands version` says which build ran and flags
+it when the two disagree; `HANDS_USE_PLUGIN_CLI=1` forces the plugin's own.
+
 ## Run the kitchen
 
 ```bash
@@ -67,6 +78,7 @@ hands doctor [--fix]      # what's actually wrong, and repair what's safe to rep
 hands logs station-2      # what that station is really doing, from its own transcript
 hands restart station-2   # recycle a wedged seat in its existing pane
 hands ls                  # registered kitchens
+hands version             # which build is running (and whether two installs disagree)
 ```
 
 `hands logs` reads the pane's Claude Code transcript rather than the bus, because the bus only
