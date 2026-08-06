@@ -40,4 +40,10 @@ over SSE, no refresh. It is a viewer, not a participant: it never registers on t
 - Never double-boot; the probe decides, EADDRINUSE is the backstop.
 - Never kill whatever else answers on the port — redirect via `HANDS_PORT` instead.
 - The serve process belongs to this session's background tasks; if the principal asks to stop it,
-  `TaskStop` it (or `pkill -f "hands.*serve"` as a fallback).
+  `TaskStop` it. **Never `pkill -f "hands.*serve"` (hands#77)** — that pattern matches the MCP
+  server's own process path too (`.../plugins/cache/hands/hands/<sha>/dist/server.mjs` contains
+  both `hands` and `serve` as substrings) and has killed every station's MCP server machine-wide in
+  practice, not just the dashboard. If `TaskStop` isn't available (its task id is unknown), fall
+  back to the pidfile `hands serve` itself writes: `kill "$(cat <coordinationDir>/dashboard.pid)"`
+  — precise by construction, no pattern to over-match. `hands doctor` also reports and (`--fix`)
+  clears a stale pidfile if the process is already gone.

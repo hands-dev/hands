@@ -60,14 +60,26 @@ chatty behavior is visible.
 
 ## The pass (on every wake — the arming invocation, or a `<task-notification>` from the Monitor)
 
-1. **Drain the inbox:** `hands_receive({ wait_seconds: 2 })`. Genuinely empty → **yield**, say
+1. **Confirm the tail is still alive (hands#121) — every pass, not just at arm-time:**
+
+   ```
+   pgrep -fl "tail -F -n0 .*<id>.notify"
+   ```
+
+   A hit → proceed. No hit → the tail died silently (a confirmed trigger: process/session
+   restart; NOT `/compact`, which was tested and does not kill it) and you've been `deaf` —
+   indistinguishable from `idle` from the outside — for however long that's been true. Re-arm
+   immediately (the Monitor command from "First invocation" step 3), THEN continue. This costs
+   only latency, never content — `hands_receive` reads the DB, which is authoritative regardless
+   of whether the notify tail was alive — but the sooner you catch it, the shorter the gap.
+2. **Drain the inbox:** `hands_receive({ wait_seconds: 2 })`. Genuinely empty → **yield**, say
    nothing.
-2. **Handle each message — concisely, as this station:**
+3. **Handle each message — concisely, as this station:**
    - **A question from the expo you can answer** from your own context → reply with
      `hands_send({ to: "expo", body: <answer> })`. Answer only what you actually know.
    - **A heads-up / FYI** → note it; reply with `wake:false` only if genuinely useful.
    - **Needs a decision you can't make** → `hands_ask`.
-3. **Work your tickets:** `hands_tasks({ assignee: "<your id>", active: true })` — `active` covers
+4. **Work your tickets:** `hands_tasks({ assignee: "<your id>", active: true })` — `active` covers
    open/assigned/in_progress/returned, not just fresh assignments, so a restarted pane rediscovers
    its own in-flight work on every wake instead of reporting an empty queue (hands#83: `state:
    "assigned"` alone hid a real in-progress ticket from a station's own boot check).
@@ -88,11 +100,11 @@ chatty behavior is visible.
    slices, **fan out sub-agents** (Agent tool) in-session — cheap per-spawn model overrides for
    mechanical slices, converge the summaries yourself — that's exactly why the expo parked the
    fan-out with you rather than bloating its own context.
-4. **Keep your craft label honest.** If your work genuinely shifts within the craft, that's just
+5. **Keep your craft label honest.** If your work genuinely shifts within the craft, that's just
    the craft evolving — reflect it in the book. Only rename via `hands_focus` when you're actually
    taking up a DIFFERENT craft — and remember a new label points you at a different book (the
    swap protocol below applies, distill before you switch).
-5. **Yield.** The Monitor wakes you on the next inbound — you do not poll. On a **fully idle** wake
+6. **Yield.** The Monitor wakes you on the next inbound — you do not poll. On a **fully idle** wake
    (empty inbox, no in-flight ticket), run the compaction check below when picking the next
    heartbeat prompt.
 
@@ -186,12 +198,16 @@ No craft assigned? Work tickets generically, or `hands_ask` the expo for one.
 
 ## Guardrails
 
-- **Arm the Monitor once.** `pgrep` before arming; never stack duplicates.
-- **Monitor self-heal is unconditional (hands#86/#74).** If a `<task-notification>` reports your
-  own Monitor task failed, re-arm it immediately — before draining, before anything else — using
-  the same command from "First invocation" step 3. This is a known harness-level failure mode
-  (exit 144, not caused by how hands writes the notify file), not an error to investigate each
-  time; just re-arm and continue the pass.
+- **Arm the Monitor once at start** (`pgrep` before arming; never stack duplicates) **and re-verify
+  it every pass thereafter (hands#121)** — "The pass" step 1 above. A `<task-notification>`
+  reporting the Monitor task's own failure isn't the only way it dies; a process/session restart
+  kills the tail with no notification at all, so don't rely on that signal alone.
+- **Monitor self-heal is unconditional (hands#86/#74).** Whether caught by a `<task-notification>`
+  reporting your Monitor task failed, or by the pgrep check above finding it already gone, re-arm
+  immediately — before draining, before anything else — using the same command from "First
+  invocation" step 3. This is a known harness-level failure mode (exit 144, not caused by how
+  hands writes the notify file), not an error to investigate each time; just re-arm and continue
+  the pass.
 - **When the loop stops** (the principal cancels, or `/loop` stop), stop the Monitor:
   `TaskStop` it if you have its task id, else `pkill -f "tail -F -n0 .*<id>.notify"`.
 - **Never push, merge, deploy, or mutate shared state autonomously.** Reply, do reversible

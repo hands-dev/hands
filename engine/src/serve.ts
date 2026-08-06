@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type HandsConfig, loadConfig } from "./config.js";
 import { fileFeedback, type FeedbackResult, type GhRunner } from "./feedback.js";
-import { dbPath } from "./paths.js";
+import { dbPath, pidPath } from "./paths.js";
 import {
   openJournal,
   type OtherCraft,
@@ -476,6 +476,14 @@ export function serve(opts?: {
     server.listen(port, host, () => {
       const addr = server.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
+      // Best-effort — a stale/unwritable pidfile must never block the dashboard itself. Matches
+      // notify.ts's 0600 convention (this file records nothing sensitive, but same posture).
+      const pidFile = pidPath(env);
+      try {
+        fs.writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
+      } catch {
+        // proceed without a pidfile — doctor/the dashboard skill just won't find one to check
+      }
       resolve({
         port: boundPort,
         host,
@@ -497,6 +505,13 @@ export function serve(opts?: {
           clients.clear();
           server.close();
           store.close();
+          // Only remove a pidfile that's still ours — a second instance that raced past
+          // EADDRINUSE (or a stale-pidfile cleanup elsewhere) may have already replaced it.
+          try {
+            if (fs.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs.unlinkSync(pidFile);
+          } catch {
+            // already gone, or never written — fine either way
+          }
         },
       });
     });

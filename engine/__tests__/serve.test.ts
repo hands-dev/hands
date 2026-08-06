@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IDLE_THRESHOLD_MS } from "../src/board.js";
 import { DEFAULT_CONFIG, resetConfigCache } from "../src/config.js";
 import type { FeedbackResult, GhRunner } from "../src/feedback.js";
+import { pidPath } from "../src/paths.js";
 import { openJournal, syncPush } from "../src/remote.js";
 import { buildSnapshot } from "../src/snapshot.js";
 import { kitchenName, serve, type ServeHandle, snapshotKey } from "../src/serve.js";
@@ -171,6 +172,30 @@ describe("serve", () => {
     handle.close();
     handle = null;
     stream.close();
+  });
+});
+
+describe("dashboard pidfile (hands#77/#82)", () => {
+  it("writes its own pid on bind, and removes it on close", async () => {
+    handle = await serve({ port: 0, env });
+    const pid = pidPath(env);
+    expect(fs.existsSync(pid)).toBe(true);
+    expect(fs.readFileSync(pid, "utf8").trim()).toBe(String(process.pid));
+
+    handle.close();
+    handle = null;
+    expect(fs.existsSync(pid)).toBe(false);
+  });
+
+  it("doesn't clobber a newer instance's pidfile on close", async () => {
+    handle = await serve({ port: 0, env });
+    const pid = pidPath(env);
+    // simulate a second instance having already replaced the file with its own pid
+    fs.writeFileSync(pid, "999999");
+    handle.close();
+    handle = null;
+    expect(fs.readFileSync(pid, "utf8").trim()).toBe("999999");
+    fs.rmSync(pid, { force: true });
   });
 });
 

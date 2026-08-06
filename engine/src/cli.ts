@@ -676,6 +676,15 @@ async function main(): Promise<void> {
         const { serve } = await import("./serve.js");
         const handle = await serve();
         out(`hands dashboard → ${handle.url}\n(Ctrl-C to stop)`);
+        // Ctrl-C/a kill has no handler by default, so close() (SSE clients, timers, the DB
+        // handle, the pidfile) never ran — this repo's dashboard skill and `hands doctor` now
+        // depend on the pidfile actually being cleaned up on a normal stop (hands#77/#82).
+        const shutdown = (): void => {
+          handle.close();
+          process.exit(0);
+        };
+        process.on("SIGINT", shutdown);
+        process.on("SIGTERM", shutdown);
         return; // the http server keeps the process alive
       }
       case "paths":
