@@ -1,0 +1,22 @@
+{
+  "principal": {
+    "name": "Michael"
+  },
+  "topology": "strict-hub",
+  "stations": {
+    "model": "sonnet",
+    "overrides": {},
+    "launcher": "auto",
+    "allowScaling": true
+  },
+  "merge": {
+    "adminMergeLowRisk": false
+  },
+  "gh": {
+    "poll": true
+  },
+  "remote": {
+    "url": "https://github.com/hands-dev/hands-books.git",
+    "handle": "heymichaelp"
+  }
+}
