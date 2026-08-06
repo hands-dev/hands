@@ -510,9 +510,16 @@ function cmdLs(): void {
  * disagrees with it. The second half is the point: a standalone CLI and a
  * plugin cache at different vintages means the command you type and the MCP
  * server your sessions talk to are different software.
+ *
+ * `--json` is for scripts/skills (the expo's session-start version check) —
+ * the same `BuildInfo` this command already prints, just structured.
  */
-function cmdVersion(): void {
+function cmdVersion(argv: string[] = []): void {
   const info = buildInfo();
+  if (flag(argv, "--json")) {
+    process.stdout.write(`${JSON.stringify(info)}\n`);
+    return;
+  }
   out(`hands ${describe(info)}`);
   out(`  ${info.entry}`);
   const other = otherInstall(info.kind);
@@ -690,7 +697,7 @@ async function main(): Promise<void> {
       case "version":
       case "--version":
       case "-v":
-        return cmdVersion();
+        return cmdVersion(rest);
       default: {
         // Not a subcommand — try to read it as a kitchen or a station before
         // giving up. `hands` bare inside a kitchen opens the pass; `hands
