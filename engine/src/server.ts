@@ -27,6 +27,7 @@ import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
 import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
+import { runSubagentStop } from "./subagent-stop.js";
 import {
   craftFiles,
   journalDir,
@@ -245,6 +246,13 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       const wake = input.wake ?? true;
       const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
       if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
+      // Wake-outcome samples (hands#106) — a pure record of the decision already
+      // made above, no new send-path logic.
+      const wokenSet = new Set(woken);
+      for (const recipient of recipients) {
+        const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
+        store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
+      }
       return asToolResult({
         ok: true,
         id,
@@ -1110,7 +1118,38 @@ export function pathsReport(agentId: string, cfg: HandsConfig, focus?: string | 
   };
 }
 
-function runCli(subcommand: string, argv: string[]): number {
+/** The fields hands' hook subcommands read; Claude Code's hook payload carries more (hands#103). */
+interface HookPayload {
+  transcript_path?: string;
+  agent_transcript_path?: string;
+  agent_type?: string;
+}
+
+/**
+ * Hook invocations pipe a JSON payload on stdin (hands#103's `transcript_path`
+ * etc.) — a plain CLI invocation (a terminal, or a test harness that doesn't
+ * configure stdin) has none. `isTTY` skips the interactive case immediately;
+ * the race guards the rest, so a hook-shaped invocation that never closes
+ * stdin can't hang the process past the hook's own 30s timeout budget.
+ */
+async function readHookPayload(timeoutMs = 2000): Promise<HookPayload | null> {
+  if (process.stdin.isTTY) return null;
+  const read = (async () => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin as AsyncIterable<Buffer>) chunks.push(chunk as Buffer);
+    return Buffer.concat(chunks).toString("utf8").trim();
+  })();
+  const timeout = new Promise<string>((resolve) => setTimeout(() => resolve(""), timeoutMs));
+  try {
+    const raw = await Promise.race([read, timeout]);
+    if (!raw) return null;
+    return JSON.parse(raw) as HookPayload;
+  } catch {
+    return null;
+  }
+}
+
+function runCli(subcommand: string, argv: string[], hookPayload: HookPayload | null): number {
   if (subcommand === "paths") {
     // Debug: where does this cwd resolve? Reads the existing DB for the
     // current craft, but never CREATES one as a side effect of a debug call.
@@ -1133,9 +1172,16 @@ function runCli(subcommand: string, argv: string[]): number {
   if (journal) store.setJournal(journal.append);
   try {
     if (subcommand === "publish") {
-      runPublish(store, { agentId, cwd: process.cwd() });
+      runPublish(store, { agentId, cwd: process.cwd(), transcriptPath: hookPayload?.transcript_path });
       // Durable-journal push rides the turn-end publish (debounced inside).
       if (journal) syncPush(journal, { store });
+      return 0;
+    }
+    if (subcommand === "subagent-stop") {
+      const transcriptPath = hookPayload?.agent_transcript_path;
+      if (transcriptPath) {
+        runSubagentStop(store, { ownerAgentId: agentId, agentTranscriptPath: transcriptPath, agentType: hookPayload?.agent_type });
+      }
       return 0;
     }
     if (subcommand === "board") {
@@ -1168,11 +1214,17 @@ async function main(): Promise<void> {
   const subcommand = process.argv[2];
   if (
     subcommand === "publish" ||
+    subcommand === "subagent-stop" ||
     subcommand === "board" ||
     subcommand === "gh-poll" ||
     subcommand === "paths"
   ) {
-    process.exit(runCli(subcommand, process.argv.slice(3)));
+    // Only publish/subagent-stop are ever invoked as hooks with a JSON stdin
+    // payload — board/gh-poll/paths never read one, so skip the stdin race
+    // for them entirely rather than adding latency to paths not touched here.
+    const hookPayload =
+      subcommand === "publish" || subcommand === "subagent-stop" ? await readHookPayload() : null;
+    process.exit(runCli(subcommand, process.argv.slice(3), hookPayload));
   }
   if (subcommand === "serve") {
     const { serve } = await import("./serve.js");

@@ -14,6 +14,19 @@
         ]
       }
     ],
+    "SubagentStop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node --no-warnings \"${CLAUDE_PLUGIN_ROOT}/dist/server.mjs\" subagent-stop",
+            "timeout": 30,
+            "async": true
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "",

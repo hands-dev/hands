@@ -1,8 +1,66 @@
+import * as fs from "node:fs";
 import { changedFiles, currentBranch, headSha, newCommits, ticketFromBranch } from "./git.js";
 import { scanMemory } from "./memory.js";
 import type { Store } from "./store.js";
 
 const MAX_FILES = 50;
+/** Enough to cover a handful of recent assistant turns without reading a whole (possibly tens-of-MB) session transcript. */
+const USAGE_TAIL_CAP = 256 * 1024;
+
+/**
+ * The most recent assistant turn's token usage from a Claude Code transcript
+ * — context length at Stop-hook time (hands#103). Reads only the file's tail
+ * (the transcript keeps growing all session; the station's own reads would
+ * get more expensive every turn otherwise), then scans backward for the last
+ * `"type":"assistant"` line with a usage block. Best-effort: a torn line at
+ * the tail boundary just falls through to the next one back.
+ */
+export function readLastUsage(
+  transcriptPath: string,
+): { input: number; cacheRead: number; cacheCreation: number } | null {
+  try {
+    const stat = fs.statSync(transcriptPath);
+    const start = Math.max(0, stat.size - USAGE_TAIL_CAP);
+    const length = stat.size - start;
+    const buffer = Buffer.alloc(length);
+    const fd = fs.openSync(transcriptPath, "r");
+    try {
+      fs.readSync(fd, buffer, 0, length, start);
+    } finally {
+      fs.closeSync(fd);
+    }
+    const lines = buffer.toString("utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i]!.trim();
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line) as {
+          type?: string;
+          message?: {
+            usage?: {
+              input_tokens?: number;
+              cache_read_input_tokens?: number;
+              cache_creation_input_tokens?: number;
+            };
+          };
+        };
+        if (entry.type !== "assistant") continue;
+        const usage = entry.message?.usage;
+        if (!usage) continue;
+        return {
+          input: usage.input_tokens ?? 0,
+          cacheRead: usage.cache_read_input_tokens ?? 0,
+          cacheCreation: usage.cache_creation_input_tokens ?? 0,
+        };
+      } catch {
+        continue; // torn/corrupt line at the tail boundary — try the one before it
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export interface PublishResult {
   agentId: string;
@@ -19,13 +77,34 @@ export interface PublishResult {
  */
 export function runPublish(
   store: Store,
-  opts: { agentId: string; cwd: string; pid?: number; env?: NodeJS.ProcessEnv; now?: number },
+  opts: {
+    agentId: string;
+    cwd: string;
+    pid?: number;
+    env?: NodeJS.ProcessEnv;
+    now?: number;
+    /** the Stop hook's own `transcript_path`, when invoked as a hook (hands#103) */
+    transcriptPath?: string;
+  },
 ): PublishResult {
   const env = opts.env ?? process.env;
   const now = opts.now ?? Date.now();
   const branch = currentBranch(opts.cwd);
   const files = changedFiles(opts.cwd).slice(0, MAX_FILES);
   const ticket = ticketFromBranch(branch);
+
+  if (opts.transcriptPath) {
+    const usage = readLastUsage(opts.transcriptPath);
+    if (usage) {
+      store.recordContextSample({
+        agentId: opts.agentId,
+        inputTokens: usage.input,
+        cacheReadTokens: usage.cacheRead,
+        cacheCreationTokens: usage.cacheCreation,
+        now,
+      });
+    }
+  }
 
   store.setStatus({
     id: opts.agentId,
