@@ -11,6 +11,7 @@
  *   hands station add [-n N]   open N stations (worktree hidden inside)
  *   hands station ls           list this repo's stations
  *   hands station rm <id>      retire a station (idempotent; --force discards)
+ *   hands attach <station-N>  resume a station's own Claude Code session in this terminal
  *   hands scale <N>           reconcile the brigade to exactly N stations
  *   hands restore             rebuild local bus state from the remote journal
  *   hands sync                push pending journal appends now
@@ -23,7 +24,7 @@
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
  * the human/expo-facing lifecycle tool (on the Bash PATH via plugin/bin).
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import * as os from "node:os";
 import { CONFIG_BASENAME, loadConfig } from "./config.js";
 import { resolveAgentId } from "./identity.js";
@@ -41,7 +42,7 @@ import {
 } from "./provision.js";
 import { listRegisteredProjects, registerProject, resolveProject } from "./projects.js";
 import { seedStationPermissions } from "./seed-permissions.js";
-import { idleMs, recentActivity } from "./station-logs.js";
+import { idleMs, latestSessionId, recentActivity, transcriptDir } from "./station-logs.js";
 import { runDoctor } from "./doctor.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
@@ -457,6 +458,31 @@ function cmdRestart(argv: string[]): void {
   else out(`launcher unavailable — paste this into a terminal:\n\n  ${command}\n`);
 }
 
+/**
+ * `hands attach [<project>] <station-N>` — resume a station's own Claude
+ * Code session in the current terminal. The recovery path for a pane that
+ * died (or one you just want to check in on): no new session, no lost
+ * context — the actual conversation, picked up where it left off.
+ */
+function cmdAttach(argv: string[]): void {
+  const { repoRoot, id, dir } = requireStation(argv, "attach");
+  const cfg = loadConfig({ cwd: repoRoot });
+  const model = cfg.stations.overrides[id] ?? cfg.stations.model;
+  const sessionId = latestSessionId(dir);
+  if (!sessionId) {
+    fail(`no Claude Code session found for ${id} — it has never taken a turn (transcripts checked at ${transcriptDir(dir)})`);
+  }
+  out(`attaching to ${id} — resuming ${sessionId} (${model})`);
+  // stdio: "inherit" hands the current terminal straight to the resumed
+  // session — this command's whole point is putting a human back in the seat.
+  const res = spawnSync("claude", ["--model", model, "--resume", sessionId], {
+    cwd: dir,
+    stdio: "inherit",
+    env: { ...process.env, HANDS_ID: id },
+  });
+  process.exit(res.status ?? 1);
+}
+
 /** `hands ls` — registered kitchens and whether they're reachable. */
 function cmdLs(): void {
   const projects = listRegisteredProjects();
@@ -657,6 +683,8 @@ async function main(): Promise<void> {
         return cmdLogs(rest);
       case "restart":
         return cmdRestart(rest);
+      case "attach":
+        return cmdAttach(rest);
       case "doctor":
         return cmdDoctor(rest);
       case "version":

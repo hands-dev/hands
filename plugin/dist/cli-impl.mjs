@@ -38022,7 +38022,7 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import { execFileSync as execFileSync9 } from "node:child_process";
+import { execFileSync as execFileSync9, spawnSync } from "node:child_process";
 import * as os13 from "node:os";
 
 // src/server.ts
@@ -48804,6 +48804,10 @@ function latestTranscript(cwd, home = os9.homedir()) {
   }
   return newest?.file ?? null;
 }
+function latestSessionId(cwd, home = os9.homedir()) {
+  const file2 = latestTranscript(cwd, home);
+  return file2 ? path16.basename(file2, ".jsonl") : null;
+}
 function clip2(s, max = 160) {
   const flat = s.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}\u2026` : flat;
@@ -49545,6 +49549,22 @@ function cmdRestart(argv) {
   ${command}
 `);
 }
+function cmdAttach(argv) {
+  const { repoRoot, id, dir } = requireStation(argv, "attach");
+  const cfg = loadConfig({ cwd: repoRoot });
+  const model = cfg.stations.overrides[id] ?? cfg.stations.model;
+  const sessionId = latestSessionId(dir);
+  if (!sessionId) {
+    fail(`no Claude Code session found for ${id} \u2014 it has never taken a turn (transcripts checked at ${transcriptDir(dir)})`);
+  }
+  out2(`attaching to ${id} \u2014 resuming ${sessionId} (${model})`);
+  const res = spawnSync("claude", ["--model", model, "--resume", sessionId], {
+    cwd: dir,
+    stdio: "inherit",
+    env: { ...process.env, HANDS_ID: id }
+  });
+  process.exit(res.status ?? 1);
+}
 function cmdLs() {
   const projects = listRegisteredProjects();
   if (projects.length === 0) {
@@ -49704,6 +49724,8 @@ async function main2() {
         return cmdLogs(rest);
       case "restart":
         return cmdRestart(rest);
+      case "attach":
+        return cmdAttach(rest);
       case "doctor":
         return cmdDoctor(rest);
       case "version":

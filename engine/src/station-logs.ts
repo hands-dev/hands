@@ -62,6 +62,16 @@ export function latestTranscript(cwd: string, home: string = os.homedir()): stri
   return newest?.file ?? null;
 }
 
+/**
+ * The session id `claude --resume` expects for a pane's most recent
+ * transcript, or null if it's never taken a turn — a resumable id is just
+ * the transcript's own filename (Claude Code names each `<session-id>.jsonl`).
+ */
+export function latestSessionId(cwd: string, home: string = os.homedir()): string | null {
+  const file = latestTranscript(cwd, home);
+  return file ? path.basename(file, ".jsonl") : null;
+}
+
 function clip(s: string, max = 160): string {
   const flat = s.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
