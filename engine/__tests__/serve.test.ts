@@ -153,10 +153,17 @@ describe("serve", () => {
     expect(first.agents.map((a) => a.id)).toContain("station-1");
     expect(typeof first.principal).toBe("string");
 
-    // a real change → a push
+    // a real change → a push. Books are always on now (hands#129), so the first client
+    // connecting also triggers one incidental refreshKitchens() push (booksSync going from
+    // unattempted to attempted) — poll past it rather than assume exactly one push follows,
+    // same pattern the books-sync-status test below already uses.
     store.journalAdd({ agentId: "station-1", kind: "note", ref: "n1", text: "did a thing", now: Date.now() });
-    const second = JSON.parse(await stream.next()) as { journal: Array<{ text: string }> };
-    expect(second.journal.map((j) => j.text)).toContain("did a thing");
+    let sawUpdate = false;
+    for (let i = 0; i < 10 && !sawUpdate; i++) {
+      const frame = JSON.parse(await stream.next()) as { journal: Array<{ text: string }> };
+      sawUpdate = frame.journal.map((j) => j.text).includes("did a thing");
+    }
+    expect(sawUpdate).toBe(true);
 
     // time passing alone (several ticks) → no push
     await expect(stream.next(300)).rejects.toThrow("no SSE frame");
@@ -293,11 +300,17 @@ describe("books sync status (hands#59)", () => {
     stream.close();
   }, 20_000);
 
-  it("reports null (not an unattempted status) when the books aren't configured at all", async () => {
+  it("starts as an untried-but-ok status when books fall back to the local default (hands#129 — never off)", async () => {
     handle = await serve({ port: 0, env: { HANDS_HOME: home }, config: DEFAULT_CONFIG });
     const state = await get(`${handle.url}api/state`);
-    const payload = JSON.parse(state.body) as { booksSync: unknown };
-    expect(payload.booksSync).toBeNull();
+    const payload = JSON.parse(state.body) as {
+      booksSync: { ok: boolean; reason: string | null; lastAttempt: number | null } | null;
+    };
+    // DEFAULT_CONFIG has no remote.url — books are load-bearing now, not optional, so
+    // openJournal() falls back to a locally-bootstrapped origin instead of going null.
+    expect(payload.booksSync).not.toBeNull();
+    expect(payload.booksSync?.ok).toBe(true);
+    expect(payload.booksSync?.lastAttempt).toBeNull(); // present, but the pull tick hasn't fired yet
   });
 });
 

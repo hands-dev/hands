@@ -1,6 +1,6 @@
 ---
 name: init
-description: Set up hands for THIS repo from inside Claude Code — scaffolds hands.config.json (principal, optional books/durable-journal repo). Use when the principal says /hands:init, "set up hands here", "initialize the bus for this repo", or when a hands skill finds no config. Conversational wrapper over the `hands init` CLI (and `hands books` for attaching the books later).
+description: Set up hands for THIS repo from inside Claude Code — scaffolds hands.config.json (principal, optionally a shared books/durable-journal repo — books themselves are always on, local by default). Use when the principal says /hands:init, "set up hands here", "initialize the bus for this repo", or when a hands skill finds no config. Conversational wrapper over the `hands init` CLI (and `hands books` for attaching a shared books repo later).
 ---
 
 # Init — set up hands for this repo
@@ -20,11 +20,14 @@ owns the format.
 2. **Ask two questions** (in chat, together):
    - **Who is the principal?** — the human the expo reports to — the chef. Default: the user you're
      talking to; use the name they go by.
-   - **The books?** — optional but recommended: a **separate, private, empty** git repo
-     (e.g. `git@github.com:<them>/hands-books.git`). It keeps coordination state so it survives
-     restarts and machine moves, and renders browsable daily digest pages. If they want it but the repo
-     doesn't exist yet, create it first (`gh repo create <name> --private`) with their go-ahead.
-     Skipping is fine — attach later with `hands books <url>`.
+   - **The books?** — always on, not optional: coordination state is durable by construction, and
+     without asking anything `hands` bootstraps a bare git repo locally on this machine as the
+     default. What's actually optional is upgrading to a **separate, private, empty** shared git
+     repo (e.g. `git@github.com:<them>/hands-books.git`), which is what makes state survive a
+     machine move and enables multiplayer (two people sharing one books repo). If they want that
+     but the repo doesn't exist yet, create it first (`gh repo create <name> --private`) with
+     their go-ahead. Leaving it blank is fine — the local default already works; attach a shared
+     repo later with `hands books <url>`.
    - If a books url was given, also confirm the **handle** (their contributor namespace in the
      books — the CLI defaults it to their GitHub username via `gh`, falling back to the OS
      username).

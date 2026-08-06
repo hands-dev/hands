@@ -25,7 +25,7 @@ export type ResolveBooksTargetResult =
   | { ok: true; target: BooksMcpTarget }
   | { ok: false; reason: string };
 
-const NO_BOOKS_REASON = "no books attached — run: hands books <path-or-url> to enable books first";
+const NO_BOOKS_REASON = "books are unavailable in this environment — git isn't working (run: hands doctor)";
 
 /**
  * Resolve + freshen the local journal clone for this repo's books MCP. Must
@@ -44,7 +44,6 @@ export function resolveBooksTarget(opts?: {
     return { ok: false, reason: "not inside a git repo — run from your repo's main checkout" };
   }
   const config = loadConfig({ cwd, env });
-  if (!config.remote.url?.trim()) return { ok: false, reason: NO_BOOKS_REASON };
 
   const j = openJournal({ cwd, env, config });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
