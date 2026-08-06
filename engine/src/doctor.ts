@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_BASENAME, type HandsConfig, loadConfig } from "./config.js";
-import { coordinationDir, dbPath, repoInfo } from "./paths.js";
+import { coordinationDir, dbPath, pidPath, repoInfo } from "./paths.js";
 import { listStations } from "./provision.js";
 import { pruneMissing, resolveProject } from "./projects.js";
 import { seedStationPermissions } from "./seed-permissions.js";
@@ -47,6 +47,17 @@ function worstOf(checks: Check[]): Severity {
   if (checks.some((c) => c.severity === "fail")) return "fail";
   if (checks.some((c) => c.severity === "warn")) return "warn";
   return "ok";
+}
+
+/** `kill(pid, 0)` sends no signal — it just probes whether the pid exists and is reachable. */
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    // EPERM means it exists but we can't signal it (different user) — still alive.
+    return (err as NodeJS.ErrnoException).code === "EPERM";
+  }
 }
 
 function gitHead(cwd: string): string | null {
@@ -163,6 +174,34 @@ export function runDoctor(opts?: {
       ? { name: "coordination", severity: "ok", detail: coord }
       : { name: "coordination", severity: "warn", detail: `missing: ${coord}` },
   );
+
+  // ── dashboard server (hands#77/#82) ───────────────────────────────────────
+  // No pidfile at all just means the dashboard isn't running right now — not an error, nothing
+  // to check. A pidfile pointing at a dead pid is the thing worth flagging: it means a previous
+  // `hands serve` didn't shut down cleanly (killed rather than stopped), and `hands doctor --fix`
+  // clearing it is what lets the pidfile-based stop path in the dashboard skill trust the file.
+  const pid = pidPath(env, info.repoRoot);
+  if (fs.existsSync(pid)) {
+    const raw = fs.readFileSync(pid, "utf8").trim();
+    const parsedPid = Number(raw);
+    if (Number.isInteger(parsedPid) && parsedPid > 0 && isProcessAlive(parsedPid)) {
+      checks.push({ name: "dashboard.serve", severity: "ok", detail: `running (pid ${parsedPid})` });
+    } else if (opts?.fix) {
+      fs.rmSync(pid, { force: true });
+      checks.push({
+        name: "dashboard.serve",
+        severity: "ok",
+        detail: `stale pidfile (pid ${raw || "?"} not running) — removed`,
+      });
+    } else {
+      checks.push({
+        name: "dashboard.serve",
+        severity: "warn",
+        detail: `stale pidfile — pid ${raw || "?"} isn't running`,
+        fixable: "remove the stale pidfile",
+      });
+    }
+  }
 
   // ── which build is actually executing ─────────────────────────────────────
   // Three separate confusing symptoms in one day traced back to this: a command

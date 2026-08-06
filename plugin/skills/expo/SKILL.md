@@ -136,10 +136,15 @@ Your inbox is the `expo.notify` file (the `notify` path from `hands_paths`) — 
 returned ticket, question, and escalation appends one line. A persistent Monitor on it wakes you
 the instant a station pings you.
 
-Arm **once per session, idempotently**:
+**Verify it's alive on every pass (hands#121) — not just once at arm-time:**
 
-1. `pgrep -fl "tail -F -n0 .*expo.notify"` — a PID means it's armed; skip.
-2. Otherwise:
+1. `pgrep -fl "tail -F -n0 .*expo.notify"` — a hit means it's alive; proceed to "1. Make sure you
+   have the specials" below.
+2. No hit → it died silently. Confirmed trigger: a process/session restart — NOT `/compact`
+   (tested directly: the tail survives it). You've been `deaf` since it died — indistinguishable
+   from `idle` from the outside — which costs latency, never content (the bundled read and
+   `hands_receive` are DB-backed and authoritative either way), but the sooner you catch it the
+   shorter that gap. Arm it now, same command whether this is the first run or a re-arm:
 
    ```
    Monitor({
@@ -149,7 +154,8 @@ Arm **once per session, idempotently**:
    })
    ```
 
-Treat each `<task-notification>` as an inbound bus event: run this loop, then re-pace.
+Treat each `<task-notification>` as an inbound bus event: run this loop (starting with the pgrep
+check above), then re-pace.
 
 ## 1. Make sure you have the specials
 
@@ -449,10 +455,12 @@ osascript -e 'display notification "station-1: ship behind the flag or wait?" wi
 - Never invent specials — if you don't have them, ask.
 - You route and review; real work runs in an executor. Sub-agent dispatch is routing, not a
   loophole — if the returns wouldn't be compact, it belongs on a station.
-- **Monitor self-heal is unconditional (hands#86/#74).** If a `<task-notification>` reports your
-  own Monitor task failed, re-arm it immediately — before draining, before anything else — using
-  the same command from "0. Arm your wake signal" above. Known harness-level failure mode (exit
-  144, not caused by how hands writes the notify file), not worth investigating each time.
+- **Monitor self-heal is unconditional (hands#86/#74/#121).** Whether caught by a
+  `<task-notification>` reporting your own Monitor task failed, or by the pgrep check in "0. Arm
+  your wake signal" finding it already gone, re-arm immediately — before draining, before anything
+  else — using the same command from that section. Known harness-level failure mode (exit 144, not
+  caused by how hands writes the notify file), not worth investigating each time — just re-arm and
+  continue.
 
 The read-only dashboard (`/hands:dashboard`, or `hands serve` → localhost:4319) shows the
 principal the same picture live over SSE: the rail grouped by dish, the line (focus + ticket +

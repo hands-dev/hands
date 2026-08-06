@@ -105,3 +105,13 @@ export function notifyPath(
 ): string {
   return path.join(coordinationDir(env, cwd), `${agentId}.notify`);
 }
+
+/**
+ * PID file for the locally running `hands serve` dashboard process — written by `serve()` on
+ * bind, removed on clean shutdown. The precise handle `hands doctor` and the dashboard skill's
+ * stop fallback use instead of pattern-matching `pkill`, which has killed unrelated processes
+ * whose command line happened to substring-match (hands#77).
+ */
+export function pidPath(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string {
+  return path.join(coordinationDir(env, cwd), "dashboard.pid");
+}

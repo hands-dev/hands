@@ -1,11 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runDoctor } from "../src/doctor.js";
 import { addStations } from "../src/provision.js";
-import { resetRepoInfoCache } from "../src/paths.js";
+import { pidPath, resetRepoInfoCache } from "../src/paths.js";
 
 let root: string;
 let repo: string;
@@ -22,6 +22,13 @@ const CONFIG = {
 
 function check(name: string, report: ReturnType<typeof runDoctor>) {
   return report.checks.find((c) => c.name === name);
+}
+
+/** A pid guaranteed dead by the time it's returned — spawnSync only resolves after exit. */
+function deadPid(): number {
+  const result = spawnSync(process.execPath, ["-e", "process.exit(0)"]);
+  if (!result.pid) throw new Error("spawnSync didn't report a pid");
+  return result.pid;
 }
 
 beforeEach(() => {
@@ -157,5 +164,41 @@ describe("the station permission check — the fourteen-hour regression", () => 
 
     const report = runDoctor({ cwd: repo, env });
     expect(report.checks.find((c) => c.name === "station-1.permissions")?.severity).toBe("ok");
+  });
+});
+
+describe("the dashboard.serve pidfile check (hands#77/#82)", () => {
+  it("reports nothing when the dashboard was never started", () => {
+    writeConfig();
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("dashboard.serve", report)).toBeUndefined();
+  });
+
+  it("passes when the pidfile points at a live process", () => {
+    writeConfig();
+    fs.mkdirSync(path.dirname(pidPath(env, repo)), { recursive: true });
+    fs.writeFileSync(pidPath(env, repo), String(process.pid));
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("dashboard.serve", report)?.severity).toBe("ok");
+    expect(check("dashboard.serve", report)?.detail).toContain(String(process.pid));
+  });
+
+  it("warns on a stale pidfile left by an unclean stop, and names the fix", () => {
+    writeConfig();
+    fs.mkdirSync(path.dirname(pidPath(env, repo)), { recursive: true });
+    fs.writeFileSync(pidPath(env, repo), String(deadPid()));
+    const report = runDoctor({ cwd: repo, env });
+    const dash = check("dashboard.serve", report);
+    expect(dash?.severity).toBe("warn");
+    expect(dash?.fixable).toBeTruthy();
+  });
+
+  it("--fix removes a stale pidfile rather than only complaining", () => {
+    writeConfig();
+    fs.mkdirSync(path.dirname(pidPath(env, repo)), { recursive: true });
+    fs.writeFileSync(pidPath(env, repo), String(deadPid()));
+    const report = runDoctor({ cwd: repo, env, fix: true });
+    expect(fs.existsSync(pidPath(env, repo))).toBe(false);
+    expect(check("dashboard.serve", report)?.severity).toBe("ok");
   });
 });
