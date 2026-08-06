@@ -67,9 +67,20 @@ chatty behavior is visible.
      `hands_send({ to: "expo", body: <answer> })`. Answer only what you actually know.
    - **A heads-up / FYI** → note it; reply with `wake:false` only if genuinely useful.
    - **Needs a decision you can't make** → `hands_ask`.
-3. **Work your tickets:** `hands_tasks({ assignee: "<your id>", state: "assigned" })`. For each:
-   `hands_task_update({ id, state: "in_progress" })`, do it **fully in your workspace**, then
-   `hands_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
+3. **Work your tickets:** `hands_tasks({ assignee: "<your id>", active: true })` — `active` covers
+   open/assigned/in_progress/returned, not just fresh assignments, so a restarted pane rediscovers
+   its own in-flight work on every wake instead of reporting an empty queue (hands#83: `state:
+   "assigned"` alone hid a real in-progress ticket from a station's own boot check).
+   - **Found `in_progress` from a session you don't remember starting** (a fresh boot surfaced
+     it, not a ticket you just claimed this pass): check reality before reporting anything —
+     `git -C <cwd> branch --show-current` + `git -C <cwd> log --oneline -5` + `gh pr list --head
+     <branch>`. A branch, commits, or an open PR already there → resume from that state and say
+     so ("found my own branch, N commits, PR #X open"); don't restart the work cold or report a
+     false "no trace."
+   - **Freshly assigned** (`state: "assigned"`): `hands_task_update({ id, state: "in_progress" })`,
+     do it **fully in your workspace**.
+   - Either way, finish with
+     `hands_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
    The `result` is your report — the expo reads it at the pass without being woken. Plans and
    investigation are always safe; for building, stay **reversible**: commit to your own branch,
    never merge/push-to-shared/deploy/mutate shared data. Ambiguous or bigger than one station →
@@ -176,6 +187,11 @@ No craft assigned? Work tickets generically, or `hands_ask` the expo for one.
 ## Guardrails
 
 - **Arm the Monitor once.** `pgrep` before arming; never stack duplicates.
+- **Monitor self-heal is unconditional (hands#86/#74).** If a `<task-notification>` reports your
+  own Monitor task failed, re-arm it immediately — before draining, before anything else — using
+  the same command from "First invocation" step 3. This is a known harness-level failure mode
+  (exit 144, not caused by how hands writes the notify file), not an error to investigate each
+  time; just re-arm and continue the pass.
 - **When the loop stops** (the principal cancels, or `/loop` stop), stop the Monitor:
   `TaskStop` it if you have its task id, else `pkill -f "tail -F -n0 .*<id>.notify"`.
 - **Never push, merge, deploy, or mutate shared state autonomously.** Reply, do reversible

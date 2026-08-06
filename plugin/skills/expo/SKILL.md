@@ -248,7 +248,16 @@ store the new hash and judge: idle capacity while a higher special is starved �
 generic work, check the roster for a **dormant craft** that covers the starved special and cast
 it onto the idle seat (restored expertise beats a cold start). A station off-specials while #1 is
 thin → `wake:false` heads-up + escalate with a recommendation. `collisions` (two stations in the
-same files) → stagger or refocus one before they trample each other. Well-balanced → say so.
+same files) → stagger or refocus one before they trample each other.
+
+**A `stateHash` diff won't catch "quiet mid-ticket" (hands#99)** — it only changes on presence/
+branch/focus/task-assignment shifts, not on a station simply grinding away normally OR silently
+stalled on the same ticket. On CHANGED (or every few DUE beats even when unchanged, cheaply),
+spot-check any station showing `active` against an `in_progress` ticket that's been open a while:
+the transcript-mtime check from "The station path" step 3 above. Recent mtime → still moving,
+nothing to do; cold → that's your stall signal, worth more than bus silence alone.
+
+Well-balanced → say so.
 Always surface a one-line read, this exact shape (deterministic + grep-friendly, hands#52 — the
 `Utilization:` beat's own line, distinct from a `Rail:` dump):
 
@@ -340,6 +349,10 @@ osascript -e 'display notification "station-1: ship behind the flag or wait?" wi
 - Never invent specials — if you don't have them, ask.
 - You route and review; real work runs in an executor. Sub-agent dispatch is routing, not a
   loophole — if the returns wouldn't be compact, it belongs on a station.
+- **Monitor self-heal is unconditional (hands#86/#74).** If a `<task-notification>` reports your
+  own Monitor task failed, re-arm it immediately — before draining, before anything else — using
+  the same command from "0. Arm your wake signal" above. Known harness-level failure mode (exit
+  144, not caused by how hands writes the notify file), not worth investigating each time.
 
 The read-only dashboard (`/hands:dashboard`, or `hands serve` → localhost:4319) shows the
 principal the same picture live over SSE: the rail grouped by dish, the line (focus + ticket +
