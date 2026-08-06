@@ -116,6 +116,19 @@ describe("strict-hub topology (server-enforced)", () => {
     const ret = await call(w1, "hands_task_update", { id: 1, state: "returned", result: "plan" });
     expect(ret.isError).toBe(false);
   });
+
+  it("hands_task_update surfaces a clear error when a station tries to reclaim a cancelled ticket (hands#97)", async () => {
+    const expo = await connect("expo");
+    await call(expo, "hands_delegate", { title: "plan Y", to: "station-1" });
+    const cancel = await call(expo, "hands_task_update", { id: 1, state: "cancelled" });
+    expect(cancel.isError).toBe(false);
+
+    const w1 = await connect("station-1", DEFAULT_CONFIG);
+    const resurrect = await call(w1, "hands_task_update", { id: 1, state: "in_progress" });
+    expect(resurrect.isError).toBe(true);
+    expect(String(resurrect.body.error)).toContain("cancelled");
+    expect(stores[0]!.getTask(1)!.state).toBe("cancelled");
+  });
 });
 
 describe("open topology (opt-out)", () => {
