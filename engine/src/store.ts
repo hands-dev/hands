@@ -146,7 +146,7 @@ export interface CraftBriefRow {
   cwd: string | null;
   opened_by: string;
   task: string | null;
-  /** stamped by hands_mise — separates pickup compliance from note compliance */
+  /** stamped by `hands craft mise` — separates pickup compliance from note compliance */
   picked_up_at: number | null;
   /** stamped once the craft-note block is harvested (subagent-stop.ts) */
   noted_at: number | null;

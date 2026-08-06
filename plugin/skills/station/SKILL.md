@@ -34,7 +34,7 @@ chatty behavior is visible.
    so never guess paths. Note `agentId` (your `station-<n>`), `notify`, `coordinationDir`,
    `craftsDir` (personal crafts), and `sharedCraftsDir` (repo-shared crafts). The craft roster
    itself — which crafts exist, what they cover, how stale — is already injected into your server
-   instructions; `hands_crafts` gives the full list on demand if a ticket names one you don't see
+   instructions; `hands craft ls` gives the full list on demand if a ticket names one you don't see
    there.
 2. **Don't double-arm.** Check whether the tail is already running — substitute your id:
 
@@ -100,8 +100,8 @@ chatty behavior is visible.
    never merge/push-to-shared/deploy/mutate shared data. Ambiguous or bigger than one station →
    `hands_ask` rather than guessing.
 5. **Does a craft cover this?** Check the ticket against the roster's `covers` lines (in your
-   instructions, or `hands_crafts` for the full list). One craft covers it → `hands_brief({
-   craft })`, paste the returned chit into an Agent-tool `prompt`, converge its return. Several
+   instructions, or `hands craft ls` for the full list). One craft covers it → `hands craft brief
+   <slug>`, paste the printed chit into an Agent-tool `prompt`, converge its return. Several
    crafts cover slices of it (a cross-cutting dish, hands#81) → one brief per slice, dispatched in
    parallel where they don't touch the same files, all converged in THIS worktree — keep it one
    ticket, one station, one branch; don't split into per-craft tickets just because the work spans
@@ -120,18 +120,18 @@ chatty behavior is visible.
 A **craft** is a named, portable specialization ("saucier", "ordering API") with its own book
 (decisions, why, gotchas), mise (keyed path/command anchors), and skill (procedures). Crafts are
 deployed into sub-agents for one ticket-slice at a time, not held by a station for a stretch — see
-`hands_brief`/`hands_mise` above for dispatch. A craft sub-agent picks up its own files and, before
+`hands craft brief`/`mise` above for dispatch. A craft sub-agent picks up its own files and, before
 it returns, emits a ` ```craft-note ` block with anything it learned that differs from what it was
 told — that block is harvested automatically (whether or not you ever read the sub-agent's
 return), so you don't need to do anything with a craft's knowledge yourself beyond dispatching it.
 
 **Folding — only if you're a craft's default owner** (your `focus` is set to that craft's slug).
-On a fully idle wake, if `hands_crafts` shows pending notes for your craft: `hands_fold({ craft })`
-acquires the single-writer lease and returns the current book/mise/skill plus every pending note.
-Rewrite the files **in place** (Edit/Write) — never append — applying the placement rule (a path
-or command is mise; a sequence of steps is skill; a decision/fact/why is book) and discarding
-notes that merely restate what's already there. Then `hands_fold_done({ craft, throughNoteId })`
-with the same id `hands_fold` returned.
+On a fully idle wake, if `hands craft ls` shows pending notes for your craft: `hands craft fold
+<slug>` acquires the single-writer lease and returns the current book/mise/skill plus every
+pending note. Rewrite the files **in place** (Edit/Write) — never append — applying the placement
+rule (a path or command is mise; a sequence of steps is skill; a decision/fact/why is book) and
+discarding notes that merely restate what's already there. Then `hands craft fold-done <slug>
+--through <noteId>` with the same id `hands craft fold` returned.
 
 Nobody's default owner for a craft? Its notes just wait — `hands doctor` flags a growing or aging
 backlog; not your job to chase it yourself.

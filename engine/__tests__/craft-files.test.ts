@@ -196,7 +196,7 @@ describe("composeChit + parseCraftNoteBlock (the dispatch/return round trip)", (
     );
     expect(chit).toContain('brief #4711, mode: plan');
     expect(chit).toContain("Covers: app.py order routes");
-    expect(chit).toContain("hands_mise({ briefId: 4711 })");
+    expect(chit).toContain("hands craft mise 4711");
     expect(chit).toContain("```craft-note");
     expect(chit).toContain("PLAN MODE: read, reason, propose");
   });
@@ -342,12 +342,12 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
 
     const agentBody = fs.readFileSync(craftAgentPath(target, "saucier"), "utf8");
     expect(agentBody).toContain("name: craft-saucier");
-    expect(agentBody).toContain('hands_brief({ craft: "saucier"');
+    expect(agentBody).toContain("hands craft brief saucier");
     expect(agentBody).toContain('Skill({ skill: "craft-saucier" })');
 
     const skillBody = fs.readFileSync(craftSkillPath(target, "saucier"), "utf8");
     expect(skillBody).toContain("name: craft-saucier");
-    expect(skillBody).toContain("hands_mise({ briefId:");
+    expect(skillBody).toContain("hands craft mise <briefId>");
     expect(skillBody).toContain("Always taste before plating.");
     expect(skillBody).toContain("```craft-note");
   });

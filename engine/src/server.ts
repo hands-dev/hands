@@ -29,7 +29,6 @@ import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
 import { runSubagentStop } from "./subagent-stop.js";
 import {
-  craftFiles,
   journalDir,
   openJournal,
   personalCraftsDir,
@@ -38,15 +37,8 @@ import {
   sharedCraftsDir,
   syncPush,
 } from "./remote.js";
-import {
-  buildFoldContext,
-  composeChit,
-  craftAgentPath,
-  formatRosterContext,
-  listCrafts,
-  parseCraftHeader,
-} from "./crafts.js";
-import { type CraftBriefRow, type MessageRow, Store } from "./store.js";
+import { formatRosterContext, listCrafts } from "./crafts.js";
+import { type MessageRow, Store } from "./store.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
 
@@ -78,10 +70,10 @@ function presentMessage(row: MessageRow) {
  * station's AND the expo's MCP instructions at connect (hands#81/#96): a
  * generalist knows what crafts exist and how to dispatch them, it doesn't
  * hold one. Small and constant-cost regardless of how fat any one book gets;
- * hands_crafts gives the full roster (and hands_mise a craft's own files) on
- * demand when this summary isn't enough. Instructions are static per
- * connection, so a craft founded mid-session needs a reconnect (or
- * hands_crafts) to become visible.
+ * `hands craft ls` gives the full roster (and `hands craft mise` a craft's
+ * own files) on demand when this summary isn't enough. Instructions are
+ * static per connection, so a craft founded mid-session needs a reconnect
+ * (or `hands craft ls`) to become visible.
  */
 export function craftRosterContext(
   config: HandsConfig,
@@ -142,8 +134,8 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           : "") +
         (isStation(agentId)
           ? " You are a generalist: you hold no craft of your own. You own the ticket and your " +
-            "worktree, and you dispatch crafts as sub-agents (hands_brief) for the slices of work " +
-            "they cover — see the roster below."
+            "worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices " +
+            "of work they cover — see the roster below."
           : "") +
         craftRosterContext(cfg, store),
     },
@@ -878,10 +870,10 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         "Set a station's short lane label — what it's currently on (\"auth migration\", " +
         '"ENG-1476"), shown on the board/rail and addressable in hands_send/delegate as a ' +
         "convenience (the station-<n> id stays the durable key). NOT a craft assignment — crafts " +
-        "are dispatched as sub-agents via hands_brief, never held by a station (hands#81/#96). " +
-        "Setting this to a craft's slug also makes this station the default fold-owner for that " +
-        "craft's pending notes (hands_fold). A station may set its own; the expo may set anyone's. " +
-        "Pass focus: null to clear.",
+        "are dispatched as sub-agents via `hands craft brief`, never held by a station " +
+        "(hands#81/#96). Setting this to a craft's slug also makes this station the default " +
+        "fold-owner for that craft's pending notes (`hands craft fold`). A station may set its " +
+        "own; the expo may set anyone's. Pass focus: null to clear.",
       inputSchema: {
         station: z.string().optional().describe("target station id (default: yourself)"),
         focus: z.string().min(1).max(80).nullable(),
@@ -908,187 +900,13 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     },
   );
 
-  // --- crafts: dispatched as sub-agents, never held (hands#81/#96/#49) ---
-
-  server.registerTool(
-    "hands_crafts",
-    {
-      title: "List the craft roster",
-      description:
-        "The full craft roster — scope (personal/shared), covers, when last distilled, pending " +
-        "note count, and whether it's synced (has a generated agentType in THIS checkout, so " +
-        'Agent({ agentType: "craft-<slug>" }) dispatches it directly — unsynced falls back to ' +
-        "hands_brief). Use when the roster summary already in your instructions isn't enough (a " +
-        "ticket names a craft you don't see there, or one was just founded this session).",
-      inputSchema: {},
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    },
-    async () => {
-      store.touch(agentId);
-      const cwd = process.cwd();
-      const crafts = listCrafts(store, cfg).map((c) => ({ ...c, synced: fs.existsSync(craftAgentPath(cwd, c.slug)) }));
-      return asToolResult({ crafts });
-    },
-  );
-
-  server.registerTool(
-    "hands_brief",
-    {
-      title: "Get a chit to dispatch a craft into a sub-agent",
-      description:
-        "Open a dispatch record for a craft and get back a small CHIT (not the craft's content) " +
-        "to paste at the top of the Agent tool's `prompt` — the sub-agent pulls its own book/" +
-        "mise/skill itself via hands_mise on its first action, so YOUR context cost per dispatch " +
-        "stays constant no matter how fat the book gets. Read-only 'plan' mode (the default) is " +
-        "safe anywhere, any time. 'execute' mode is refused while another execute brief is open " +
-        "for this same craft+cwd — that's the one guard against two sub-agents writing one " +
-        "worktree at once; fan out plan-mode instead and execute the union of what they found.",
-      inputSchema: {
-        craft: z.string().min(1).describe("craft name or slug"),
-        mode: z.enum(["plan", "execute"]).optional().describe("default plan (read-only)"),
-        task: z.string().optional().describe("one line, recorded on the ledger — not the chit itself"),
-        cwd: z.string().optional().describe("execute-lease scope; default your own cwd"),
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    },
-    async (input) => {
-      store.touch(agentId);
-      const mode = input.mode ?? "plan";
-      const cwd = input.cwd ?? process.cwd();
-      const files = craftFiles(input.craft);
-      if (mode === "execute") {
-        const open = store.openExecuteBrief(files.slug, cwd);
-        if (open) {
-          return {
-            ...asToolResult({
-              ok: false,
-              error:
-                `execute lease held by brief #${open.id} (opened ${new Date(open.created_at).toISOString()}) ` +
-                "— run this plan-mode, or wait",
-            }),
-            isError: true,
-          };
-        }
-      }
-      const briefId = store.createCraftBrief({
-        craftSlug: files.slug,
-        mode,
-        cwd,
-        openedBy: agentId,
-        task: input.task ?? null,
-      });
-      const brief = store.getCraftBrief(briefId) as CraftBriefRow;
-      const bookRaw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
-      return asToolResult({ briefId, craft: files.slug, chit: composeChit(brief, parseCraftHeader(bookRaw).covers) });
-    },
-  );
-
-  server.registerTool(
-    "hands_mise",
-    {
-      title: "Pick up a craft's own files for the current brief",
-      description:
-        "A craft sub-agent's first action: pulls the craft's own mise/skill/book, the sibling " +
-        "roster (so you know what you DON'T cover — route those via spillover, not a guess), and " +
-        "a read-in command if the craft looks stale. Stamps pickup so compliance is measurable " +
-        "separately from whether the return note actually arrives.",
-      inputSchema: { briefId: z.number().int() },
-      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-    },
-    async (input) => {
-      const brief = store.getCraftBrief(input.briefId);
-      if (!brief) {
-        return { ...asToolResult({ ok: false, error: `no such brief: #${input.briefId}` }), isError: true };
-      }
-      store.markCraftBriefPickedUp(input.briefId);
-      const files = craftFiles(brief.craft_slug);
-      const read = (p: string, cap = 6000): string | null => {
-        try {
-          const body = fs.readFileSync(p, "utf8").trim();
-          if (!body) return null;
-          const points = Array.from(body);
-          return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
-        } catch {
-          return null;
-        }
-      };
-      const book = read(files.book);
-      const mise = read(files.mise);
-      const skill = read(files.skill);
-      const { covers, distilled } = parseCraftHeader(book);
-      const distilledMs = distilled ? Date.parse(distilled) : NaN;
-      const stale = !book && !mise && !skill ? "cold" : Number.isNaN(distilledMs) || Date.now() - distilledMs > 14 * 24 * 60 * 60_000 ? "stale" : "fresh";
-      const siblings = listCrafts(store, cfg)
-        .filter((c) => c.slug !== files.slug)
-        .map((c) => ({ slug: c.slug, covers: c.covers }));
-      return asToolResult({
-        craft: files.slug,
-        scope: files.scope,
-        covers,
-        distilled,
-        mise,
-        skill,
-        book,
-        siblings,
-        staleness: stale,
-        readIn: stale !== "fresh" ? `git log --oneline --since "${distilled ?? "30 days ago"}" -- ${covers ?? "."}` : null,
-        returnContract:
-          "Before you return: emit a fenced ```craft-note block (brief, craft, nothing-new, then " +
-          "zero or more mise/book/skill/friction/spillover(<craft>) lines) as the LAST thing in " +
-          "your final message.",
-      });
-    },
-  );
-
-  server.registerTool(
-    "hands_fold",
-    {
-      title: "Acquire the fold lease and get a craft's pending notes to distill",
-      description:
-        "Single-writer distillation (hands#81/#96): acquires an exclusive lease for this craft, " +
-        "then returns its current book/mise/skill plus every pending note since the last fold. " +
-        "Rewrite the files IN PLACE yourself (Edit/Write) — never append — then call " +
-        "hands_fold_done with the SAME throughNoteId this call returned. The lease auto-expires; " +
-        "if you're not going to finish, just don't call hands_fold_done and let it lapse.",
-      inputSchema: { craft: z.string().min(1) },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    },
-    async (input) => {
-      store.touch(agentId);
-      const files = craftFiles(input.craft);
-      const got = store.acquireCraftFoldLease(files.slug, agentId);
-      if (!got) {
-        return {
-          ...asToolResult({
-            ok: false,
-            error: `fold lease for "${files.slug}" is held by someone else right now — try again shortly`,
-          }),
-          isError: true,
-        };
-      }
-      return asToolResult(buildFoldContext(store, input.craft));
-    },
-  );
-
-  server.registerTool(
-    "hands_fold_done",
-    {
-      title: "Release the fold lease and mark notes folded",
-      description:
-        "Call after you've rewritten the craft's book/mise/skill in place from hands_fold's " +
-        "pending notes. Marks every note up through throughNoteId as folded (so they stop " +
-        "showing as pending) and releases the lease.",
-      inputSchema: { craft: z.string().min(1), throughNoteId: z.number().int() },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    },
-    async (input) => {
-      store.touch(agentId);
-      const files = craftFiles(input.craft);
-      store.markCraftNotesFolded(files.slug, input.throughNoteId);
-      store.releaseCraftFoldLease(files.slug, agentId);
-      return asToolResult({ ok: true, craft: files.slug, foldedThrough: input.throughNoteId });
-    },
-  );
+  // Crafts (hands#81/#96/#49) are dispatched via `hands craft brief|mise|fold|fold-done` — plain
+  // CLI subcommands invoked over Bash, not MCP tools. Two reasons, not one: (1) an MCP tool
+  // registered here loads its schema into EVERY station/expo session's context on every turn,
+  // even the many turns that never touch a craft — Bash carries no such per-command cost; (2) a
+  // spawned sub-agent's access to a NEWLY-generated Agent type/Skill is confirmed fixed at
+  // session start, and MCP tool inheritance for a spawned sub-agent was never verified either —
+  // Bash has no discovery question at all, every agent has it unconditionally.
 
   // --- expo-only: team-awareness GitHub poll + digest notes ---
   if (isExpo(agentId)) {

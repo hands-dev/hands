@@ -12,7 +12,11 @@
  *   hands craft sync           materialize crafts as real Agent types + Skills (one-call dispatch)
  *   hands craft promote <s>    move a personal craft to the repo-shared tier
  *   hands craft localize <s>   move a shared craft back to the personal tier
- *   hands craft distill [<s>]  list a craft's unfolded notes (hands_fold does the real fold)
+ *   hands craft distill [<s>]  list a craft's unfolded notes (`hands craft fold` does the real fold)
+ *   hands craft brief <s>      dispatch: open a brief, print the chit (for a general-purpose Agent)
+ *   hands craft mise <id>      a craft sub-agent's first call: prints its book/mise/skill as JSON
+ *   hands craft fold <s>       acquire the fold lease, print pending notes to distill
+ *   hands craft fold-done <s>  release the lease, mark notes folded (--through <noteId>)
  *   hands station add [-n N]   open N stations (worktree hidden inside)
  *   hands station ls           list this repo's stations
  *   hands station rm <id>      retire a station (idempotent; --force discards)
@@ -65,7 +69,14 @@ import {
   syncPush,
   validateJournal,
 } from "./remote.js";
-import { listCrafts, materializeCraftAgents } from "./crafts.js";
+import {
+  buildFoldContext,
+  composeChit,
+  craftAgentPath,
+  listCrafts,
+  materializeCraftAgents,
+  parseCraftHeader,
+} from "./crafts.js";
 import {
   booksMcpEntry,
   desktopConfigPath,
@@ -89,6 +100,13 @@ function fail(message: string): never {
 
 function flag(argv: string[], name: string): boolean {
   return argv.includes(name);
+}
+
+/** `--name value` or `--name=value`, either form. */
+function strOpt(argv: string[], name: string): string | undefined {
+  const i = argv.indexOf(name);
+  if (i !== -1) return argv[i + 1];
+  return argv.find((a) => a.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
 function intOpt(argv: string[], name: string, fallback: number): number {
@@ -223,15 +241,18 @@ function cmdBooks(argv: string[]): void {
 }
 
 /**
- * `hands craft ls|sync|promote|localize|distill` — crafts are dispatched as
- * sub-agents (hands_brief/hands_mise/hands_fold), never held by a station
- * (hands#81/#96); this CLI covers the human-facing, non-agentic slice:
- * seeing the roster, materializing crafts into real session-discoverable
- * Agent types + Skills (`sync`), and moving a craft between scope tiers.
- * Distillation itself is a judgment call (rewrite prose, decide what to
- * discard) that needs a model — `distill` here only surfaces the backlog
- * for a human to read or hand to an agent via hands_fold; it never
- * rewrites a book itself.
+ * `hands craft ls|sync|promote|localize|distill|brief|mise|fold|fold-done` —
+ * crafts are dispatched as sub-agents via `hands craft brief`/`mise`/`fold`,
+ * never held by a station (hands#81/#96); these are plain CLI subcommands
+ * invoked over Bash rather than MCP tools, so a craft-turn's dispatch never
+ * costs every other session an MCP tool schema it doesn't use. `ls`,
+ * `promote`, `localize`, and `sync` cover the human-facing, non-agentic
+ * slice: seeing the roster, materializing crafts into real
+ * session-discoverable Agent types + Skills (`sync`), and moving a craft
+ * between scope tiers. Distillation itself is a judgment call (rewrite
+ * prose, decide what to discard) that needs a model — `distill` here only
+ * surfaces the backlog for a human to read or hand to an agent via
+ * `hands craft fold`; it never rewrites a book itself.
  */
 function cmdCraft(argv: string[]): void {
   const sub = argv[0];
@@ -244,10 +265,12 @@ function cmdCraft(argv: string[]): void {
         out("no crafts founded yet — /hands:crafts surveys a repo for the ones worth establishing");
         return;
       }
+      const cwd = process.cwd();
       for (const c of roster) {
         const distilled = c.distilled ? `distilled ${c.distilled}` : "never distilled";
         const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)` : "";
-        out(`${c.slug}\t[${c.scope}]\t${c.covers ?? "no covers stated"}\t${distilled}${pending}`);
+        const synced = fs.existsSync(craftAgentPath(cwd, c.slug)) ? "" : ", not yet synced here";
+        out(`${c.slug}\t[${c.scope}${synced}]\t${c.covers ?? "no covers stated"}\t${distilled}${pending}`);
       }
       return;
     }
@@ -346,12 +369,125 @@ function cmdCraft(argv: string[]): void {
       }
       out(
         "\nThis lists the backlog only — distillation is a judgment call. Read it and edit the " +
-          "book/mise/skill by hand, or ask an agent to run hands_fold on this craft.",
+          "book/mise/skill by hand, or ask an agent to run `hands craft fold <slug>` on this craft.",
       );
       return;
     }
 
-    fail("usage: hands craft <ls|sync|promote|localize|distill> [<slug>]");
+    // --- brief|mise|fold|fold-done: the craft dispatch/return loop, plain CLI over Bash rather
+    // than MCP tools — an MCP tool's schema loads into every station/expo session's context on
+    // every turn, even the turns that never touch a craft; Bash has no such per-command cost.
+    // It also sidesteps a real unknown: whether a spawned sub-agent even inherits its parent's
+    // MCP connections. Every agent has Bash, unconditionally, no discovery question at all.
+
+    if (sub === "brief") {
+      const slug = argv[1];
+      if (!slug) fail("usage: hands craft brief <slug> [--task <text>] [--mode plan|execute] [--cwd <dir>]");
+      const mode = strOpt(argv, "--mode") === "execute" ? "execute" : "plan";
+      const cwd = strOpt(argv, "--cwd") ?? process.cwd();
+      const files = craftFiles(slug!);
+      if (mode === "execute") {
+        const open = store.openExecuteBrief(files.slug, cwd);
+        if (open) {
+          fail(
+            `execute lease held by brief #${open.id} (opened ${new Date(open.created_at).toISOString()}) ` +
+              "— run this plan-mode, or wait",
+          );
+        }
+      }
+      const briefId = store.createCraftBrief({
+        craftSlug: files.slug,
+        mode,
+        cwd,
+        openedBy: resolveAgentId(),
+        task: strOpt(argv, "--task") ?? null,
+      });
+      const brief = store.getCraftBrief(briefId)!;
+      const bookRaw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
+      // Raw chit text on stdout, nothing wrapped around it — the caller pastes this straight
+      // into the Agent tool's prompt (or captures it via $(...) in a shell).
+      out(composeChit(brief, parseCraftHeader(bookRaw).covers));
+      return;
+    }
+
+    if (sub === "mise") {
+      const briefId = Number.parseInt(argv[1] ?? "", 10);
+      if (!Number.isInteger(briefId)) fail("usage: hands craft mise <briefId>");
+      const brief = store.getCraftBrief(briefId);
+      if (!brief) fail(`no such brief: #${briefId}`);
+      store.markCraftBriefPickedUp(briefId);
+      const files = craftFiles(brief!.craft_slug);
+      const read = (p: string, cap = 6000): string | null => {
+        try {
+          const body = fs.readFileSync(p, "utf8").trim();
+          if (!body) return null;
+          const points = Array.from(body);
+          return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
+        } catch {
+          return null;
+        }
+      };
+      const book = read(files.book);
+      const mise = read(files.mise);
+      const skill = read(files.skill);
+      const { covers, distilled } = parseCraftHeader(book);
+      const distilledMs = distilled ? Date.parse(distilled) : Number.NaN;
+      const staleness =
+        !book && !mise && !skill
+          ? "cold"
+          : Number.isNaN(distilledMs) || Date.now() - distilledMs > 14 * 24 * 60 * 60_000
+            ? "stale"
+            : "fresh";
+      const siblings = listCrafts(store, cfg)
+        .filter((c) => c.slug !== files.slug)
+        .map((c) => ({ slug: c.slug, covers: c.covers }));
+      out(
+        JSON.stringify(
+          {
+            craft: files.slug,
+            scope: files.scope,
+            covers,
+            distilled,
+            mise,
+            skill,
+            book,
+            siblings,
+            staleness,
+            readIn: staleness !== "fresh" ? `git log --oneline --since "${distilled ?? "30 days ago"}" -- ${covers ?? "."}` : null,
+            returnContract:
+              "Before you return: emit a fenced ```craft-note block (brief, craft, nothing-new, then " +
+              "zero or more mise/book/skill/friction/spillover(<craft>) lines) as the LAST thing in " +
+              "your final message.",
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    if (sub === "fold") {
+      const slug = argv[1];
+      if (!slug) fail("usage: hands craft fold <slug>");
+      const files = craftFiles(slug!);
+      const got = store.acquireCraftFoldLease(files.slug, resolveAgentId());
+      if (!got) fail(`fold lease for "${files.slug}" is held by someone else right now — try again shortly`);
+      out(JSON.stringify(buildFoldContext(store, slug!), null, 2));
+      return;
+    }
+
+    if (sub === "fold-done") {
+      const slug = argv[1];
+      const through = Number.parseInt(strOpt(argv, "--through") ?? "", 10);
+      if (!slug || !Number.isInteger(through)) fail("usage: hands craft fold-done <slug> --through <noteId>");
+      const files = craftFiles(slug!);
+      store.markCraftNotesFolded(files.slug, through);
+      store.releaseCraftFoldLease(files.slug, resolveAgentId());
+      out(`✔ folded "${files.slug}" through note #${through}, lease released`);
+      return;
+    }
+
+    fail("usage: hands craft <ls|sync|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]");
   } finally {
     store.close();
   }
