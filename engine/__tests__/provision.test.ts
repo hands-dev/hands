@@ -301,3 +301,31 @@ describe("station theming (hands#104)", () => {
     expect(fs.existsSync(file)).toBe(true);
   });
 });
+
+describe("craft materialization on provisioning (hands#81/#96)", () => {
+  it("addStations materializes the current craft roster into each new station's worktree, BEFORE it could ever launch", () => {
+    const env = { HANDS_HOME: path.join(root, "coord") };
+    // found a personal craft directly on disk — same shortcut other suites use to avoid
+    // standing up a full Store/MCP round-trip just to test file materialization.
+    const craftsDir = path.join(root, "coord", "crafts");
+    fs.mkdirSync(craftsDir, { recursive: true });
+    fs.writeFileSync(path.join(craftsDir, "saucier.md"), "> covers: sauces\n");
+    fs.writeFileSync(path.join(craftsDir, "saucier.skill.md"), "Taste before plating.");
+
+    const plans = addStations(1, { cwd: repo, config: cfg, env });
+    const dir = plans[0]!.dir;
+    const agentFile = path.join(dir, ".claude", "agents", "craft-saucier.md");
+    const skillFile = path.join(dir, ".claude", "skills", "craft-saucier", "SKILL.md");
+    expect(fs.existsSync(agentFile)).toBe(true);
+    expect(fs.existsSync(skillFile)).toBe(true);
+    expect(fs.readFileSync(skillFile, "utf8")).toContain("Taste before plating.");
+  });
+
+  it("a repo with no crafts founded yet provisions cleanly — empty agents/skills dirs, nothing else", () => {
+    const env = { HANDS_HOME: path.join(root, "coord") };
+    const plans = addStations(1, { cwd: repo, config: cfg, env });
+    const agentsDir = path.join(plans[0]!.dir, ".claude", "agents");
+    expect(fs.existsSync(agentsDir)).toBe(true);
+    expect(fs.readdirSync(agentsDir)).toEqual([]);
+  });
+});

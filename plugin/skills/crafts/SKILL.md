@@ -6,7 +6,7 @@ description: Survey THIS repo and propose the crafts worth establishing — the 
 # Crafts survey — design the brigade for this kitchen
 
 A **craft** is a named, portable specialization (what a chef de partie carries): a book + mise +
-skill under `craftsDir`, dispatched as a sub-agent (hands_brief) for the ticket-slices it covers —
+skill under `craftsDir`, dispatched as a sub-agent (`hands craft brief`) for the ticket-slices it covers —
 by any station, or the expo directly for read-only work. A craft earns existence only where
 accumulated context pays rent across many future tickets. Your job: look at THIS codebase and
 either name the crafts worth establishing, or say — plainly and without apology — that this
@@ -84,9 +84,9 @@ On approval, found each craft as a **charter stub only** — identity, never kno
 (Charter only — the first craft-subagent dispatched for this writes the real book.)
 ```
 
-The `> covers:` line is load-bearing: it's what `hands_mise`'s read-in check runs `git log --
+The `> covers:` line is load-bearing: it's what `hands craft mise`'s read-in check runs `git log --
 <paths>` over, and what every dispatcher's roster summary shows — make it real paths/domains, not
-prose. `distilled:` gets added by the first `hands_fold` pass.
+prose. `distilled:` gets added by the first `hands craft fold` pass.
 
 Write it to `<craftsDir>/<slug>.md` (personal by default — `hands craft promote <slug>` moves it
 to the repo-shared tier once it's proven, a separate, human-reviewed step), nothing else. The
@@ -98,7 +98,7 @@ configured, personal-tier charters ride the next sync automatically; shared-tier
 commit + PR like any other repo file.
 
 Hand off: *"Roster founded — run `hands craft ls` anytime to see it; any station or the expo
-dispatches these by name via hands_brief as work arrives."*
+dispatches these by name via `hands craft brief` as work arrives."*
 
 ## Guardrails
 

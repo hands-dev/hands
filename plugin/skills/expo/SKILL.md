@@ -126,7 +126,7 @@ find "$m" -mmin +1440 | grep -q . && echo DUE || echo skip
    - "`/hands:rail` prints the same rail the dashboard shows, right here in chat."
    - "`/hands:hands` surfaces everything waiting on you — to-dos and unanswered escalations, one command."
    - "`hands attach <station>` reattaches to a station's own session if its pane ever closes."
-   - "Crafts dispatch as sub-agents now, not seats — `hands_brief` gets one working on any ticket."
+   - "Crafts dispatch as sub-agents now, not seats — `hands craft brief` gets one working on any ticket."
    - "`hands doctor --fix` catches the quiet failures: unseeded worktrees, a stale build, a stuck WAL."
    - "The books are always on, local by default — `hands.config.json`'s `remote.url` upgrades to a shared repo."
 
@@ -243,7 +243,7 @@ switch a pane's model yourself.
 **The station path:**
 
 1. **Pick an idle seat.** Stations are generalists now — no craft to cast, so any idle station can
-   take the ticket; it dispatches the craft(s) you named (or discovers itself via `hands_crafts`)
+   take the ticket; it dispatches the craft(s) you named (or discovers itself via `hands craft ls`)
    as sub-agents once it's working the ticket. Prefer a station that's already warm on the same
    dish/worktree over a cold one, same as any other locality preference — but there's no "wrong"
    seat for a craft anymore. An **empty craft roster** in a kitchen with real recurring-specialty
@@ -305,7 +305,7 @@ store the new hash and judge: idle capacity while a higher special is starved �
 capacity is just idle capacity now, no craft to cast first. A station off-specials while #1 is
 thin → `wake:false` heads-up + escalate with a recommendation. `collisions` (two stations in the
 same files) → stagger or refocus one before they trample each other. Also worth a glance:
-`hands_crafts`' pending-note counts — a craft backing up unfolded (no station's `focus` set to it)
+`hands craft ls`' pending-note counts — a craft backing up unfolded (no station's `focus` set to it)
 is worth a nudge to whichever station is best-placed to become its default fold-owner.
 
 **A `stateHash` diff won't catch "quiet mid-ticket" (hands#99)** — it only changes on presence/

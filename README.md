@@ -100,7 +100,7 @@ ship step: *"get hands on PR 1234"* → reviewed, merged, deployed.
 Manage the line: `hands station ls` · `hands scale <N>` · `hands station rm station-<n>`
 — or let the expo scale it (`stations.allowScaling`). Stations are **generalists** — they hold no
 craft of their own; a **craft** (`station-2 · saucier`) is a named, portable specialization
-dispatched as a sub-agent for the ticket-slices it covers (`hands_brief`/`hands_mise`), not held
+dispatched as a sub-agent for the ticket-slices it covers (`hands craft brief`/`mise`), not held
 for a stretch. A station's `hands_focus` label is just a lane tag now (what it's currently on),
 addressable and shown everywhere same as before. Not sure what crafts your repo warrants?
 `/hands:crafts` surveys the codebase and proposes a tight roster — or tells you honestly that the
@@ -175,9 +175,9 @@ content at `<repoRoot>/.hands/crafts/<name>.{md,mise.md,skill.md}` (`hands craft
   loudly.
 - **Crafts mature on their own.** A **craft** is a named, portable specialization — book (distilled
   knowledge), mise (keyed path/command anchors), and skill (procedures) — dispatched as a sub-agent
-  for the ticket-slices it covers (`hands_brief`/`hands_mise`), not held by a station. A craft
+  for the ticket-slices it covers (`hands craft brief`/`mise`), not held by a station. A craft
   sub-agent never writes its own files directly: it returns a small note of what it learned, which
-  a single-writer fold pass (`hands_fold`) later distills into the book/mise/skill in place. Under
+  a single-writer fold pass (`hands craft fold`) later distills into the book/mise/skill in place. Under
   the contributor's namespace when personal-tier; digests never render crafts either way — the
   shared narrative stays the expo's.
 - **Open books = multiplayer.** Two people pointing at one books repo each write their own pages
