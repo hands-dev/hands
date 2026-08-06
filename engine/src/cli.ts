@@ -97,6 +97,24 @@ function reportPlans(plans: LaunchPlan[]): void {
       out(`● ${p.id} provisioned (${p.model}) — start it by pasting into a new terminal:`);
       out(`    ${p.command}`);
     }
+    if (p.sessionName) out(`    theme: ${p.sessionName}`);
+  }
+}
+
+/**
+ * hands#104: session names are hands-owned and assigned at provisioning time
+ * (provision.ts computes them deterministically), but the DB row is the
+ * durable source of truth — persist here so it survives independent of
+ * whether/when the station's own process ever takes a turn.
+ */
+function persistSessionNames(plans: LaunchPlan[]): void {
+  const named = plans.filter((p) => p.sessionName);
+  if (named.length === 0) return;
+  const store = new Store();
+  try {
+    for (const p of named) store.setSessionName(p.id, p.sessionName!);
+  } finally {
+    store.close();
   }
 }
 
@@ -106,6 +124,7 @@ function cmdStation(argv: string[]): void {
     const n = intOpt(argv, "-n", 1);
     const plans = addStations(n);
     if (plans.length === 0) out("nothing to add");
+    persistSessionNames(plans);
     reportPlans(plans);
     out(`\nStations register with the expo on their first turn (hands_peers to check).`);
     return;
@@ -135,6 +154,7 @@ function cmdScale(argv: string[]): void {
   const target = Number.parseInt(argv[0] ?? "", 10);
   if (!Number.isInteger(target) || target < 0) fail("usage: hands scale <N>");
   const { added, removed } = scaleStations(target, { force: flag(argv, "--force") });
+  persistSessionNames(added);
   reportPlans(added);
   for (const id of removed) out(`✔ ${id} retired`);
   if (added.length === 0 && removed.length === 0) out(`already at ${target} stations`);

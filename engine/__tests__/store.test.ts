@@ -102,6 +102,41 @@ describe("Store persistence", () => {
   });
 });
 
+describe("Store session names (hands#104)", () => {
+  it("can be assigned before the station's first turn registers it, upsert-style", () => {
+    const store = open();
+    store.setSessionName("station-1", "myrepo · station-1 (blue)");
+    expect(store.getSessionName("station-1")).toBe("myrepo · station-1 (blue)");
+    // the stub row it created is a real agent row, findable via listPeers
+    expect(store.listPeers().map((p) => p.id)).toContain("station-1");
+    store.close();
+  });
+
+  it("survives registerAgent (which only ever touches cwd/pid/last_seen_at)", () => {
+    const store = open();
+    store.setSessionName("station-1", "myrepo · station-1 (blue)");
+    store.registerAgent({ id: "station-1", cwd: "/w1", pid: 123 });
+    expect(store.getSessionName("station-1")).toBe("myrepo · station-1 (blue)");
+    expect(store.listPeers().find((p) => p.id === "station-1")?.cwd).toBe("/w1");
+    store.close();
+  });
+
+  it("returns null for an agent that never had a name assigned", () => {
+    const store = open();
+    store.registerAgent({ id: "station-1", cwd: "/w1", pid: 123 });
+    expect(store.getSessionName("station-1")).toBeNull();
+    store.close();
+  });
+
+  it("can be reassigned (re-provisioning the same index keeps it consistent)", () => {
+    const store = open();
+    store.setSessionName("station-1", "first name");
+    store.setSessionName("station-1", "second name");
+    expect(store.getSessionName("station-1")).toBe("second name");
+    store.close();
+  });
+});
+
 describe("Store security", () => {
   it("creates the db file with 0600 permissions", () => {
     const store = open();

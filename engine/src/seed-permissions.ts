@@ -133,3 +133,41 @@ export function seedStationPermissions(dir: string): SeedResult {
   fs.writeFileSync(file, `${JSON.stringify(stationSettings(), null, 2)}\n`);
   return { path: file, written: true };
 }
+
+/**
+ * Merge additional top-level keys into `<dir>/.claude/settings.local.json`
+ * WITHOUT clobbering whatever's already there — in practice, the permission
+ * allowlist `seedStationPermissions` writes into the exact same file. Used by
+ * the theming assignment (hands#104) to set the `theme` key alongside it.
+ *
+ * Only ever sets a key that isn't already present, same "never overwrite
+ * hand-tuned settings" contract as `seedStationPermissions` — a station whose
+ * settings already carry a `theme` (principal set one by hand, or a prior run
+ * already assigned it) keeps it, and the caller is told nothing was written.
+ */
+export function mergeStationSettings(
+  dir: string,
+  patch: Record<string, unknown>,
+): { path: string; written: boolean } {
+  const file = path.join(dir, SEEDED_RELPATH);
+  let existing: Record<string, unknown> = {};
+  try {
+    const raw = fs.readFileSync(file, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (parsed && typeof parsed === "object") existing = parsed as Record<string, unknown>;
+  } catch {
+    // absent or malformed — start fresh rather than fail the caller
+    existing = {};
+  }
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (!(key in existing)) {
+      existing[key] = value;
+      changed = true;
+    }
+  }
+  if (!changed) return { path: file, written: false };
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify(existing, null, 2)}\n`);
+  return { path: file, written: true };
+}

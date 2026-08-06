@@ -37,6 +37,15 @@ export interface HandsConfig {
     baseBranch: string | null;
     /** may the expo open/close stations itself (launches local processes) */
     allowScaling: boolean;
+    /**
+     * Assign each provisioned station a deterministic theme colour
+     * (~/.claude/themes/<slug>-station-<n>.json, selected via the worktree's
+     * `.claude/settings.local.json`) and a session name (hands#104). Default
+     * true because the point is that it should just work; set false to opt
+     * out entirely — e.g. for someone who already hand-rolls their own
+     * per-station theme files and doesn't want hands writing over them.
+     */
+    theming: boolean;
   };
   /**
    * Durable remote journal (opt-in). When `url` is set, every state-changing
@@ -84,6 +93,7 @@ export const DEFAULT_CONFIG: HandsConfig = {
     worktreeRoot: null,
     baseBranch: null,
     allowScaling: true,
+    theming: true,
   },
   remote: { url: null, handle: null, project: null },
   merge: { adminMergeLowRisk: false },
@@ -133,6 +143,7 @@ function merge(base: HandsConfig, layer: DeepPartial<HandsConfig> | null): Hands
       baseBranch:
         stationsLayer?.baseBranch !== undefined ? stationsLayer.baseBranch : base.stations.baseBranch,
       allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling,
+      theming: stationsLayer?.theming ?? base.stations.theming,
     },
     remote: {
       url: layer.remote?.url !== undefined ? layer.remote.url : base.remote.url,

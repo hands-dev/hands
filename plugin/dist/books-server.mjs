@@ -3229,8 +3229,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path11) {
-      let input = path11;
+    function removeDotSegments(path12) {
+      let input = path12;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3482,8 +3482,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path11, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path11 && path11 !== "/" ? path11 : void 0;
+        const [path12, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path12 && path12 !== "/" ? path12 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6897,7 +6897,7 @@ var require_dist = __commonJS({
 
 // src/books-server.ts
 import * as fs8 from "node:fs";
-import * as path10 from "node:path";
+import * as path11 from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -7259,8 +7259,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path11, errorMaps, issueData } = params;
-  const fullPath = [...path11, ...issueData.path || []];
+  const { data, path: path12, errorMaps, issueData } = params;
+  const fullPath = [...path12, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7375,11 +7375,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path11, key) {
+  constructor(parent, value, path12, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path11;
+    this._path = path12;
     this._key = key;
   }
   get path() {
@@ -11302,10 +11302,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path11) {
-  if (!path11)
+function getElementAtPath(obj, path12) {
+  if (!path12)
     return obj;
-  return path11.reduce((acc, key) => acc?.[key], obj);
+  return path12.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11688,11 +11688,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path11, issues) {
+function prefixIssues(path12, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path11);
+    iss.path.unshift(path12);
     return iss;
   });
 }
@@ -11875,7 +11875,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path11 = []) => {
+  const processError = (error49, path12 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -11885,7 +11885,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path11, ...issue2.path];
+        const fullpath = [...path12, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -11917,8 +11917,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path11 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path11) {
+  const path12 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path12) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -24324,13 +24324,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path11 = ref.slice(1).split("/").filter(Boolean);
-  if (path11.length === 0) {
+  const path12 = ref.slice(1).split("/").filter(Boolean);
+  if (path12.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path11[0] === defsKey) {
-    const key = path11[1];
+  if (path12[0] === defsKey) {
+    const key = path12[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -30040,8 +30040,8 @@ var StdioServerTransport = class {
 // src/remote.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
 import * as fs7 from "node:fs";
-import * as os4 from "node:os";
-import * as path9 from "node:path";
+import * as os5 from "node:os";
+import * as path10 from "node:path";
 
 // src/config.ts
 import * as fs3 from "node:fs";
@@ -30072,7 +30072,7 @@ import * as fs5 from "node:fs";
 import * as path5 from "node:path";
 
 // src/snapshot.ts
-import * as path8 from "node:path";
+import * as path9 from "node:path";
 
 // src/board.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -30090,6 +30090,10 @@ var ONLINE_WINDOW_MS = 15 * 6e4;
 
 // src/board.ts
 var IDLE_THRESHOLD_MS = 3 * 6e4;
+
+// src/theming.ts
+import * as os4 from "node:os";
+import * as path8 from "node:path";
 
 // src/remote.ts
 var GIT_TIMEOUT_MS = 2e4;
@@ -30137,7 +30141,7 @@ function syncPull(dir) {
 }
 function listProjects(dir) {
   try {
-    return fs7.readdirSync(path9.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs7.readdirSync(path10.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -30162,9 +30166,9 @@ function requireProject(cfg, input) {
   return sanitizeSegment(project);
 }
 function journalPath(dir, ...segments) {
-  const root = path10.resolve(dir, "journal");
-  const full = path10.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
-  if (full !== root && !full.startsWith(`${root}${path10.sep}`)) return null;
+  const root = path11.resolve(dir, "journal");
+  const full = path11.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
+  if (full !== root && !full.startsWith(`${root}${path11.sep}`)) return null;
   return full;
 }
 function listHandles(dir, project) {
@@ -30278,7 +30282,7 @@ function buildBooksServer(cfg) {
       const handleDir = journalPath(cfg.dir, p, h);
       try {
         if (!handleDir) throw new Error("path escaped the journal root");
-        const file2 = path10.join(handleDir, "README.md");
+        const file2 = path11.join(handleDir, "README.md");
         return asToolResult({ project: p, handle: h, markdown: fs8.readFileSync(file2, "utf8") });
       } catch {
         return errorResult(`no index for ${p}/${h} \u2014 check books_list_handles`);
@@ -30350,8 +30354,8 @@ function buildBooksServer(cfg) {
       const s = sanitizeSegment(slug);
       const craftsDir = journalPath(cfg.dir, p, h, "crafts");
       if (!craftsDir) return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
-      const book = readCraftFile(path10.join(craftsDir, `${s}.md`));
-      const skill = readCraftFile(path10.join(craftsDir, `${s}.skill.md`));
+      const book = readCraftFile(path11.join(craftsDir, `${s}.md`));
+      const skill = readCraftFile(path11.join(craftsDir, `${s}.skill.md`));
       if (book === null && skill === null) {
         return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
       }

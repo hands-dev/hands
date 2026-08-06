@@ -329,6 +329,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       const peers = store.listPeers().map((p) => ({
         id: p.id,
         focus: p.focus ?? undefined,
+        sessionName: p.session_name ?? undefined,
         online: p.online,
         cwd: p.cwd,
         pid: p.pid,
@@ -999,6 +1000,9 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         launcher: p.launcher,
         // when not auto-launched, this is the command to hand to the principal
         pasteCommand: p.launched ? undefined : p.command,
+        // hands#104 — undefined when stations.theming is off
+        themeColor: p.themeColor,
+        sessionName: p.sessionName,
       }));
 
     server.registerTool(
@@ -1017,7 +1021,11 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         store.touch(agentId);
         const { addStations } = await import("./provision.js");
         try {
-          return asToolResult({ ok: true, added: presentPlans(addStations(input.count ?? 1)) });
+          const plans = addStations(input.count ?? 1);
+          // hands#104: DB is the source of truth for the session name — persist
+          // right away rather than waiting on the station's own first turn.
+          for (const p of plans) if (p.sessionName) store.setSessionName(p.id, p.sessionName);
+          return asToolResult({ ok: true, added: presentPlans(plans) });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
         }
@@ -1066,6 +1074,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         const { scaleStations } = await import("./provision.js");
         try {
           const res = scaleStations(input.target, { force: input.force });
+          for (const p of res.added) if (p.sessionName) store.setSessionName(p.id, p.sessionName);
           return asToolResult({ ok: true, added: presentPlans(res.added), removed: res.removed });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };

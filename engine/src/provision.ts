@@ -5,10 +5,12 @@ import * as path from "node:path";
 import { type HandsConfig, loadConfig } from "./config.js";
 import { type RepoInfo, repoInfo } from "./paths.js";
 import {
+  mergeStationSettings,
   SEEDED_RELPATH,
   seedStationPermissions,
   unseedStationPermissions,
 } from "./seed-permissions.js";
+import { assignStationTheme, themeFileContents, themeFilePath } from "./theming.js";
 
 /**
  * Station provisioning — the user thinks in STATIONS, never worktrees. Each
@@ -39,6 +41,14 @@ export interface LaunchPlan {
   /** how it was (or wasn't) started: tmux | iterm | manual */
   launcher: "tmux" | "iterm" | "manual";
   launched: boolean;
+  /**
+   * hands#104 theming — undefined when `stations.theming` is off. `themeColor`
+   * is the palette hex assigned deterministically by station index;
+   * `sessionName` is the hands-owned display label (same string used as the
+   * theme file's own "name" and, once persisted, the DB's session_name).
+   */
+  themeColor?: string;
+  sessionName?: string;
 }
 
 export class ProvisionError extends Error {}
@@ -250,6 +260,28 @@ export function addStations(
     // allowlist stalls on a prompt before it can read its own files. See
     // seed-permissions.ts for what that cost us once already.
     seedStationPermissions(dir);
+
+    // hands#104: deterministic-by-index theme + hands-owned session name.
+    // Opt-out via stations.theming for people who already hand-roll their own
+    // theme files and don't want them touched.
+    let themeColor: string | undefined;
+    let sessionName: string | undefined;
+    if (cfg.stations.theming) {
+      const assignment = assignStationTheme({
+        repoLabel: path.basename(info.repoRoot),
+        repoSlug: info.slug,
+        index,
+        env: opts?.env,
+      });
+      fs.mkdirSync(path.dirname(assignment.file), { recursive: true });
+      fs.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}\n`);
+      // Merge into the SAME settings.local.json seedStationPermissions just
+      // wrote, without clobbering the permission allowlist already there.
+      mergeStationSettings(dir, { theme: assignment.themeId });
+      themeColor = assignment.color.hex;
+      sessionName = assignment.sessionName;
+    }
+
     const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,
@@ -259,6 +291,8 @@ export function addStations(
       command: launchCommand({ id, dir, model }),
       launcher: res.launcher,
       launched: res.launched,
+      ...(themeColor ? { themeColor } : {}),
+      ...(sessionName ? { sessionName } : {}),
     });
     created++;
   }
@@ -271,7 +305,7 @@ export function addStations(
  */
 export function removeStation(
   id: string,
-  opts?: { cwd?: string; config?: HandsConfig; force?: boolean },
+  opts?: { cwd?: string; config?: HandsConfig; force?: boolean; env?: NodeJS.ProcessEnv },
 ): { id: string; removed: boolean } {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
@@ -281,6 +315,19 @@ export function removeStation(
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
   const dir = path.join(root, `station-${index}`);
+
+  // hands#104: clean up the theme file this station's `add` created — it
+  // lives under ~/.claude/themes/, outside the worktree, so `git worktree
+  // remove` below never touches it. Gated on the CURRENT theming setting: if
+  // someone has opted out since this station was created, hands leaves
+  // whatever's there alone rather than guessing whether it still owns it.
+  if (cfg.stations.theming) {
+    try {
+      fs.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+    } catch {
+      // best-effort — a missing/unwritable theme file is not fatal to rm
+    }
+  }
 
   // Stop the session's wake Monitor (the station skill's tail); killing the
   // tail ends the watch. The pane/session itself is the human's to close —
@@ -344,7 +391,7 @@ export function scaleStations(
   }
   const removed: string[] = [];
   for (const w of current.slice(target)) {
-    removeStation(w.id, { cwd, config: cfg, force: opts?.force });
+    removeStation(w.id, { cwd, config: cfg, force: opts?.force, env: opts?.env });
     removed.push(w.id);
   }
   return { added: [], removed };

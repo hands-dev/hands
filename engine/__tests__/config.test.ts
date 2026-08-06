@@ -77,3 +77,22 @@ describe("loadConfig — the login-derived layer (hands login)", () => {
     });
   });
 });
+
+describe("loadConfig — stations.theming (hands#104)", () => {
+  it("defaults to true — theming is opt-out, not opt-in", () => {
+    expect(loadConfig({ cwd: home, env }).stations.theming).toBe(true);
+  });
+
+  it("a user config can opt out entirely", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".claude", "hands.config.json"),
+      JSON.stringify({ stations: { theming: false } }),
+    );
+    resetConfigCache();
+    const cfg = loadConfig({ cwd: home, env });
+    expect(cfg.stations.theming).toBe(false);
+    // nothing else about stations should differ from defaults
+    expect({ ...cfg.stations, theming: true }).toEqual(DEFAULT_CONFIG.stations);
+  });
+});

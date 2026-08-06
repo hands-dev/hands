@@ -2,6 +2,7 @@ import * as path from "node:path";
 import { IDLE_THRESHOLD_MS } from "./board.js";
 import { readPriorities } from "./priorities.js";
 import { Store } from "./store.js";
+import { themeColorForIndex } from "./theming.js";
 
 export type AgentState = "active" | "idle" | "offline";
 
@@ -23,6 +24,25 @@ export interface SnapshotAgent {
   focus: string | null;
   /** directed messages from expo this agent hasn't drained yet (hands#55) */
   pendingCommands: SnapshotPendingCommand[];
+  /**
+   * hands-owned display name (hands#104), set at `station add` — null for
+   * agents provisioned before this feature existed, or for "expo" (hands
+   * never writes into the principal's own main checkout uninvited).
+   */
+  sessionName: string | null;
+  /**
+   * Palette hex, deterministic by station index — same value hands wrote
+   * into `~/.claude/themes/<slug>-station-<n>.json`, so the dashboard card
+   * matches the pane's actual terminal theme. Null for "expo" and for any
+   * id that doesn't parse as `station-<n>`.
+   */
+  themeColor: string | null;
+}
+
+/** `station-<n>` → n, or null when the id doesn't parse (e.g. "expo"). */
+function stationIndex(id: string): number | null {
+  const m = /^station-(\d+)$/.exec(id);
+  return m ? Number.parseInt(m[1]!, 10) : null;
 }
 
 export interface SnapshotPendingCommand {
@@ -161,6 +181,7 @@ export function buildSnapshot(
     const { files, ticket } = activity(p.activity);
     const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
     const state: AgentState = !p.online ? "offline" : activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
+    const index = stationIndex(p.id);
     return {
       id: p.id,
       state,
@@ -179,6 +200,8 @@ export function buildSnapshot(
         p.id === "expo"
           ? []
           : store.pendingFromExpo(p.id).map((m) => ({ id: m.id, subject: m.subject, body: m.body, at: m.created_at })),
+      sessionName: p.session_name,
+      themeColor: index !== null ? themeColorForIndex(index).hex : null,
     };
   });
 
