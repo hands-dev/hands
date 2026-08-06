@@ -57,6 +57,62 @@ Every waking send costs the recipient a full model turn over its whole context; 
 - **Keep critical-path stations driving.** A station on a continuous build should reach a real
   milestone before yielding. Re-nudge (or refire) if one goes idle mid-spine.
 
+## Session start — version check + shift greeting (hands#65, once/day)
+
+Gate it once (one Bash call; `$C` = your coordination dir):
+
+```bash
+C=<coordinationDir>
+m=$C/expo.last-greeting
+[ -e "$m" ] || { touch "$m"; }               # first run starts the clock; not due (fresh session)
+find "$m" -mmin +1440 | grep -q . && echo DUE || echo skip
+```
+
+**skip** → go straight to "Arm your wake signal" below. **DUE** → `touch "$m"`, then:
+
+1. **Version check — best-effort, silent on any failure, never blocks or adds meaningful startup
+   latency.** One Node process does the whole thing: reads the locally installed build (`hands
+   version --json`, added for exactly this), fetches this repo's own `latest.json` off `main` via
+   `raw.githubusercontent.com` (no dependency on hands-cc.dev — it isn't deployed there yet; swap
+   the source once it is, this is a TODO, not a decision made twice), and prints one line only when
+   the two commits differ:
+
+   ```bash
+   node -e '
+   const { execSync } = require("node:child_process");
+   let local;
+   try { local = JSON.parse(execSync("hands version --json").toString()).commit; } catch { local = null; }
+   if (!local) process.exit(0);
+   fetch("https://raw.githubusercontent.com/hands-dev/hands/main/.claude-plugin/latest.json", { signal: AbortSignal.timeout(3000) })
+     .then((r) => r.json())
+     .then((l) => { if (l.commit && l.commit !== local) console.log(`UPDATE\t${l.commit}\t${l.changelog}`); })
+     .catch(() => {});
+   ' 2>/dev/null
+   ```
+
+   Output starting `UPDATE` → surface one line: *"Update available (`<commit>`) — `<changelog>`. Run:
+   `claude plugin update hands@hands`."* That's the real command (verified against the plugin
+   reference docs, not guessed) — `/plugin` manages install/enable state and doesn't have a
+   targeted update action; `claude plugin update <plugin>` is the one that actually pulls the
+   latest marketplace commit. No output, a non-`UPDATE` line, or any failure → say nothing about
+   versions at all; this must never read as broken, just quiet.
+
+   **`.claude-plugin/latest.json` staleness note:** this file is committed content, so it only
+   reflects reality when someone bumps it on release — there's no CI wiring it to `main`'s tip yet.
+   Treat a stale/absent update line as expected until that automation exists, not a bug.
+
+2. **The greeting** (always, once the check above resolves either way) — kitchen voice, a few
+   lines, not a wall of text: *"Have a great shift, chef. hands-cc.dev has the docs if you need
+   them."* Then one rotating pro-tip, picked by day-of-year modulo the pool size below (deterministic
+   — same tip all day, a new one tomorrow, no extra state beyond the marker above):
+
+   - "`/hands:rail` prints the same rail the dashboard shows, right here in chat."
+   - "`/hands:hands` surfaces everything waiting on you — to-dos and unanswered escalations, one command."
+   - "`hands attach <station>` reattaches to a station's own session if its pane ever closes."
+   - "Stations hold **crafts** — hot-swap one onto an idle seat instead of starting cold."
+   - "`hands doctor --fix` catches the quiet failures: unseeded worktrees, a stale build, a stuck WAL."
+   - "The books (`hands.config.json`'s `remote.url`) turn every action into a browsable daily digest — opt-in, worth it past one machine."
+
 ## 0. Arm your wake signal (event-driven inbox)
 
 Your inbox is the `expo.notify` file (the `notify` path from `hands_paths`) — every waking message,
