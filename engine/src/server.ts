@@ -754,12 +754,24 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
       // Claiming an unassigned task on start.
       const claim = input.state === "in_progress" && !task.assignee ? agentId : null;
-      store.updateTaskState({
+      const outcome = store.updateTaskState({
         id: input.id,
         state: input.state,
         assignee: claim,
         result: input.result ?? null,
       });
+      if (!outcome.ok) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error:
+              outcome.reason === "terminal"
+                ? `task #${input.id} is already ${task.state} — terminal states can't reopen, file a new ticket instead`
+                : "no such task",
+          }),
+          isError: true,
+        };
+      }
       if (input.state === "returned") {
         deliverWake([task.created_by], { from: agentId, subject: "task returned" });
       }

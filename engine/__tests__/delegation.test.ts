@@ -74,4 +74,42 @@ describe("delegation lifecycle", () => {
     expect(store.listTasks({ state: "returned" }).map((t) => t.title)).toEqual(["b"]);
     store.close();
   });
+
+  it("a cancelled ticket cannot be resurrected into an active state (hands#97)", () => {
+    const store = new Store({ env });
+    const id = store.createTask({ createdBy: "expo", assignee: "wt1", title: "a", now: 1000 });
+    store.updateTaskState({ id, state: "in_progress", now: 2000 });
+    const cancelled = store.updateTaskState({ id, state: "cancelled", now: 3000 });
+    expect(cancelled).toEqual({ ok: true });
+    expect(store.getTask(id)!.finished_at).toBe(3000);
+
+    // Without the guard this silently succeeded — the ticket was
+    // re-claimed and re-run as if it had never been 86'd (hands#97).
+    const resurrect = store.updateTaskState({ id, state: "in_progress", assignee: "wt2", now: 9000 });
+    expect(resurrect).toEqual({ ok: false, reason: "terminal" });
+
+    const after = store.getTask(id)!;
+    expect(after.state).toBe("cancelled"); // unchanged
+    expect(after.assignee).toBe("wt1"); // unchanged — wt2's claim was rejected
+    // finished_at must stay anchored to the ORIGINAL close, not silently
+    // reused as the working-interval end for phantom new work.
+    expect(after.finished_at).toBe(3000);
+    store.close();
+  });
+
+  it("a done ticket cannot be resurrected either, and an unknown id reports not_found", () => {
+    const store = new Store({ env });
+    const id = store.createTask({ createdBy: "expo", assignee: "wt1", title: "a", now: 1000 });
+    store.updateTaskState({ id, state: "done", now: 2000 });
+
+    expect(store.updateTaskState({ id, state: "returned", now: 3000 })).toEqual({
+      ok: false,
+      reason: "terminal",
+    });
+    expect(store.updateTaskState({ id: id + 999, state: "in_progress", now: 3000 })).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
+    store.close();
+  });
 });

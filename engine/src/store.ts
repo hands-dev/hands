@@ -1022,20 +1022,34 @@ export class Store {
     return this.db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as TaskRow | undefined;
   }
 
+  /**
+   * `done`/`cancelled` are terminal — a ticket in either state cannot flip back to an
+   * active one. Without this, a station racing a cancellation (or replaying a stale
+   * claim after a restart) can silently resurrect 86'd/served work: the bus loses its
+   * only way to stop a station, both sides disagree about whether the ticket is live,
+   * and `finished_at`'s COALESCE means the resurrected ticket's cost-attribution
+   * window stays anchored to the OLD close time instead of the new work (hands#97).
+   */
+  private static readonly ACTIVE_STATES = new Set(["assigned", "in_progress", "returned"]);
+
   updateTaskState(input: {
     id: number;
     state: "assigned" | "in_progress" | "returned" | "done" | "cancelled";
     assignee?: string | null;
     result?: string | null;
     now?: number;
-  }): void {
+  }): { ok: true } | { ok: false; reason: "not_found" | "terminal" } {
     const now = input.now ?? Date.now();
     // Transition stamps feed per-ticket token-cost attribution: the working
     // interval is [started_at, finished_at ?? now] of the assignee's pane.
     const started = input.state === "in_progress";
     const finished =
       input.state === "returned" || input.state === "done" || input.state === "cancelled";
-    this.withRetry(() =>
+    // The terminal-state check rides the same UPDATE's WHERE clause (not a
+    // separate SELECT-then-UPDATE) so it's an atomic compare-and-set — two
+    // agents racing a claim against a just-cancelled ticket can't both win.
+    const blockResurrect = Store.ACTIVE_STATES.has(input.state);
+    const result = this.withRetry(() =>
       this.db
         .prepare(
           `UPDATE tasks
@@ -1045,7 +1059,8 @@ export class Store {
                started_at = CASE WHEN ? AND started_at IS NULL THEN ? ELSE started_at END,
                finished_at = CASE WHEN ? THEN COALESCE(finished_at, ?) ELSE finished_at END,
                updated_at = ?
-           WHERE id = ?`,
+           WHERE id = ?
+             AND NOT (? AND state IN ('done', 'cancelled'))`,
         )
         .run(
           input.state,
@@ -1057,8 +1072,12 @@ export class Store {
           now,
           now,
           input.id,
+          blockResurrect ? 1 : 0,
         ),
-    );
+    ) as { changes: number };
+    if (result.changes === 0) {
+      return this.getTask(input.id) ? { ok: false, reason: "terminal" } : { ok: false, reason: "not_found" };
+    }
     this.journal("task.update", {
       id: input.id,
       state: input.state,
@@ -1066,6 +1085,7 @@ export class Store {
       result: input.result ?? null,
       at: now,
     });
+    return { ok: true };
   }
 
   /** Tasks freshly assigned to a worktree (for its board delta). */
