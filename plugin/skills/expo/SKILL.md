@@ -52,6 +52,23 @@ Every waking send costs the recipient a full model turn over its whole context; 
 
 - **Strict pass discipline, server-enforced:** stations can't message each other or broadcast —
   everything routes through you. Adjudicate promptly; collapse negotiations into one directive.
+- **Tickets carry no cross-station content (hands#125).** The transport rule above stops stations
+  *talking* to each other; it says nothing about what YOU brief them with, and briefing one station
+  on another's business achieves the same coupling with you as the courier. A ticket contains the
+  action, the bar it must meet, and what to report back — nothing about what another station found,
+  is holding, or is queued behind. Need to pass along another station's finding? Restate it as an
+  unattributed constraint ("run `pnpm install` first or you'll hit TS2307s", not "station-3 hit
+  this and relayed it"). Merge order, queue state, and priority sequencing are expo-only — a
+  station asking "is my PR next" gets an answer, not a picture. Left unchecked, stations start
+  reasoning off the partial cross-station context you fed them — declining or timing their own work
+  against a queue they've inferred — a second, informal scheduler running on stale information
+  alongside yours.
+- **Directive first, short (hands#124).** Lead with the action, first line, before any rationale —
+  rationale is optional and goes last; a station that needs the why can ask, one that misses the
+  what stalls a full heartbeat cycle on a misread. One ticket, one action — bundling "and while
+  you're there" ranks the secondary ask equal with the primary. Status updates ride a separate
+  non-waking message, never appended to a directive. Soft ceiling: a directive past ~15 lines
+  probably needs splitting.
 - **FYIs are non-waking:** `hands_send({ ..., wake: false })` lands on the next natural drain. Only
   wake a station when it must act *now*. Broadcast (`to: "*"`) only for a genuine all-hands.
 - **Keep critical-path stations driving.** A station on a continuous build should reach a real
@@ -312,6 +329,33 @@ stalled on the same ticket. On CHANGED (or every few DUE beats even when unchang
 spot-check any station showing `active` against an `in_progress` ticket that's been open a while:
 the transcript-mtime check from "The station path" step 3 above. Recent mtime → still moving,
 nothing to do; cold → that's your stall signal, worth more than bus silence alone.
+
+**Backlog/saturation check — same beat, opposite question (hands#122).** The check above catches
+idle capacity while a special starves; it has no counterpart for the reverse failure — stations
+producing correct, well-verified work into a system that can't absorb it. Unverifiable work
+accumulates as risk, not progress, and every signal above can read "go" while this is happening. On
+the same DUE cadence, check for:
+
+- **External queue depth**, where the repo exposes it (e.g. `gh api actions/runs` queued vs
+  in_progress) — a ratio like 20:1 is a hard stop.
+- **Zero completions against N open.** Nothing merged in the last hour with N PRs open → firing an
+  N+1th ticket is negative value.
+- **Correction-traffic spike with zero completions.** A spike alone is ambiguous (can mean high
+  quality or thrash); paired with no completions it's a real saturation tell.
+- **Tickets stuck `in_progress`** while stations stay responsive — blocked on something you aren't
+  modeling.
+
+Any of these → **stand-down**, a first-class move symmetric to firing a ticket: stop firing new
+tickets; broadcast to park cleanly (stop pushing, no re-runs, no new work); ask each station for one
+short status line, then go quiet. Resume on an **observable signal** (queue drained, a PR became
+mergeable) — never on elapsed time or a felt sense that things have calmed. A stand-down does NOT
+suppress correction traffic — slow the rate of new work, never the checking; conflating the two
+ships worse code silently. While standing down, the beat's own line notes it, e.g. *"Utilization:
+3/6 on duty — stand-down: CI queue 32 deep, 0 merges/hr."*
+
+**Merges drain a queue in bursts, not reductions** — each merge fires its own deploy run and
+re-queues every remaining PR's validation against the new base. Expect queued-count to climb while
+merging (e.g. 8→22→32), not steadily fall; don't predict otherwise when unblocking a merge queue.
 
 Well-balanced → say so.
 Always surface a one-line read, this exact shape (deterministic + grep-friendly, hands#52 — the
