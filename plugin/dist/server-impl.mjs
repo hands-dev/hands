@@ -9454,6 +9454,73 @@ var init_provision = __esm({
   }
 });
 
+// src/feedback.ts
+import { execFileSync as execFileSync6 } from "node:child_process";
+function githubHandle(cwd, gh2) {
+  try {
+    return gh2(["api", "user", "--jq", ".login"], cwd).trim() || null;
+  } catch {
+    return null;
+  }
+}
+function currentRepo(cwd, gh2) {
+  try {
+    return gh2(["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], cwd).trim() || null;
+  } catch {
+    return null;
+  }
+}
+function feedbackFooter(cwd, now = Date.now(), gh2 = runGh) {
+  const handle = githubHandle(cwd, gh2);
+  const repo = currentRepo(cwd, gh2);
+  const date5 = new Date(now).toISOString().slice(0, 10);
+  const who = handle ? `@${handle}` : "an unknown handle";
+  const where = repo ? ` from ${repo}` : "";
+  return `filed by ${who}${where} \xB7 ${date5}`;
+}
+function defaultFeedbackTitle(body) {
+  const gist = body.trim().split("\n")[0].slice(0, 60);
+  return `feedback: ${gist}`;
+}
+function fileFeedback(opts) {
+  const cwd = opts.cwd ?? process.cwd();
+  const gh2 = opts.gh ?? runGh;
+  const body = opts.body.trim();
+  if (!body) return { ok: false, error: "feedback body is empty" };
+  const title = opts.title?.trim() || defaultFeedbackTitle(body);
+  const fullBody = `${body}
+
+---
+${feedbackFooter(cwd, Date.now(), gh2)}`;
+  const attempt = (withLabel) => {
+    const args = ["issue", "create", "--repo", FEEDBACK_REPO, "--title", title, "--body", fullBody];
+    if (withLabel) args.push("--label", "feedback");
+    return gh2(args, cwd).trim();
+  };
+  try {
+    return { ok: true, url: attempt(true) };
+  } catch {
+    try {
+      return { ok: true, url: attempt(false) };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message.split("\n")[0] : String(err) };
+    }
+  }
+}
+var FEEDBACK_REPO, runGh;
+var init_feedback = __esm({
+  "src/feedback.ts"() {
+    "use strict";
+    FEEDBACK_REPO = "hands-dev/hands";
+    runGh = (args, cwd) => execFileSync6("gh", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 2e4
+    });
+  }
+});
+
 // src/tokens.ts
 import * as fs12 from "node:fs";
 import * as os7 from "node:os";
@@ -9720,6 +9787,7 @@ function serve(opts) {
   const tickMs = opts?.tickMs ?? 1e3;
   const booksTickMs = opts?.booksTickMs ?? 6e4;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
+  const fileFeedbackFn = opts?.fileFeedback ?? fileFeedback;
   const store = new Store({ env });
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
@@ -9892,6 +9960,51 @@ function serve(opts) {
       }
       return;
     }
+    if (req.method === "POST" && url2.startsWith("/api/feedback")) {
+      const chunks = [];
+      let tooLarge = false;
+      req.on("data", (chunk) => {
+        if (tooLarge) return;
+        chunks.push(chunk);
+        if (chunks.reduce((n, c) => n + c.length, 0) > MAX_FEEDBACK_BODY_BYTES) {
+          tooLarge = true;
+          res.writeHead(413, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "feedback body too large" }));
+          req.destroy();
+        }
+      });
+      req.on("end", () => {
+        if (tooLarge) return;
+        let parsed;
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+        if (typeof parsed.body !== "string" || !parsed.body.trim()) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "body is required" }));
+          return;
+        }
+        const title = typeof parsed.title === "string" ? parsed.title : void 0;
+        let result;
+        try {
+          result = fileFeedbackFn({ body: parsed.body, title });
+        } catch (err) {
+          result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (result.ok) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ url: result.url }));
+        } else {
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: result.error ?? "filing failed" }));
+        }
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
@@ -9927,11 +10040,12 @@ function serve(opts) {
     });
   });
 }
-var ASSETS;
+var ASSETS, MAX_FEEDBACK_BODY_BYTES;
 var init_serve = __esm({
   "src/serve.ts"() {
     "use strict";
     init_config();
+    init_feedback();
     init_paths();
     init_remote();
     init_snapshot();
@@ -9941,6 +10055,7 @@ var init_serve = __esm({
       "dashboard.js": "text/javascript; charset=utf-8",
       "dashboard.css": "text/css; charset=utf-8"
     };
+    MAX_FEEDBACK_BODY_BYTES = 1e5;
   }
 });
 

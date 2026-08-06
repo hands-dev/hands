@@ -1,4 +1,5 @@
 import { OtherCrafts } from "@/components/crafts";
+import { FeedbackWidget } from "@/components/feedback-form";
 import { JournalFeed } from "@/components/journal-feed";
 import { OtherKitchens } from "@/components/kitchens";
 import { MessageLog } from "@/components/message-log";
@@ -175,7 +176,8 @@ export function App() {
             </a>
           ))}
         </nav>
-        <div className="mt-auto">
+        <div className="mt-auto flex flex-col gap-3">
+          <FeedbackWidget />
           <LiveBadge connected={connected} />
         </div>
       </aside>

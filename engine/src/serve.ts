@@ -3,6 +3,7 @@ import { createServer, type ServerResponse } from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type HandsConfig, loadConfig } from "./config.js";
+import { fileFeedback, type FeedbackResult } from "./feedback.js";
 import { dbPath } from "./paths.js";
 import {
   openJournal,
@@ -64,6 +65,9 @@ const ASSETS: Record<string, string> = {
   "dashboard.js": "text/javascript; charset=utf-8",
   "dashboard.css": "text/css; charset=utf-8",
 };
+
+/** Feedback is a short note, not a file upload — generous enough for anything a human would type, small enough that a runaway client can't build up memory on this server. */
+const MAX_FEEDBACK_BODY_BYTES = 100_000;
 
 function escapeHtml(s: string): string {
   return s.replace(
@@ -134,6 +138,8 @@ export function serve(opts?: {
   assetsDir?: string;
   /** bypass loadConfig's real repo/user file lookup entirely (test hook) */
   config?: HandsConfig;
+  /** the feedback-filing function POST /api/feedback calls (test hook — avoids a real `gh issue create` in tests) */
+  fileFeedback?: (opts: { body: string; title?: string; cwd?: string }) => FeedbackResult;
 }): Promise<ServeHandle> {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
@@ -141,6 +147,7 @@ export function serve(opts?: {
   const tickMs = opts?.tickMs ?? 1000;
   const booksTickMs = opts?.booksTickMs ?? 60_000;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
+  const fileFeedbackFn = opts?.fileFeedback ?? fileFeedback;
   const store = new Store({ env });
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
@@ -333,6 +340,52 @@ export function serve(opts?: {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
       }
+      return;
+    }
+
+    if (req.method === "POST" && url.startsWith("/api/feedback")) {
+      const chunks: Buffer[] = [];
+      let tooLarge = false;
+      req.on("data", (chunk: Buffer) => {
+        if (tooLarge) return;
+        chunks.push(chunk);
+        if (chunks.reduce((n, c) => n + c.length, 0) > MAX_FEEDBACK_BODY_BYTES) {
+          tooLarge = true;
+          res.writeHead(413, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "feedback body too large" }));
+          req.destroy();
+        }
+      });
+      req.on("end", () => {
+        if (tooLarge) return;
+        let parsed: { body?: unknown; title?: unknown };
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+        if (typeof parsed.body !== "string" || !parsed.body.trim()) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "body is required" }));
+          return;
+        }
+        const title = typeof parsed.title === "string" ? parsed.title : undefined;
+        let result: FeedbackResult;
+        try {
+          result = fileFeedbackFn({ body: parsed.body, title });
+        } catch (err) {
+          result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (result.ok) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ url: result.url }));
+        } else {
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: result.error ?? "filing failed" }));
+        }
+      });
       return;
     }
 
