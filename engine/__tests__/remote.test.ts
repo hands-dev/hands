@@ -3,11 +3,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { coordinationDir } from "../src/paths.js";
 import { readPriorities } from "../src/priorities.js";
 import {
+  ensureLocalBooksOrigin,
   ensureRepo,
   type JournalEvent,
+  journalDir,
   listProjects,
+  localBooksOriginPath,
   MARKER_FILE,
   openJournal,
   projectFromOrigin,
@@ -242,6 +246,58 @@ describe("git sync + machine-move restore", () => {
     expect(syncPull(j1.dir).ok).toBe(true);
     expect(readEvents(j1.dir, j1.project, "michael")).toHaveLength(1);
     expect(readEvents(j1.dir, j1.project, "casey")).toHaveLength(1);
+  });
+});
+
+describe("ensureLocalBooksOrigin (hands#129 — books are load-bearing, local by default)", () => {
+  it("bootstraps a bare repo idempotently, without disturbing what's already pushed", () => {
+    const env = { HANDS_HOME: path.join(root, "coord") };
+    const first = ensureLocalBooksOrigin(env, root);
+    expect(first).toBe(localBooksOriginPath(env, root));
+    expect(execFileSync("git", ["-C", first!, "rev-parse", "--is-bare-repository"], { encoding: "utf8" }).trim()).toBe(
+      "true",
+    );
+
+    // push something real through it, then re-bootstrap — must be a no-op, not a re-init
+    const j = journalAt("michael", first!, { home: "coord" });
+    j.append("message", { id: 1, from: "a", to: "b", body: "still here", at: 1 });
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+
+    const second = ensureLocalBooksOrigin(env, root);
+    expect(second).toBe(first);
+    expect(syncPull(j.dir).ok).toBe(true);
+    expect(readEvents(j.dir, j.project, "michael").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("does not collide with journalDir (the clone), and lives under coordinationDir", () => {
+    const env = { HANDS_HOME: path.join(root, "coord") };
+    const origin = localBooksOriginPath(env, root);
+    expect(origin).not.toBe(journalDir(env, root));
+    expect(path.dirname(origin)).toBe(coordinationDir(env, root));
+  });
+
+  it("openJournal() falls back to a local origin when remote.url is unset — never returns null just because nothing was configured (hands#129)", () => {
+    const env = { HANDS_HOME: path.join(root, "coord") };
+    const j = openJournal({
+      env,
+      cwd: root,
+      config: { ...DEFAULT_CONFIG, remote: { url: null, handle: "michael", project: null } },
+    });
+    expect(j).not.toBeNull();
+    expect(j!.url).toBe(localBooksOriginPath(env, root));
+
+    // prove it's a genuine, functional remote — round-trip real events through a separate clone,
+    // exactly like the hosted-remote case in "git sync + machine-move restore" above.
+    const store = new Store({ env: { HANDS_HOME: fs.mkdtempSync(path.join(root, "bus-")) } });
+    store.setJournal(j!.append);
+    populate(store);
+    expect(syncPush(j!, { force: true }).status).toBe("pushed");
+
+    const dir2 = path.join(root, "second-clone");
+    expect(ensureRepo(dir2, j!.url)).toBe(true);
+    expect(syncPull(dir2).ok).toBe(true);
+    expect(readEvents(dir2, j!.project, "michael").length).toBeGreaterThanOrEqual(12);
+    store.close();
   });
 });
 

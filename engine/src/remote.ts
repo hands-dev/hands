@@ -194,6 +194,49 @@ export function journalDir(env: NodeJS.ProcessEnv = process.env, cwd: string = p
 }
 
 /**
+ * Where a locally-bootstrapped books origin lives — a bare repo, sibling to
+ * journalDir()'s clone, so books have a real git remote by default with no
+ * external host required. Bare (no work tree; only ever pushed/fetched
+ * against, never checked out into).
+ */
+export function localBooksOriginPath(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  return path.join(coordinationDir(env, cwd), "books-origin.git");
+}
+
+/**
+ * Bootstrap (idempotently) a bare git repo at localBooksOriginPath — the
+ * default "remote" side for books when no `remote.url` is configured, so
+ * openJournal() never has to return null just because nothing was set up.
+ * Books are load-bearing, not optional; only WHERE the repo lives varies.
+ * Best-effort like ensureRepo: returns null only on genuine failure (no git
+ * binary, unwritable coordinationDir) — there's no "unconfigured" case to
+ * special-case anymore, only "configured" vs "failed."
+ */
+export function ensureLocalBooksOrigin(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string | null {
+  const dir = localBooksOriginPath(env, cwd);
+  try {
+    // A plain fs check, not a git subprocess — matches ensureRepo's own existence check just
+    // below, and matters here specifically: openJournal() now calls this on every MCP
+    // server/dashboard boot, so the overwhelmingly common case (already bootstrapped) must stay
+    // a cheap stat, not a spawn. Bare repos always have a HEAD file at their root (no .git subdir
+    // to check, unlike a work tree).
+    if (!fs.existsSync(path.join(dir, "HEAD"))) {
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      git(dir, ["init", "-q", "--bare", "-b", "main", dir]);
+    }
+    return dir;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Make sure `dir` is a git work tree wired to `url`. `git init` + remote-add
  * (not clone) so it works identically for an empty remote, an existing one,
  * and a dir that already has unpushed local commits.
@@ -547,7 +590,13 @@ export function openJournal(options?: {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
   const config = options?.config ?? loadConfig({ cwd, env });
-  const url = config.remote.url?.trim();
+  const configuredUrl = config.remote.url?.trim();
+  // Books are load-bearing, not optional — an unconfigured remote.url falls
+  // back to a locally-bootstrapped origin (hands#129) rather than turning
+  // journaling off. `url` is null here only on genuine failure: no host
+  // configured AND the local bootstrap itself failed (no git, unwritable
+  // coordinationDir).
+  const url = configuredUrl || ensureLocalBooksOrigin(env, cwd);
   if (!url) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url); // best-effort — appends work even if git wiring failed

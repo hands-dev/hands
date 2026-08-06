@@ -47,6 +47,7 @@ import { runDoctor } from "./doctor.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
+  ensureLocalBooksOrigin,
   githubUsername,
   listProjects,
   openJournal,
@@ -184,7 +185,16 @@ function cmdBooks(argv: string[]): void {
     if (typeof remote.url === "string" && remote.url) {
       out(`books: ${remote.url} (handle "${String(remote.handle ?? os.userInfo().username)}")`);
     } else {
-      out("no books attached — attach with: hands books <private-git-url> [--handle <name>]");
+      // Books are load-bearing, not optional (hands#129) — nothing configured just means the
+      // default local-only origin, never "off". Never written into hands.config.json: that file
+      // is repo-level and shared, and this path is per-machine (under coordinationDir).
+      const local = ensureLocalBooksOrigin();
+      if (local) {
+        out(`books: local only — ${local} (handle "${String(remote.handle ?? os.userInfo().username)}")`);
+        out("  this machine only — not shared. hands books <url> to sync across machines/collaborators.");
+      } else {
+        out("books are unavailable in this environment — git isn't working (run: hands doctor)");
+      }
     }
     return;
   }
@@ -206,7 +216,9 @@ function cmdBooks(argv: string[]): void {
 function requireRemote() {
   const j = openJournal();
   if (!j) {
-    fail("no books attached — run: hands books git@github.com:you/hands-books.git");
+    // openJournal() only returns null now when even the local-default bootstrap failed —
+    // attaching a URL wouldn't fix that; something's wrong with git itself.
+    fail("books are unavailable in this environment — git isn't working (run: hands doctor)");
   }
   if (!fs.existsSync(path.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;

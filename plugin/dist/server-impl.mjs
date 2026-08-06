@@ -8941,6 +8941,21 @@ function resolveHandle(config2) {
 function journalDir(env = process.env, cwd = process.cwd()) {
   return path11.join(coordinationDir(env, cwd), "remote");
 }
+function localBooksOriginPath(env = process.env, cwd = process.cwd()) {
+  return path11.join(coordinationDir(env, cwd), "books-origin.git");
+}
+function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
+  const dir = localBooksOriginPath(env, cwd);
+  try {
+    if (!fs11.existsSync(path11.join(dir, "HEAD"))) {
+      fs11.mkdirSync(dir, { recursive: true, mode: 448 });
+      git3(dir, ["init", "-q", "--bare", "-b", "main", dir]);
+    }
+    return dir;
+  } catch {
+    return null;
+  }
+}
 function ensureRepo(dir, url2) {
   try {
     fs11.mkdirSync(dir, { recursive: true, mode: 448 });
@@ -9156,7 +9171,8 @@ function openJournal(options) {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
   const config2 = options?.config ?? loadConfig({ cwd, env });
-  const url2 = config2.remote.url?.trim();
+  const configuredUrl = config2.remote.url?.trim();
+  const url2 = configuredUrl || ensureLocalBooksOrigin(env, cwd);
   if (!url2) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url2);

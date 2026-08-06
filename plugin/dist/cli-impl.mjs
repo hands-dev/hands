@@ -23290,6 +23290,21 @@ function resolveHandle(config2) {
 function journalDir(env = process.env, cwd = process.cwd()) {
   return path11.join(coordinationDir(env, cwd), "remote");
 }
+function localBooksOriginPath(env = process.env, cwd = process.cwd()) {
+  return path11.join(coordinationDir(env, cwd), "books-origin.git");
+}
+function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
+  const dir = localBooksOriginPath(env, cwd);
+  try {
+    if (!fs11.existsSync(path11.join(dir, "HEAD"))) {
+      fs11.mkdirSync(dir, { recursive: true, mode: 448 });
+      git3(dir, ["init", "-q", "--bare", "-b", "main", dir]);
+    }
+    return dir;
+  } catch {
+    return null;
+  }
+}
 function ensureRepo(dir, url2) {
   try {
     fs11.mkdirSync(dir, { recursive: true, mode: 448 });
@@ -23505,7 +23520,8 @@ function openJournal(options) {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
   const config2 = options?.config ?? loadConfig({ cwd, env });
-  const url2 = config2.remote.url?.trim();
+  const configuredUrl = config2.remote.url?.trim();
+  const url2 = configuredUrl || ensureLocalBooksOrigin(env, cwd);
   if (!url2) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url2);
@@ -38140,7 +38156,7 @@ async function runInit(argv) {
       } else {
         const principal = flags.principal ?? await ask("Who is the principal (the human the expo reports to)?", "Michael");
         const journalUrl = flags.journalUrl ?? await ask(
-          "Books repo (a separate PRIVATE git repo for the durable journal; empty = books off)?",
+          "Books repo (a separate PRIVATE git repo for the durable journal; empty = local-only for now, still fully durable \u2014 attach a shared repo anytime with: hands books <url>)?",
           ""
         );
         const scaffold = {
@@ -49362,7 +49378,7 @@ import * as fs21 from "node:fs";
 import * as os12 from "node:os";
 import * as path20 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
-var NO_BOOKS_REASON = "no books attached \u2014 run: hands books <path-or-url> to enable books first";
+var NO_BOOKS_REASON = "books are unavailable in this environment \u2014 git isn't working (run: hands doctor)";
 function resolveBooksTarget(opts) {
   const cwd = opts?.cwd ?? process.cwd();
   const env = opts?.env ?? process.env;
@@ -49370,7 +49386,6 @@ function resolveBooksTarget(opts) {
     return { ok: false, reason: "not inside a git repo \u2014 run from your repo's main checkout" };
   }
   const config2 = loadConfig({ cwd, env });
-  if (!config2.remote.url?.trim()) return { ok: false, reason: NO_BOOKS_REASON };
   const j = openJournal({ cwd, env, config: config2 });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
   if (!fs21.existsSync(path20.join(j.dir, ".git"))) {
@@ -49529,7 +49544,13 @@ function cmdBooks(argv) {
     if (typeof remote.url === "string" && remote.url) {
       out2(`books: ${remote.url} (handle "${String(remote.handle ?? os14.userInfo().username)}")`);
     } else {
-      out2("no books attached \u2014 attach with: hands books <private-git-url> [--handle <name>]");
+      const local = ensureLocalBooksOrigin();
+      if (local) {
+        out2(`books: local only \u2014 ${local} (handle "${String(remote.handle ?? os14.userInfo().username)}")`);
+        out2("  this machine only \u2014 not shared. hands books <url> to sync across machines/collaborators.");
+      } else {
+        out2("books are unavailable in this environment \u2014 git isn't working (run: hands doctor)");
+      }
     }
     return;
   }
@@ -49549,7 +49570,7 @@ function cmdBooks(argv) {
 function requireRemote() {
   const j = openJournal();
   if (!j) {
-    fail("no books attached \u2014 run: hands books git@github.com:you/hands-books.git");
+    fail("books are unavailable in this environment \u2014 git isn't working (run: hands doctor)");
   }
   if (!fs23.existsSync(path22.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;

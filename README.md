@@ -127,10 +127,15 @@ station's entire context. The bus minimizes and meters wakes structurally:
   nothing changed; `board({ full: true })` is one read, not four.
 - **Wake accounting:** every real wake is logged and surfaced per station on the dashboard.
 
-## The books (opt-in) — restarts, machine moves, multiplayer
+## The books — restarts, machine moves, multiplayer
 
-Point the bus at a **separate, private** git repo and every action goes **on the books** — an
-append-only event log rendered into browsable daily digest pages (repo → contributor → date):
+Books are always on, not opt-in — every action goes **on the books**, an append-only event log
+rendered into browsable daily digest pages (repo → contributor → date). By default that's a bare
+git repo `hands` bootstraps locally (`~/.claude/coordination/<repo>/books-origin.git`, this
+machine only, zero configuration) — the only real choice is *where the repo lives*, not whether
+books exist. Point the bus at a **separate, private** shared git repo instead
+(`hands books <url>`, or answer the prompt during `hands init`) to sync across machines or open
+things up to multiplayer:
 
 ```
 hands.json                                           layout marker
@@ -183,8 +188,8 @@ journal/<project>/<handle>/crafts/<name>.skill.md        a craft's own SKILL (se
 outside the source repo, no station/expo bus required:
 
 ```bash
-hands mcp install            # writes into Claude Desktop's config; requires books already
-                              # attached (hands books <url>) — restart Desktop after
+hands mcp install            # writes into Claude Desktop's config; works against local-only
+                              # books too (no hands books <url> required) — restart Desktop after
 hands mcp install --print    # print the server-registration JSON instead, for any other client
 ```
 
@@ -233,7 +238,7 @@ Scaffold it with `hands init`; attach the books to an existing config with
     "theming": true                            // deterministic per-station theme colour + session name
   },
   "merge":  { "adminMergeLowRisk": false },    // may the expo admin-merge low-risk PRs
-  "remote": { "url": null, "handle": null, "project": null },   // the books (opt-in)
+  "remote": { "url": null, "handle": null, "project": null },   // null = local-only books (default)
   "gh":     { "poll": true }
 }
 ```

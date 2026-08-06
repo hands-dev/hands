@@ -29,8 +29,9 @@ claude plugin validate .            # marketplace sanity
 ## Per-repo pieces (what `hands init` handles)
 
 - `hands.config.json` scaffold at the repo root — principal, topology, station tiers/launcher,
-  optional books journal (`remote.url` + `remote.handle`). Full reference in README. Attach the
-  books to an existing config later with `hands books <url>`.
+  books journal (`remote.url` + `remote.handle`; unset = local-only by default, not off). Full
+  reference in README. Attach a shared books repo to an existing config later with
+  `hands books <url>`.
 - An entry in the launcher registry (`~/.hands/projects.json`, 0600) so `hands <project>` resolves
   this repo from anywhere. Machine-wide, not per-repo — it has to work from outside any git repo.
   Repos set up before the launcher existed enrol with `hands register`; re-running it after a move
