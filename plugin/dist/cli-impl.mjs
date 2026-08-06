@@ -24379,7 +24379,6 @@ function serve(opts) {
         res.end(JSON.stringify({ error: "too many feedback submissions \u2014 try again in a minute" }));
         return;
       }
-      feedbackRequestTimes.push(now);
       const chunks = [];
       let tooLarge = false;
       req.on("data", (chunk) => {
@@ -24412,6 +24411,7 @@ function serve(opts) {
           res.end(JSON.stringify({ error: `title exceeds the ${MAX_FEEDBACK_TITLE_BYTES}-byte size bound` }));
           return;
         }
+        feedbackRequestTimes.push(now);
         const title = typeof parsed.title === "string" ? parsed.title : void 0;
         let result;
         try {

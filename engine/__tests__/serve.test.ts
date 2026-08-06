@@ -551,5 +551,27 @@ describe("POST /api/feedback", () => {
       expect(sixth.status).toBe(429);
       expect(calls).toBe(5);
     });
+
+    it("does NOT consume a slot for a request that fails validation — a typo'd request retried a few times shouldn't trip the limit for legitimate use right after", async () => {
+      let calls = 0;
+      handle = await serve({
+        port: 0,
+        env,
+        fileFeedback: (): FeedbackResult => {
+          calls++;
+          return { ok: true, url: "https://example/1" };
+        },
+      });
+
+      // 10 back-to-back INVALID requests (empty body) — well past the limit of 5, if they counted
+      for (let i = 0; i < 10; i++) {
+        const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "   " }));
+        expect(res.status).toBe(400);
+      }
+      // the window is untouched — a genuinely valid request right after still succeeds
+      const valid = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "real feedback" }));
+      expect(valid.status).toBe(200);
+      expect(calls).toBe(1);
+    });
   });
 });

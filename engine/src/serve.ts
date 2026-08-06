@@ -84,6 +84,13 @@ const FEEDBACK_RATE_LIMIT_WINDOW_MS = 60_000;
  * `Referrer-Policy`, so it's the harder-to-spoof signal. Neither header
  * present at all (no browser involved — curl, a script, these tests)
  * is allowed: that's not the threat this guards against.
+ *
+ * Accepted residual risk: Origin/Host-based localhost defenses are
+ * generically exposed to DNS rebinding (a public DNS name resolving to
+ * 127.0.0.1, satisfying the Host check while genuinely being cross-origin)
+ * — the same gap webpack-dev-server, Vite, etc. carry, not specific to
+ * this implementation. Not worth defending against for a single-operator
+ * local tool.
  */
 function isTrustedOrigin(req: IncomingMessage): boolean {
   const host = req.headers.host;
@@ -392,6 +399,11 @@ export function serve(opts?: {
         res.end(JSON.stringify({ error: "cross-origin request rejected" }));
         return;
       }
+      // Check-but-don't-yet-consume: fail fast on a request that's already
+      // over the limit (skip buffering its body), but the slot itself is
+      // only spent once the request passes validation below — a user
+      // retrying after a typo'd title shouldn't burn through the window on
+      // requests that never reached fileFeedback() at all.
       const now = Date.now();
       feedbackRequestTimes = feedbackRequestTimes.filter((t) => now - t < FEEDBACK_RATE_LIMIT_WINDOW_MS);
       if (feedbackRequestTimes.length >= FEEDBACK_RATE_LIMIT_MAX) {
@@ -399,7 +411,6 @@ export function serve(opts?: {
         res.end(JSON.stringify({ error: "too many feedback submissions — try again in a minute" }));
         return;
       }
-      feedbackRequestTimes.push(now);
 
       const chunks: Buffer[] = [];
       let tooLarge = false;
@@ -433,6 +444,8 @@ export function serve(opts?: {
           res.end(JSON.stringify({ error: `title exceeds the ${MAX_FEEDBACK_TITLE_BYTES}-byte size bound` }));
           return;
         }
+        // validation passed — NOW this request counts against the window
+        feedbackRequestTimes.push(now);
         const title = typeof parsed.title === "string" ? parsed.title : undefined;
         let result: FeedbackResult;
         try {
