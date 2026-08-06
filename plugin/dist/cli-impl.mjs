@@ -47508,15 +47508,18 @@ function runPublish(store, opts) {
   const files = changedFiles(opts.cwd).slice(0, MAX_FILES);
   const ticket = ticketFromBranch(branch);
   if (opts.transcriptPath) {
-    const usage = readLastUsage(opts.transcriptPath);
-    if (usage) {
-      store.recordContextSample({
-        agentId: opts.agentId,
-        inputTokens: usage.input,
-        cacheReadTokens: usage.cacheRead,
-        cacheCreationTokens: usage.cacheCreation,
-        now
-      });
+    try {
+      const usage = readLastUsage(opts.transcriptPath);
+      if (usage) {
+        store.recordContextSample({
+          agentId: opts.agentId,
+          inputTokens: usage.input,
+          cacheReadTokens: usage.cacheRead,
+          cacheCreationTokens: usage.cacheCreation,
+          now
+        });
+      }
+    } catch {
     }
   }
   store.setStatus({
@@ -47610,13 +47613,17 @@ function runSubagentStop(store, opts) {
   if (outputTokens === null) {
     return { recorded: false, agentType, outputTokens: null };
   }
-  store.recordSubagentSample({
-    ownerAgentId: opts.ownerAgentId,
-    agentType,
-    spawnDepth: typeof meta3.spawnDepth === "number" ? meta3.spawnDepth : null,
-    outputTokens,
-    now: opts.now
-  });
+  try {
+    store.recordSubagentSample({
+      ownerAgentId: opts.ownerAgentId,
+      agentType,
+      spawnDepth: typeof meta3.spawnDepth === "number" ? meta3.spawnDepth : null,
+      outputTokens,
+      now: opts.now
+    });
+  } catch {
+    return { recorded: false, agentType, outputTokens };
+  }
   return { recorded: true, agentType, outputTokens };
 }
 
@@ -47758,10 +47765,13 @@ function buildServer(store, agentId, config2) {
       const wake = input.wake ?? true;
       const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
       if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
-      const wokenSet = new Set(woken);
-      for (const recipient of recipients) {
-        const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
-        store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
+      try {
+        const wokenSet = new Set(woken);
+        for (const recipient of recipients) {
+          const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
+          store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
+        }
+      } catch {
       }
       return asToolResult({
         ok: true,

@@ -94,15 +94,21 @@ export function runPublish(
   const ticket = ticketFromBranch(branch);
 
   if (opts.transcriptPath) {
-    const usage = readLastUsage(opts.transcriptPath);
-    if (usage) {
-      store.recordContextSample({
-        agentId: opts.agentId,
-        inputTokens: usage.input,
-        cacheReadTokens: usage.cacheRead,
-        cacheCreationTokens: usage.cacheCreation,
-        now,
-      });
+    try {
+      const usage = readLastUsage(opts.transcriptPath);
+      if (usage) {
+        store.recordContextSample({
+          agentId: opts.agentId,
+          inputTokens: usage.input,
+          cacheReadTokens: usage.cacheRead,
+          cacheCreationTokens: usage.cacheCreation,
+          now,
+        });
+      }
+    } catch {
+      // best-effort telemetry — a transient write failure (e.g. SQLITE_BUSY
+      // exhausting Store.withRetry's retries) must not skip the presence
+      // heartbeat below; this function's whole contract is "never throws".
     }
   }
 

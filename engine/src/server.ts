@@ -247,11 +247,18 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
       if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
       // Wake-outcome samples (hands#106) — a pure record of the decision already
-      // made above, no new send-path logic.
-      const wokenSet = new Set(woken);
-      for (const recipient of recipients) {
-        const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
-        store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
+      // made above, no new send-path logic. Best-effort: the send itself
+      // already happened, so a transient write failure here must not turn a
+      // successful send into an error response (a caller retry on that would
+      // risk a duplicate insertMessage — there's no idempotency key).
+      try {
+        const wokenSet = new Set(woken);
+        for (const recipient of recipients) {
+          const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
+          store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
+        }
+      } catch {
+        // telemetry only — the send already succeeded above
       }
       return asToolResult({
         ok: true,
@@ -1119,7 +1126,7 @@ export function pathsReport(agentId: string, cfg: HandsConfig, focus?: string | 
 }
 
 /** The fields hands' hook subcommands read; Claude Code's hook payload carries more (hands#103). */
-interface HookPayload {
+export interface HookPayload {
   transcript_path?: string;
   agent_transcript_path?: string;
   agent_type?: string;
@@ -1132,7 +1139,7 @@ interface HookPayload {
  * the race guards the rest, so a hook-shaped invocation that never closes
  * stdin can't hang the process past the hook's own 30s timeout budget.
  */
-async function readHookPayload(timeoutMs = 2000): Promise<HookPayload | null> {
+export async function readHookPayload(timeoutMs = 2000): Promise<HookPayload | null> {
   if (process.stdin.isTTY) return null;
   const read = (async () => {
     const chunks: Buffer[] = [];

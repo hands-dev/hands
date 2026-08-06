@@ -84,12 +84,18 @@ export function runSubagentStop(
   if (outputTokens === null) {
     return { recorded: false, agentType, outputTokens: null };
   }
-  store.recordSubagentSample({
-    ownerAgentId: opts.ownerAgentId,
-    agentType,
-    spawnDepth: typeof meta.spawnDepth === "number" ? meta.spawnDepth : null,
-    outputTokens,
-    now: opts.now,
-  });
+  try {
+    store.recordSubagentSample({
+      ownerAgentId: opts.ownerAgentId,
+      agentType,
+      spawnDepth: typeof meta.spawnDepth === "number" ? meta.spawnDepth : null,
+      outputTokens,
+      now: opts.now,
+    });
+  } catch {
+    // best-effort, same contract as the transcript read above — a transient
+    // write failure drops one telemetry sample, not the hook itself
+    return { recorded: false, agentType, outputTokens };
+  }
   return { recorded: true, agentType, outputTokens };
 }
