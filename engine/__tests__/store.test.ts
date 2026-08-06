@@ -111,3 +111,61 @@ describe("Store security", () => {
     store.close();
   });
 });
+
+describe("Store observability samples (hands#103, #106)", () => {
+  it("records and reads back context samples, newest first", () => {
+    const store = open();
+    store.recordContextSample({ agentId: "station-1", inputTokens: 100, cacheReadTokens: 10, cacheCreationTokens: 0, now: 1000 });
+    store.recordContextSample({ agentId: "station-1", inputTokens: 200, cacheReadTokens: 20, cacheCreationTokens: 5, now: 2000 });
+    store.recordContextSample({ agentId: "expo", inputTokens: 999, cacheReadTokens: 0, cacheCreationTokens: 0, now: 1500 });
+
+    expect(store.contextSamples("station-1")).toEqual([
+      { inputTokens: 200, cacheReadTokens: 20, cacheCreationTokens: 5, at: 2000 },
+      { inputTokens: 100, cacheReadTokens: 10, cacheCreationTokens: 0, at: 1000 },
+    ]);
+    store.close();
+  });
+
+  it("trims context samples older than 7 days on insert", () => {
+    const store = open();
+    const day = 24 * 60 * 60_000;
+    store.recordContextSample({ agentId: "station-1", inputTokens: 1, cacheReadTokens: 0, cacheCreationTokens: 0, now: 0 });
+    store.recordContextSample({ agentId: "station-1", inputTokens: 2, cacheReadTokens: 0, cacheCreationTokens: 0, now: 8 * day });
+    expect(store.contextSamples("station-1").map((s) => s.inputTokens)).toEqual([2]);
+    store.close();
+  });
+
+  it("records and reads back subagent samples, newest first", () => {
+    const store = open();
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "Explore", spawnDepth: 1, outputTokens: 500, now: 1000 });
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: null, spawnDepth: null, outputTokens: 20, now: 2000 });
+
+    expect(store.subagentSamples("station-1")).toEqual([
+      { agentType: null, spawnDepth: null, outputTokens: 20, at: 2000 },
+      { agentType: "Explore", spawnDepth: 1, outputTokens: 500, at: 1000 },
+    ]);
+    store.close();
+  });
+
+  it("records wake outcomes and aggregates counts since a cutoff", () => {
+    const store = open();
+    store.recordWakeOutcome({ agentId: "station-1", messageId: 1, outcome: "fired", now: 1000 });
+    store.recordWakeOutcome({ agentId: "station-1", messageId: 2, outcome: "suppressed", now: 2000 });
+    store.recordWakeOutcome({ agentId: "station-1", messageId: 3, outcome: "coalesced", now: 3000 });
+    store.recordWakeOutcome({ agentId: "station-1", messageId: 4, outcome: "fired", now: 4000 });
+    // Before the cutoff — excluded.
+    store.recordWakeOutcome({ agentId: "station-1", messageId: 0, outcome: "fired", now: 500 });
+
+    expect(store.wakeOutcomeCounts("station-1", 999)).toEqual({ fired: 2, suppressed: 1, coalesced: 1 });
+    store.close();
+  });
+
+  it("trims wake outcomes older than 24h on insert", () => {
+    const store = open();
+    const hour = 60 * 60_000;
+    store.recordWakeOutcome({ agentId: "station-1", messageId: 1, outcome: "fired", now: 0 });
+    store.recordWakeOutcome({ agentId: "station-1", messageId: 2, outcome: "fired", now: 25 * hour });
+    expect(store.wakeOutcomeCounts("station-1", -1)).toEqual({ fired: 1, suppressed: 0, coalesced: 0 });
+    store.close();
+  });
+});

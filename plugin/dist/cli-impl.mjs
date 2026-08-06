@@ -21482,12 +21482,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats2(ajv, list, fs22, exportName) {
+    function addFormats2(ajv, list, fs24, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs22[f]);
+        ajv.addFormat(f, fs24[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -21663,6 +21663,39 @@ var init_store = __esm({
       );
 
       CREATE INDEX IF NOT EXISTS idx_wake_log_agent ON wake_log (agent_id, created_at);
+    `);
+        this.db.exec(`
+      CREATE TABLE IF NOT EXISTS context_samples (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id              TEXT NOT NULL,
+        input_tokens          INTEGER NOT NULL,
+        cache_read_tokens     INTEGER NOT NULL,
+        cache_creation_tokens INTEGER NOT NULL,
+        created_at            INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_context_samples_agent ON context_samples (agent_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS subagent_samples (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_agent_id TEXT NOT NULL,
+        agent_type     TEXT,
+        spawn_depth    INTEGER,
+        output_tokens  INTEGER NOT NULL,
+        created_at     INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_subagent_samples_owner ON subagent_samples (owner_agent_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS wake_outcomes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id   TEXT NOT NULL,      -- the intended recipient
+        message_id INTEGER,
+        outcome    TEXT NOT NULL,      -- fired | suppressed | coalesced
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
     `);
         this.ensureColumn("agents", "branch", "TEXT");
         this.ensureColumn("agents", "activity", "TEXT");
@@ -21969,6 +22002,90 @@ var init_store = __esm({
          GROUP BY agent_id`
         ).all(now - 60 * 6e4, now - 24 * 60 * 6e4);
         return new Map(rows.map((r) => [r.agent_id, { lastHour: Number(r.hour), last24h: Number(r.day) }]));
+      }
+      /**
+       * One context-length sample per Stop-hook publish (hands#103) — the raw
+       * line the dashboard needs to derive compaction events, ETA-to-compaction
+       * slope, and per-craft context delta. Trims past 7 days on insert.
+       */
+      recordContextSample(input) {
+        const now = input.now ?? Date.now();
+        this.withRetry(() => {
+          this.db.prepare(
+            `INSERT INTO context_samples (agent_id, input_tokens, cache_read_tokens, cache_creation_tokens, created_at)
+           VALUES (?, ?, ?, ?, ?)`
+          ).run(input.agentId, input.inputTokens, input.cacheReadTokens, input.cacheCreationTokens, now);
+          this.db.prepare("DELETE FROM context_samples WHERE created_at < ?").run(now - 7 * 24 * 60 * 6e4);
+        });
+      }
+      /** Recent context samples for one agent, newest first. */
+      contextSamples(agentId, limit = 50) {
+        const rows = this.db.prepare(
+          `SELECT input_tokens, cache_read_tokens, cache_creation_tokens, created_at
+         FROM context_samples WHERE agent_id = ? ORDER BY id DESC LIMIT ?`
+        ).all(agentId, limit);
+        return rows.map((r) => ({
+          inputTokens: r.input_tokens,
+          cacheReadTokens: r.cache_read_tokens,
+          cacheCreationTokens: r.cache_creation_tokens,
+          at: r.created_at
+        }));
+      }
+      /**
+       * One row per SubagentStop (hands#103) — the completion the dashboard's
+       * periodic transcript scan (tokens.ts) can't attribute to a specific
+       * finish event. `agentType` is the craft-grouping key; `spawnDepth` comes
+       * from the subagent's own `.meta.json` sidecar. Trims past 7 days on insert.
+       */
+      recordSubagentSample(input) {
+        const now = input.now ?? Date.now();
+        this.withRetry(() => {
+          this.db.prepare(
+            `INSERT INTO subagent_samples (owner_agent_id, agent_type, spawn_depth, output_tokens, created_at)
+           VALUES (?, ?, ?, ?, ?)`
+          ).run(input.ownerAgentId, input.agentType, input.spawnDepth, input.outputTokens, now);
+          this.db.prepare("DELETE FROM subagent_samples WHERE created_at < ?").run(now - 7 * 24 * 60 * 6e4);
+        });
+      }
+      /** Recent subagent completion samples for one owning agent, newest first. */
+      subagentSamples(ownerAgentId, limit = 50) {
+        const rows = this.db.prepare(
+          `SELECT agent_type, spawn_depth, output_tokens, created_at
+         FROM subagent_samples WHERE owner_agent_id = ? ORDER BY id DESC LIMIT ?`
+        ).all(ownerAgentId, limit);
+        return rows.map((r) => ({
+          agentType: r.agent_type,
+          spawnDepth: r.spawn_depth,
+          outputTokens: r.output_tokens,
+          at: r.created_at
+        }));
+      }
+      /**
+       * One row per hands_send delivery decision (hands#106) — "fired" (a real
+       * `.notify` append, same event `recordWakes` counts), "coalesced" (the
+       * recipient already had a pending wake, so this one rides along on the
+       * next drain instead of double-waking), or "suppressed" (`wake:false`, an
+       * intentional FYI). No new send-path logic: this just records the outcome
+       * the existing hasPendingWake/wake:false branches already compute. Trims
+       * past 24h on insert, same window as wake_log.
+       */
+      recordWakeOutcome(input) {
+        const now = input.now ?? Date.now();
+        this.withRetry(() => {
+          this.db.prepare("INSERT INTO wake_outcomes (agent_id, message_id, outcome, created_at) VALUES (?, ?, ?, ?)").run(input.agentId, input.messageId, input.outcome, now);
+          this.db.prepare("DELETE FROM wake_outcomes WHERE created_at < ?").run(now - 24 * 60 * 6e4);
+        });
+      }
+      /** Per-agent wake-outcome counts since `sinceMs` — the "success rate, lapse count" hands#106 asks for. */
+      wakeOutcomeCounts(agentId, sinceMs) {
+        const rows = this.db.prepare("SELECT outcome, COUNT(*) AS n FROM wake_outcomes WHERE agent_id = ? AND created_at > ? GROUP BY outcome").all(agentId, sinceMs);
+        const counts = { fired: 0, suppressed: 0, coalesced: 0 };
+        for (const r of rows) {
+          if (r.outcome === "fired" || r.outcome === "suppressed" || r.outcome === "coalesced") {
+            counts[r.outcome] = Number(r.n);
+          }
+        }
+        return counts;
       }
       getWatermark(agentId, key) {
         const row = this.db.prepare("SELECT value FROM watermarks WHERE agent_id = ? AND key = ?").get(agentId, key);
@@ -22648,7 +22765,7 @@ var init_priorities = __esm({
 });
 
 // src/digest.ts
-import * as fs8 from "node:fs";
+import * as fs10 from "node:fs";
 import * as path8 from "node:path";
 function dayOf(ts) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -22780,7 +22897,7 @@ function renderIndex(days, opts) {
 function writeIfOwn(file2, content) {
   let existing = null;
   try {
-    existing = fs8.readFileSync(file2, "utf8");
+    existing = fs10.readFileSync(file2, "utf8");
   } catch {
   }
   if (existing !== null) {
@@ -22788,14 +22905,14 @@ function writeIfOwn(file2, content) {
     const stamped = existing.match(STAMP_RE);
     if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
   }
-  fs8.writeFileSync(file2, content);
+  fs10.writeFileSync(file2, content);
   return true;
 }
 function regenerateDigests(journal, dates) {
   const events = readEvents(journal.dir, journal.project, journal.handle);
   if (events.length === 0) return [];
   const handleDir = path8.join(journal.dir, "journal", journal.project, journal.handle);
-  fs8.mkdirSync(handleDir, { recursive: true });
+  fs10.mkdirSync(handleDir, { recursive: true });
   const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
   const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
   const changed = [];
@@ -23011,7 +23128,7 @@ var init_snapshot = __esm({
 
 // src/remote.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs9 from "node:fs";
+import * as fs11 from "node:fs";
 import * as os5 from "node:os";
 import * as path10 from "node:path";
 function git3(cwd, args) {
@@ -23087,8 +23204,8 @@ function journalDir(env = process.env, cwd = process.cwd()) {
 }
 function ensureRepo(dir, url2) {
   try {
-    fs9.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs9.existsSync(path10.join(dir, ".git"))) {
+    fs11.mkdirSync(dir, { recursive: true, mode: 448 });
+    if (!fs11.existsSync(path10.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
       git3(dir, ["config", "user.name", "hands"]);
       git3(dir, ["config", "user.email", "hands@localhost"]);
@@ -23130,7 +23247,7 @@ function readMarker(dir) {
   const file2 = path10.join(dir, MARKER_FILE);
   let raw;
   try {
-    raw = fs9.readFileSync(file2, "utf8");
+    raw = fs11.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -23164,7 +23281,7 @@ function validateJournal(dir, opts) {
   if (!opts?.write) return { ok: true };
   let entries = [];
   try {
-    entries = fs9.readdirSync(dir).filter((e) => e !== ".git");
+    entries = fs11.readdirSync(dir).filter((e) => e !== ".git");
   } catch {
     return { ok: false, reason: `journal dir unreadable: ${dir}` };
   }
@@ -23176,7 +23293,7 @@ function validateJournal(dir, opts) {
       reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
-  fs9.writeFileSync(path10.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+  fs11.writeFileSync(path10.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
   return { ok: true, bootstrapped: true };
 }
@@ -23188,14 +23305,14 @@ function syncStatusPath(dir) {
 }
 function writeSyncStatus(dir, result, now) {
   try {
-    fs9.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
+    fs11.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
 `);
   } catch {
   }
 }
 function readSyncStatus(dir) {
   try {
-    return JSON.parse(fs9.readFileSync(syncStatusPath(dir), "utf8"));
+    return JSON.parse(fs11.readFileSync(syncStatusPath(dir), "utf8"));
   } catch {
     return null;
   }
@@ -23219,10 +23336,10 @@ function changedLogDates(dir, head0, journal) {
 }
 function writeIfChanged(file2, content) {
   try {
-    if (fs9.readFileSync(file2, "utf8") === content) return false;
+    if (fs11.readFileSync(file2, "utf8") === content) return false;
   } catch {
   }
-  fs9.writeFileSync(file2, content);
+  fs11.writeFileSync(file2, content);
   return true;
 }
 function syncPush(journal, opts) {
@@ -23231,7 +23348,7 @@ function syncPush(journal, opts) {
   const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
     try {
-      if (now - fs9.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
+      if (now - fs11.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
     } catch {
     }
   }
@@ -23242,7 +23359,7 @@ function syncPush(journal, opts) {
   try {
     const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
     const ownPaths = [path10.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs9.existsSync(path10.join(dir, p)));
+    const own = ownPaths.filter((p) => fs11.existsSync(path10.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
     let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
@@ -23271,7 +23388,7 @@ function syncPush(journal, opts) {
     }
     if (opts?.store) {
       const handleDir = path10.join(dir, "journal", project, handle);
-      fs9.mkdirSync(handleDir, { recursive: true });
+      fs11.mkdirSync(handleDir, { recursive: true });
       const snapshotFile = path10.join(handleDir, "dashboard.json");
       const pub = buildPublicSnapshot(opts.store, { handle, project, now });
       if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}
@@ -23283,11 +23400,11 @@ function syncPush(journal, opts) {
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
     if (!dirty && ahead === "0") {
-      fs9.writeFileSync(marker, "");
+      fs11.writeFileSync(marker, "");
       return finish({ status: "clean" });
     }
     git3(dir, ["push", "-q", "-u", "origin", "main"]);
-    fs9.writeFileSync(marker, "");
+    fs11.writeFileSync(marker, "");
     return finish({ status: "pushed" });
   } catch (err) {
     return finish({
@@ -23317,7 +23434,7 @@ function openJournal(options) {
     append(type, data) {
       if (type === "cursor") return;
       try {
-        fs9.mkdirSync(logDir, { recursive: true });
+        fs11.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const event = {
           v: JOURNAL_VERSION,
@@ -23326,7 +23443,7 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs9.appendFileSync(path10.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+        fs11.appendFileSync(path10.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
 `, {
           mode: 384
         });
@@ -23338,7 +23455,7 @@ function openJournal(options) {
 function readEventsFromDir(logDir, into, onlyFile) {
   let files = [];
   try {
-    files = fs9.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
+    files = fs11.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
     return;
   }
@@ -23346,7 +23463,7 @@ function readEventsFromDir(logDir, into, onlyFile) {
   for (const file2 of files) {
     let body;
     try {
-      body = fs9.readFileSync(path10.join(logDir, file2), "utf8");
+      body = fs11.readFileSync(path10.join(logDir, file2), "utf8");
     } catch {
       continue;
     }
@@ -23424,7 +23541,7 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
   const limit = opts?.limitPerHandle ?? 15;
   let handles = [];
   try {
-    handles = fs9.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs11.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -23433,7 +23550,7 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
     const logDir = path10.join(dir, "journal", project, handle, "log");
     let files = [];
     try {
-      files = fs9.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
+      files = fs11.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
     } catch {
     }
     const events = [];
@@ -23456,13 +23573,13 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
 function readOtherCrafts(dir, project, ownHandle) {
   let handles = [];
   try {
-    handles = fs9.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs11.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const read = (file2) => {
     try {
-      return fs9.readFileSync(file2, "utf8");
+      return fs11.readFileSync(file2, "utf8");
     } catch {
       return null;
     }
@@ -23472,7 +23589,7 @@ function readOtherCrafts(dir, project, ownHandle) {
     const craftsDir = path10.join(dir, "journal", project, handle, "crafts");
     let files = [];
     try {
-      files = fs9.readdirSync(craftsDir);
+      files = fs11.readdirSync(craftsDir);
     } catch {
       continue;
     }
@@ -23492,7 +23609,7 @@ function readOtherCrafts(dir, project, ownHandle) {
 }
 function listProjects(dir) {
   try {
-    return fs9.readdirSync(path10.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs11.readdirSync(path10.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -23541,16 +23658,16 @@ var init_remote = __esm({
 });
 
 // src/seed-permissions.ts
-import * as fs10 from "node:fs";
+import * as fs12 from "node:fs";
 import * as path11 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function seedStationPermissions(dir) {
   const file2 = path11.join(dir, ".claude", "settings.local.json");
-  if (fs10.existsSync(file2)) return { path: file2, written: false };
-  fs10.mkdirSync(path11.dirname(file2), { recursive: true });
-  fs10.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+  if (fs12.existsSync(file2)) return { path: file2, written: false };
+  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
+  fs12.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -23622,7 +23739,7 @@ __export(provision_exports, {
   stationRoot: () => stationRoot
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
-import * as fs11 from "node:fs";
+import * as fs13 from "node:fs";
 import * as os6 from "node:os";
 import * as path12 from "node:path";
 function git4(cwd, args) {
@@ -23650,7 +23767,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs11.readdirSync(root);
+    names = fs13.readdirSync(root);
   } catch {
     return [];
   }
@@ -23736,7 +23853,7 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs11.mkdirSync(root, { recursive: true });
+  fs13.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
@@ -23785,7 +23902,7 @@ function removeStation(id, opts) {
   } catch {
   }
   let removed = false;
-  if (fs11.existsSync(dir)) {
+  if (fs13.existsSync(dir)) {
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
     try {
@@ -23910,7 +24027,7 @@ var init_feedback = __esm({
 });
 
 // src/tokens.ts
-import * as fs12 from "node:fs";
+import * as fs14 from "node:fs";
 import * as os7 from "node:os";
 import * as path13 from "node:path";
 function encodeProjectDir(cwd) {
@@ -23941,7 +24058,7 @@ var init_tokens = __esm({
           const dir = path13.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
-            names = fs12.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+            names = fs14.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
           } catch {
             continue;
           }
@@ -23953,7 +24070,7 @@ var init_tokens = __esm({
           for (const name of names) {
             const file2 = path13.join(dir, name);
             try {
-              const stat = fs12.statSync(file2);
+              const stat = fs14.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
               this.readAppended(file2, stat.size, byMsg);
             } catch {
@@ -23961,21 +24078,21 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs12.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path13.join(dir, e.name, "subagents"));
+            sessionDirs = fs14.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path13.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
           for (const subDir of sessionDirs) {
             let subNames = [];
             try {
-              subNames = fs12.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+              subNames = fs14.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
             } catch {
               continue;
             }
             for (const name of subNames) {
               const file2 = path13.join(subDir, name);
               try {
-                const stat = fs12.statSync(file2);
+                const stat = fs14.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
                 this.readAppended(file2, stat.size, byMsg, file2);
               } catch {
@@ -24003,11 +24120,11 @@ var init_tokens = __esm({
         if (size <= state.offset) return;
         const length = size - state.offset;
         const buffer = Buffer.alloc(length);
-        const fd = fs12.openSync(file2, "r");
+        const fd = fs14.openSync(file2, "r");
         try {
-          fs12.readSync(fd, buffer, 0, length, state.offset);
+          fs14.readSync(fd, buffer, 0, length, state.offset);
         } finally {
-          fs12.closeSync(fd);
+          fs14.closeSync(fd);
         }
         state.offset = size;
         let text = state.partial + buffer.toString("utf8");
@@ -24067,7 +24184,7 @@ var init_tokens = __esm({
         let label = path13.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
-            fs12.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
+            fs14.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
           );
           if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
           else if (meta3.agentType) label = meta3.agentType;
@@ -24133,7 +24250,7 @@ __export(serve_exports, {
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
-import * as fs13 from "node:fs";
+import * as fs15 from "node:fs";
 import { createServer } from "node:http";
 import * as path14 from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24179,7 +24296,7 @@ function defaultAssetsDir() {
     // plugin/dist/server-impl.mjs → sibling assets/
     path14.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs13.existsSync(d)) ?? null;
+  ].find((d) => fs15.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -24300,7 +24417,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs13.readFileSync(path14.join(assetsDir, name));
+        const body = fs15.readFileSync(path14.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -24487,7 +24604,7 @@ var init_serve = __esm({
 });
 
 // src/projects.ts
-import * as fs15 from "node:fs";
+import * as fs17 from "node:fs";
 import * as os8 from "node:os";
 import * as path15 from "node:path";
 function registryPath(env = process.env) {
@@ -24496,7 +24613,7 @@ function registryPath(env = process.env) {
 }
 function readRegistry(env = process.env) {
   try {
-    const raw = fs15.readFileSync(registryPath(env), "utf8");
+    const raw = fs17.readFileSync(registryPath(env), "utf8");
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return { projects: [] };
     const list = parsed.projects;
@@ -24513,8 +24630,8 @@ function isProjectEntry(value) {
 }
 function writeRegistry(registry2, env = process.env) {
   const file2 = registryPath(env);
-  fs15.mkdirSync(path15.dirname(file2), { recursive: true, mode: 448 });
-  fs15.writeFileSync(file2, `${JSON.stringify(registry2, null, 2)}
+  fs17.mkdirSync(path15.dirname(file2), { recursive: true, mode: 448 });
+  fs17.writeFileSync(file2, `${JSON.stringify(registry2, null, 2)}
 `, { mode: 384 });
 }
 function registerProject(cwd = process.cwd(), opts) {
@@ -24535,7 +24652,7 @@ function registerProject(cwd = process.cwd(), opts) {
 function resolveProject2(name, env = process.env) {
   const match = readRegistry(env).projects.find((p) => p.name === name);
   if (!match) return null;
-  if (!fs15.existsSync(match.repoRoot)) {
+  if (!fs17.existsSync(match.repoRoot)) {
     pruneMissing(env);
     return null;
   }
@@ -24543,7 +24660,7 @@ function resolveProject2(name, env = process.env) {
 }
 function pruneMissing(env = process.env) {
   const registry2 = readRegistry(env);
-  const live = registry2.projects.filter((p) => fs15.existsSync(p.repoRoot));
+  const live = registry2.projects.filter((p) => fs17.existsSync(p.repoRoot));
   const dropped = registry2.projects.length - live.length;
   if (dropped > 0) writeRegistry({ projects: live }, env);
   return dropped;
@@ -36780,11 +36897,11 @@ var init_ajvProvider_97rDpkRx = __esm({
         if (!f) throw new Error(`Unknown format "${name}"`);
         return f;
       };
-      function addFormats2(ajv, list, fs22, exportName) {
+      function addFormats2(ajv, list, fs24, exportName) {
         var _a2;
         var _b;
         (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
-        for (const f of list) ajv.addFormat(f, fs22[f]);
+        for (const f of list) ajv.addFormat(f, fs24[f]);
       }
       module.exports = exports = formatsPlugin;
       Object.defineProperty(exports, "__esModule", { value: true });
@@ -37809,7 +37926,7 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs20 from "node:fs";
+import * as fs22 from "node:fs";
 import * as os12 from "node:os";
 import * as path20 from "node:path";
 import * as readline from "node:readline/promises";
@@ -37848,7 +37965,7 @@ async function runInit(argv) {
       const configPath = path20.join(info.repoRoot, CONFIG_BASENAME);
       const entry = registerProject(info.repoRoot);
       if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
-      if (fs20.existsSync(configPath)) {
+      if (fs22.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: hands books <url>)");
       } else {
@@ -37876,7 +37993,7 @@ async function runInit(argv) {
           );
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs20.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs22.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
@@ -37909,7 +38026,7 @@ import { execFileSync as execFileSync9 } from "node:child_process";
 import * as os13 from "node:os";
 
 // src/server.ts
-import * as fs14 from "node:fs";
+import * as fs16 from "node:fs";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -47465,6 +47582,9 @@ function notify(recipients, meta3, env = process.env) {
 init_paths();
 init_priorities();
 
+// src/publish.ts
+import * as fs8 from "node:fs";
+
 // src/memory.ts
 init_paths();
 import { createHash as createHash3 } from "node:crypto";
@@ -47507,12 +47627,63 @@ function scanMemory(env = process.env) {
 
 // src/publish.ts
 var MAX_FILES = 50;
+var USAGE_TAIL_CAP = 256 * 1024;
+function readLastUsage(transcriptPath) {
+  try {
+    const stat = fs8.statSync(transcriptPath);
+    const start = Math.max(0, stat.size - USAGE_TAIL_CAP);
+    const length = stat.size - start;
+    const buffer = Buffer.alloc(length);
+    const fd = fs8.openSync(transcriptPath, "r");
+    try {
+      fs8.readSync(fd, buffer, 0, length, start);
+    } finally {
+      fs8.closeSync(fd);
+    }
+    const lines = buffer.toString("utf8").split("\n");
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      try {
+        const entry = JSON.parse(line);
+        if (entry.type !== "assistant") continue;
+        const usage = entry.message?.usage;
+        if (!usage) continue;
+        return {
+          input: usage.input_tokens ?? 0,
+          cacheRead: usage.cache_read_input_tokens ?? 0,
+          cacheCreation: usage.cache_creation_input_tokens ?? 0
+        };
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 function runPublish(store, opts) {
   const env = opts.env ?? process.env;
   const now = opts.now ?? Date.now();
   const branch = currentBranch(opts.cwd);
   const files = changedFiles(opts.cwd).slice(0, MAX_FILES);
   const ticket = ticketFromBranch(branch);
+  if (opts.transcriptPath) {
+    try {
+      const usage = readLastUsage(opts.transcriptPath);
+      if (usage) {
+        store.recordContextSample({
+          agentId: opts.agentId,
+          inputTokens: usage.input,
+          cacheReadTokens: usage.cacheRead,
+          cacheCreationTokens: usage.cacheCreation,
+          now
+        });
+      }
+    } catch {
+    }
+  }
   store.setStatus({
     id: opts.agentId,
     cwd: opts.cwd,
@@ -47560,6 +47731,64 @@ function runPublish(store, opts) {
   return { agentId: opts.agentId, branch, fileCount: files.length, commitsJournaled, memoriesJournaled };
 }
 
+// src/subagent-stop.ts
+import * as fs9 from "node:fs";
+function totalOutputTokens(transcriptPath) {
+  let raw;
+  try {
+    raw = fs9.readFileSync(transcriptPath, "utf8");
+  } catch {
+    return null;
+  }
+  const byMessage = /* @__PURE__ */ new Map();
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type !== "assistant") continue;
+      const usage = entry.message?.usage;
+      if (!usage) continue;
+      const id = entry.message?.id ?? entry.uuid;
+      if (!id) continue;
+      byMessage.set(id, usage.output_tokens ?? 0);
+    } catch {
+      continue;
+    }
+  }
+  if (byMessage.size === 0) return null;
+  let total = 0;
+  for (const tokens of byMessage.values()) total += tokens;
+  return total;
+}
+function readMeta(transcriptPath) {
+  try {
+    const raw = fs9.readFileSync(transcriptPath.replace(/\.jsonl$/, ".meta.json"), "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+function runSubagentStop(store, opts) {
+  const outputTokens = totalOutputTokens(opts.agentTranscriptPath);
+  const meta3 = readMeta(opts.agentTranscriptPath);
+  const agentType = meta3.agentType ?? opts.agentType ?? null;
+  if (outputTokens === null) {
+    return { recorded: false, agentType, outputTokens: null };
+  }
+  try {
+    store.recordSubagentSample({
+      ownerAgentId: opts.ownerAgentId,
+      agentType,
+      spawnDepth: typeof meta3.spawnDepth === "number" ? meta3.spawnDepth : null,
+      outputTokens,
+      now: opts.now
+    });
+  } catch {
+    return { recorded: false, agentType, outputTokens };
+  }
+  return { recorded: true, agentType, outputTokens };
+}
+
 // src/server.ts
 init_remote();
 init_store();
@@ -47592,7 +47821,7 @@ function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
   const files = craftFiles(craft, env, cwd);
   const read = (file2, cap = 6e3) => {
     try {
-      const body = fs14.readFileSync(file2, "utf8").trim();
+      const body = fs16.readFileSync(file2, "utf8").trim();
       if (!body) return null;
       const points = Array.from(body);
       return points.length <= cap ? body : `${points.slice(0, cap).join("")}
@@ -47698,6 +47927,14 @@ function buildServer(store, agentId, config2) {
       const wake = input.wake ?? true;
       const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
       if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
+      try {
+        const wokenSet = new Set(woken);
+        for (const recipient of recipients) {
+          const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
+          store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
+        }
+      } catch {
+      }
       return asToolResult({
         ok: true,
         id,
@@ -48409,11 +48646,27 @@ function pathsReport(agentId, cfg, focus) {
     journalSync: journal ? { ...journal, at: new Date(journal.at).toISOString() } : enabled ? "never-synced" : "disabled"
   };
 }
-function runCli(subcommand, argv) {
+async function readHookPayload(timeoutMs = 2e3) {
+  if (process.stdin.isTTY) return null;
+  const read = (async () => {
+    const chunks = [];
+    for await (const chunk of process.stdin) chunks.push(chunk);
+    return Buffer.concat(chunks).toString("utf8").trim();
+  })();
+  const timeout = new Promise((resolve3) => setTimeout(() => resolve3(""), timeoutMs));
+  try {
+    const raw = await Promise.race([read, timeout]);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+function runCli(subcommand, argv, hookPayload) {
   if (subcommand === "paths") {
     const id = resolveSelf();
     let focus = null;
-    if (fs14.existsSync(dbPath())) {
+    if (fs16.existsSync(dbPath())) {
       const s = new Store();
       try {
         focus = s.getFocus(id);
@@ -48431,8 +48684,15 @@ function runCli(subcommand, argv) {
   if (journal) store.setJournal(journal.append);
   try {
     if (subcommand === "publish") {
-      runPublish(store, { agentId, cwd: process.cwd() });
+      runPublish(store, { agentId, cwd: process.cwd(), transcriptPath: hookPayload?.transcript_path });
       if (journal) syncPush(journal, { store });
+      return 0;
+    }
+    if (subcommand === "subagent-stop") {
+      const transcriptPath = hookPayload?.agent_transcript_path;
+      if (transcriptPath) {
+        runSubagentStop(store, { ownerAgentId: agentId, agentTranscriptPath: transcriptPath, agentType: hookPayload?.agent_type });
+      }
       return 0;
     }
     if (subcommand === "board") {
@@ -48466,8 +48726,9 @@ function runCli(subcommand, argv) {
 }
 async function main() {
   const subcommand = process.argv[2];
-  if (subcommand === "publish" || subcommand === "board" || subcommand === "gh-poll" || subcommand === "paths") {
-    process.exit(runCli(subcommand, process.argv.slice(3)));
+  if (subcommand === "publish" || subcommand === "subagent-stop" || subcommand === "board" || subcommand === "gh-poll" || subcommand === "paths") {
+    const hookPayload = subcommand === "publish" || subcommand === "subagent-stop" ? await readHookPayload() : null;
+    process.exit(runCli(subcommand, process.argv.slice(3), hookPayload));
   }
   if (subcommand === "serve") {
     const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
@@ -48497,8 +48758,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs14.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs14.realpathSync(fileURLToPath2(import.meta.url))).href;
+    const entry = pathToFileURL(fs16.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs16.realpathSync(fileURLToPath2(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
@@ -48518,7 +48779,7 @@ init_seed_permissions();
 
 // src/station-logs.ts
 init_tokens();
-import * as fs16 from "node:fs";
+import * as fs18 from "node:fs";
 import * as os9 from "node:os";
 import * as path16 from "node:path";
 function transcriptDir(cwd, home = os9.homedir()) {
@@ -48528,7 +48789,7 @@ function latestTranscript(cwd, home = os9.homedir()) {
   const dir = transcriptDir(cwd, home);
   let names;
   try {
-    names = fs16.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    names = fs18.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
   } catch {
     return null;
   }
@@ -48536,7 +48797,7 @@ function latestTranscript(cwd, home = os9.homedir()) {
   for (const name of names) {
     const file2 = path16.join(dir, name);
     try {
-      const { mtimeMs } = fs16.statSync(file2);
+      const { mtimeMs } = fs18.statSync(file2);
       if (!newest || mtimeMs > newest.mtime) newest = { file: file2, mtime: mtimeMs };
     } catch {
     }
@@ -48588,15 +48849,15 @@ function recentActivity(cwd, opts) {
   let text = "";
   try {
     const tailBytes = opts?.tailBytes ?? 512 * 1024;
-    const { size } = fs16.statSync(file2);
+    const { size } = fs18.statSync(file2);
     const start = Math.max(0, size - tailBytes);
-    const fd = fs16.openSync(file2, "r");
+    const fd = fs18.openSync(file2, "r");
     try {
       const buf = Buffer.alloc(Math.min(size, tailBytes));
-      fs16.readSync(fd, buf, 0, buf.length, start);
+      fs18.readSync(fd, buf, 0, buf.length, start);
       text = buf.toString("utf8");
     } finally {
-      fs16.closeSync(fd);
+      fs18.closeSync(fd);
     }
     if (start > 0) text = text.slice(text.indexOf("\n") + 1);
   } catch {
@@ -48622,7 +48883,7 @@ init_provision();
 init_projects();
 init_seed_permissions();
 import { execFileSync as execFileSync7 } from "node:child_process";
-import * as fs17 from "node:fs";
+import * as fs19 from "node:fs";
 import * as path17 from "node:path";
 var IDLE_WARN_MS = 30 * 6e4;
 var WAL_RATIO_WARN = 10;
@@ -48656,7 +48917,7 @@ function runDoctor(opts) {
   checks.push({ name: "repo", severity: "ok", detail: `${info.repoRoot} (${info.slug})` });
   const configPath = path17.join(info.repoRoot, CONFIG_BASENAME);
   let cfg = null;
-  if (!fs17.existsSync(configPath)) {
+  if (!fs19.existsSync(configPath)) {
     checks.push({
       name: "config",
       severity: "fail",
@@ -48695,17 +48956,17 @@ function runDoctor(opts) {
     });
   }
   const db = dbPath(env, info.repoRoot);
-  if (!fs17.existsSync(db)) {
+  if (!fs19.existsSync(db)) {
     checks.push({
       name: "bus.db",
       severity: "warn",
       detail: "no database yet \u2014 normal before the first session takes a turn"
     });
   } else {
-    const dbSize = fs17.statSync(db).size;
+    const dbSize = fs19.statSync(db).size;
     let walSize = 0;
     try {
-      walSize = fs17.statSync(`${db}-wal`).size;
+      walSize = fs19.statSync(`${db}-wal`).size;
     } catch {
     }
     if (walSize > dbSize * WAL_RATIO_WARN && walSize > 1e6) {
@@ -48720,14 +48981,14 @@ function runDoctor(opts) {
   }
   const coord = coordinationDir(env, info.repoRoot);
   checks.push(
-    fs17.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
+    fs19.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
   );
   const running = opts?.entry ?? process.argv[1] ?? "";
   const cached2 = /plugins\/cache\/[^/]+\/[^/]+\/([0-9a-f]{7,40})\//.exec(running);
   if (cached2?.[1]) {
     const pluginCommit = cached2[1];
     const head = gitHead(info.repoRoot);
-    const selfHosted = fs17.existsSync(path17.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
+    const selfHosted = fs19.existsSync(path17.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
     if (selfHosted && head && !head.startsWith(pluginCommit) && !pluginCommit.startsWith(head.slice(0, 7))) {
       checks.push({
         name: "build",
@@ -48755,7 +49016,7 @@ function runDoctor(opts) {
         continue;
       }
       const settings = path17.join(station.dir, ".claude", "settings.local.json");
-      if (fs17.existsSync(settings)) {
+      if (fs19.existsSync(settings)) {
         checks.push({ name: `${station.id}.permissions`, severity: "ok", detail: "seeded" });
       } else if (opts?.fix) {
         seedStationPermissions(station.dir);
@@ -48799,7 +49060,7 @@ function runDoctor(opts) {
 
 // src/version.ts
 import { execFileSync as execFileSync8 } from "node:child_process";
-import * as fs18 from "node:fs";
+import * as fs20 from "node:fs";
 import * as os10 from "node:os";
 import * as path18 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
@@ -48815,7 +49076,7 @@ function classifyInstall(entry, home = os10.homedir()) {
 }
 function readStamp(dir) {
   try {
-    const raw = fs18.readFileSync(path18.join(dir, STAMP_BASENAME), "utf8");
+    const raw = fs20.readFileSync(path18.join(dir, STAMP_BASENAME), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.version !== "string" || typeof parsed.builtAt !== "string") return null;
     return {
@@ -48862,7 +49123,7 @@ function otherInstall(current, home = os10.homedir()) {
   if (current !== "plugin") {
     const cacheRoot = path18.join(home, ".claude", "plugins", "cache", "hands", "hands");
     try {
-      for (const dir of fs18.readdirSync(cacheRoot)) {
+      for (const dir of fs20.readdirSync(cacheRoot)) {
         const stamp = readStamp(path18.join(cacheRoot, dir, "dist"));
         if (stamp) return { kind: "plugin", stamp };
       }
@@ -48887,7 +49148,7 @@ init_remote();
 init_config();
 init_paths();
 init_remote();
-import * as fs19 from "node:fs";
+import * as fs21 from "node:fs";
 import * as os11 from "node:os";
 import * as path19 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
@@ -48902,7 +49163,7 @@ function resolveBooksTarget(opts) {
   if (!config2.remote.url?.trim()) return { ok: false, reason: NO_BOOKS_REASON };
   const j = openJournal({ cwd, env, config: config2 });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
-  if (!fs19.existsSync(path19.join(j.dir, ".git"))) {
+  if (!fs21.existsSync(path19.join(j.dir, ".git"))) {
     return { ok: false, reason: `could not set up the journal clone at ${j.dir}` };
   }
   syncPull(j.dir);
@@ -48912,9 +49173,9 @@ function resolveBooksTarget(opts) {
 }
 function resolveBooksServerEntry(here = path19.dirname(fileURLToPath4(import.meta.url))) {
   const bundled = path19.join(here, "books-server.mjs");
-  if (fs19.existsSync(bundled)) return bundled;
+  if (fs21.existsSync(bundled)) return bundled;
   const devFallback = path19.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
-  if (fs19.existsSync(devFallback)) return devFallback;
+  if (fs21.existsSync(devFallback)) return devFallback;
   return null;
 }
 function desktopConfigPath(env = process.env) {
@@ -48943,7 +49204,7 @@ function booksMcpEntry(serverEntryPath, target) {
 function writeDesktopConfig(configPath, name, entry) {
   let parsed = {};
   try {
-    parsed = JSON.parse(fs19.readFileSync(configPath, "utf8"));
+    parsed = JSON.parse(fs21.readFileSync(configPath, "utf8"));
   } catch (err) {
     if (err.code !== "ENOENT") {
       return { ok: false, reason: `${configPath} is not valid JSON \u2014 fix or remove it, then retry (${String(err)})` };
@@ -48952,15 +49213,15 @@ function writeDesktopConfig(configPath, name, entry) {
   const servers = parsed.mcpServers && typeof parsed.mcpServers === "object" ? parsed.mcpServers : {};
   servers[name] = entry;
   parsed.mcpServers = servers;
-  fs19.mkdirSync(path19.dirname(configPath), { recursive: true });
-  fs19.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
+  fs21.mkdirSync(path19.dirname(configPath), { recursive: true });
+  fs21.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
 `);
   return { ok: true };
 }
 
 // src/cli.ts
 init_store();
-import * as fs21 from "node:fs";
+import * as fs23 from "node:fs";
 import * as path21 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
@@ -49032,10 +49293,10 @@ function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
   const configPath = path21.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs21.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
+  if (!fs23.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
-    cfg = JSON.parse(fs21.readFileSync(configPath, "utf8"));
+    cfg = JSON.parse(fs23.readFileSync(configPath, "utf8"));
   } catch (err) {
     fail(`${configPath} is not valid JSON: ${String(err)}`);
   }
@@ -49056,7 +49317,7 @@ function cmdBooks(argv) {
     url: url2,
     handle: handleArg ?? remote.handle ?? githubUsername() ?? os13.userInfo().username
   };
-  fs21.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs23.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
   out2("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
@@ -49067,7 +49328,7 @@ function requireRemote() {
   if (!j) {
     fail("no books attached \u2014 run: hands books git@github.com:you/hands-books.git");
   }
-  if (!fs21.existsSync(path21.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs23.existsSync(path21.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -49189,7 +49450,7 @@ function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
   let focus = null;
-  if (fs21.existsSync(dbPath())) {
+  if (fs23.existsSync(dbPath())) {
     const store = new Store();
     try {
       focus = store.getFocus(agentId);
@@ -49291,7 +49552,7 @@ function cmdLs() {
     return;
   }
   for (const p of projects) {
-    const configured = fs21.existsSync(path21.join(p.repoRoot, CONFIG_BASENAME));
+    const configured = fs23.existsSync(path21.join(p.repoRoot, CONFIG_BASENAME));
     let seats = "";
     try {
       if (configured) {
@@ -49359,7 +49620,7 @@ function launchStationSeat(_repoRoot, id, dir, cfg) {
 function tryLaunch(cmd, rest) {
   if (!cmd) {
     const info = repoInfo(process.cwd());
-    if (!info || !fs21.existsSync(path21.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    if (!info || !fs23.existsSync(path21.join(info.repoRoot, CONFIG_BASENAME))) return false;
     launchAt(info.repoRoot, "expo", "expo");
     return true;
   }

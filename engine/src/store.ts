@@ -337,6 +337,43 @@ export class Store {
       CREATE INDEX IF NOT EXISTS idx_wake_log_agent ON wake_log (agent_id, created_at);
     `);
 
+    // Observability samples (hands#103, #106) — local-only and ephemeral, same
+    // spirit as wake_log: never journaled/synced, trimmed opportunistically on
+    // insert so they stay cheap. Operational data, not durable bus history.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS context_samples (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id              TEXT NOT NULL,
+        input_tokens          INTEGER NOT NULL,
+        cache_read_tokens     INTEGER NOT NULL,
+        cache_creation_tokens INTEGER NOT NULL,
+        created_at            INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_context_samples_agent ON context_samples (agent_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS subagent_samples (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        owner_agent_id TEXT NOT NULL,
+        agent_type     TEXT,
+        spawn_depth    INTEGER,
+        output_tokens  INTEGER NOT NULL,
+        created_at     INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_subagent_samples_owner ON subagent_samples (owner_agent_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS wake_outcomes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        agent_id   TEXT NOT NULL,      -- the intended recipient
+        message_id INTEGER,
+        outcome    TEXT NOT NULL,      -- fired | suppressed | coalesced
+        created_at INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
+    `);
+
     // Additive columns on agents (safe to run against a pre-Phase-1 DB).
     this.ensureColumn("agents", "branch", "TEXT");
     this.ensureColumn("agents", "activity", "TEXT");
@@ -722,6 +759,144 @@ export class Store {
       day: number;
     }>;
     return new Map(rows.map((r) => [r.agent_id, { lastHour: Number(r.hour), last24h: Number(r.day) }]));
+  }
+
+  /**
+   * One context-length sample per Stop-hook publish (hands#103) — the raw
+   * line the dashboard needs to derive compaction events, ETA-to-compaction
+   * slope, and per-craft context delta. Trims past 7 days on insert.
+   */
+  recordContextSample(input: {
+    agentId: string;
+    inputTokens: number;
+    cacheReadTokens: number;
+    cacheCreationTokens: number;
+    now?: number;
+  }): void {
+    const now = input.now ?? Date.now();
+    this.withRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO context_samples (agent_id, input_tokens, cache_read_tokens, cache_creation_tokens, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(input.agentId, input.inputTokens, input.cacheReadTokens, input.cacheCreationTokens, now);
+      this.db.prepare("DELETE FROM context_samples WHERE created_at < ?").run(now - 7 * 24 * 60 * 60_000);
+    });
+  }
+
+  /** Recent context samples for one agent, newest first. */
+  contextSamples(
+    agentId: string,
+    limit = 50,
+  ): Array<{ inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; at: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT input_tokens, cache_read_tokens, cache_creation_tokens, created_at
+         FROM context_samples WHERE agent_id = ? ORDER BY id DESC LIMIT ?`,
+      )
+      .all(agentId, limit) as unknown as Array<{
+      input_tokens: number;
+      cache_read_tokens: number;
+      cache_creation_tokens: number;
+      created_at: number;
+    }>;
+    return rows.map((r) => ({
+      inputTokens: r.input_tokens,
+      cacheReadTokens: r.cache_read_tokens,
+      cacheCreationTokens: r.cache_creation_tokens,
+      at: r.created_at,
+    }));
+  }
+
+  /**
+   * One row per SubagentStop (hands#103) — the completion the dashboard's
+   * periodic transcript scan (tokens.ts) can't attribute to a specific
+   * finish event. `agentType` is the craft-grouping key; `spawnDepth` comes
+   * from the subagent's own `.meta.json` sidecar. Trims past 7 days on insert.
+   */
+  recordSubagentSample(input: {
+    ownerAgentId: string;
+    agentType: string | null;
+    spawnDepth: number | null;
+    outputTokens: number;
+    now?: number;
+  }): void {
+    const now = input.now ?? Date.now();
+    this.withRetry(() => {
+      this.db
+        .prepare(
+          `INSERT INTO subagent_samples (owner_agent_id, agent_type, spawn_depth, output_tokens, created_at)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(input.ownerAgentId, input.agentType, input.spawnDepth, input.outputTokens, now);
+      this.db.prepare("DELETE FROM subagent_samples WHERE created_at < ?").run(now - 7 * 24 * 60 * 60_000);
+    });
+  }
+
+  /** Recent subagent completion samples for one owning agent, newest first. */
+  subagentSamples(
+    ownerAgentId: string,
+    limit = 50,
+  ): Array<{ agentType: string | null; spawnDepth: number | null; outputTokens: number; at: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT agent_type, spawn_depth, output_tokens, created_at
+         FROM subagent_samples WHERE owner_agent_id = ? ORDER BY id DESC LIMIT ?`,
+      )
+      .all(ownerAgentId, limit) as unknown as Array<{
+      agent_type: string | null;
+      spawn_depth: number | null;
+      output_tokens: number;
+      created_at: number;
+    }>;
+    return rows.map((r) => ({
+      agentType: r.agent_type,
+      spawnDepth: r.spawn_depth,
+      outputTokens: r.output_tokens,
+      at: r.created_at,
+    }));
+  }
+
+  /**
+   * One row per hands_send delivery decision (hands#106) — "fired" (a real
+   * `.notify` append, same event `recordWakes` counts), "coalesced" (the
+   * recipient already had a pending wake, so this one rides along on the
+   * next drain instead of double-waking), or "suppressed" (`wake:false`, an
+   * intentional FYI). No new send-path logic: this just records the outcome
+   * the existing hasPendingWake/wake:false branches already compute. Trims
+   * past 24h on insert, same window as wake_log.
+   */
+  recordWakeOutcome(input: {
+    agentId: string;
+    messageId: number | null;
+    outcome: "fired" | "suppressed" | "coalesced";
+    now?: number;
+  }): void {
+    const now = input.now ?? Date.now();
+    this.withRetry(() => {
+      this.db
+        .prepare("INSERT INTO wake_outcomes (agent_id, message_id, outcome, created_at) VALUES (?, ?, ?, ?)")
+        .run(input.agentId, input.messageId, input.outcome, now);
+      this.db.prepare("DELETE FROM wake_outcomes WHERE created_at < ?").run(now - 24 * 60 * 60_000);
+    });
+  }
+
+  /** Per-agent wake-outcome counts since `sinceMs` — the "success rate, lapse count" hands#106 asks for. */
+  wakeOutcomeCounts(
+    agentId: string,
+    sinceMs: number,
+  ): { fired: number; suppressed: number; coalesced: number } {
+    const rows = this.db
+      .prepare("SELECT outcome, COUNT(*) AS n FROM wake_outcomes WHERE agent_id = ? AND created_at > ? GROUP BY outcome")
+      .all(agentId, sinceMs) as unknown as Array<{ outcome: string; n: number }>;
+    const counts = { fired: 0, suppressed: 0, coalesced: 0 };
+    for (const r of rows) {
+      if (r.outcome === "fired" || r.outcome === "suppressed" || r.outcome === "coalesced") {
+        counts[r.outcome] = Number(r.n);
+      }
+    }
+    return counts;
   }
 
   getWatermark(agentId: string, key: string): string | null {
