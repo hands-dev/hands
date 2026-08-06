@@ -49584,8 +49584,13 @@ function cmdLs() {
     out2(`${p.name.padEnd(18)} ${p.repoRoot}${configured ? "" : "  (no hands.config.json)"}${seats}`);
   }
 }
-function cmdVersion() {
+function cmdVersion(argv = []) {
   const info = buildInfo();
+  if (flag(argv, "--json")) {
+    process.stdout.write(`${JSON.stringify(info)}
+`);
+    return;
+  }
   out2(`hands ${describe4(info)}`);
   out2(`  ${info.entry}`);
   const other = otherInstall(info.kind);
@@ -49731,7 +49736,7 @@ async function main2() {
       case "version":
       case "--version":
       case "-v":
-        return cmdVersion();
+        return cmdVersion(rest);
       default: {
         const askedForHelp = cmd === "--help" || cmd === "-h" || cmd === "help";
         if (!askedForHelp && tryLaunch(cmd, rest)) return;
