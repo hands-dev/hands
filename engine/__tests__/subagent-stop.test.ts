@@ -34,7 +34,7 @@ describe("runSubagentStop", () => {
 
     const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 5000 });
 
-    expect(result).toEqual({ recorded: true, agentType: "Explore", outputTokens: 150 });
+    expect(result).toEqual({ recorded: true, agentType: "Explore", outputTokens: 150, craftNote: null });
     expect(store.subagentSamples("station-1")).toEqual([
       { agentType: "Explore", spawnDepth: 1, outputTokens: 150, at: 5000 },
     ]);
@@ -53,7 +53,7 @@ describe("runSubagentStop", () => {
       now: 6000,
     });
 
-    expect(result).toEqual({ recorded: true, agentType: "general-purpose", outputTokens: 10 });
+    expect(result).toEqual({ recorded: true, agentType: "general-purpose", outputTokens: 10, craftNote: null });
     store.close();
   });
 
@@ -63,8 +63,85 @@ describe("runSubagentStop", () => {
       ownerAgentId: "station-1",
       agentTranscriptPath: path.join(root, "nope.jsonl"),
     });
-    expect(result).toEqual({ recorded: false, agentType: null, outputTokens: null });
+    expect(result).toEqual({ recorded: false, agentType: null, outputTokens: null, craftNote: null });
     expect(store.subagentSamples("station-1")).toEqual([]);
+    store.close();
+  });
+});
+
+describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
+  function assistantTextLine(text: string): string {
+    return `${JSON.stringify({ type: "assistant", message: { id: "m1", content: [{ type: "text", text }] } })}\n`;
+  }
+
+  it("harvests a craft-note block into craft_notes and marks the brief noted, independent of token accounting", () => {
+    const store = new Store({ env });
+    const briefId = store.createCraftBrief({ craftSlug: "ordering-api", mode: "plan", openedBy: "expo" });
+    const transcript = path.join(root, "agent-3.jsonl");
+    const note = [
+      "some reasoning first",
+      "```craft-note",
+      `brief: ${briefId}`,
+      "craft: ordering-api",
+      "nothing-new: false",
+      "mise: engine/src/orders/validate.ts — moved here",
+      "book: menu validation runs before auth",
+      "```",
+    ].join("\n");
+    fs.writeFileSync(transcript, assistantTextLine(note));
+
+    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 7000 });
+
+    expect(result.craftNote).toEqual({ craftSlug: "ordering-api", briefId, entriesHarvested: 2 });
+    const pending = store.pendingCraftNotes("ordering-api");
+    expect(pending).toHaveLength(2);
+    expect(pending.map((n) => n.kind)).toEqual(["mise", "book"]);
+    expect(store.getCraftBrief(briefId)?.noted_at).toBe(7000);
+    store.close();
+  });
+
+  it("a spillover entry is filed under the TARGET craft's pending notes, provenance-tagged with the source craft", () => {
+    const store = new Store({ env });
+    const transcript = path.join(root, "agent-4.jsonl");
+    const note = [
+      "```craft-note",
+      "brief: 99",
+      "craft: ordering-api",
+      "nothing-new: false",
+      "spillover(db-caching): the read path hits a cache layer I don't own",
+      "```",
+    ].join("\n");
+    fs.writeFileSync(transcript, assistantTextLine(note));
+
+    runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 8000 });
+
+    expect(store.pendingCraftNotes("ordering-api")).toHaveLength(0);
+    const spilled = store.pendingCraftNotes("db-caching");
+    expect(spilled).toHaveLength(1);
+    expect(spilled[0]?.kind).toBe("spillover");
+    expect(spilled[0]?.spillover_craft).toBe("ordering-api");
+    store.close();
+  });
+
+  it("nothing-new: true harvests zero entries but still stamps the brief as noted", () => {
+    const store = new Store({ env });
+    const briefId = store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "expo" });
+    const transcript = path.join(root, "agent-5.jsonl");
+    fs.writeFileSync(transcript, assistantTextLine(`\`\`\`craft-note\nbrief: ${briefId}\ncraft: saucier\nnothing-new: true\n\`\`\``));
+
+    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 9000 });
+
+    expect(result.craftNote).toEqual({ craftSlug: "saucier", briefId, entriesHarvested: 0 });
+    expect(store.getCraftBrief(briefId)?.noted_at).toBe(9000);
+    store.close();
+  });
+
+  it("a transcript with no craft-note block at all harvests null, same as before this feature existed", () => {
+    const store = new Store({ env });
+    const transcript = path.join(root, "agent-6.jsonl");
+    fs.writeFileSync(transcript, assistantTextLine("just ordinary output, no fenced block"));
+    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 1000 });
+    expect(result.craftNote).toBeNull();
     store.close();
   });
 });

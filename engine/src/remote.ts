@@ -678,29 +678,63 @@ export function readEvents(dir: string, project: string, handle: string): Journa
   return events.sort((a, b) => a.ts - b.ts);
 }
 
+export type CraftScope = "shared" | "personal";
+
 export interface CraftFiles {
-  /** dir holding every craft's files (the expo browses this as the roster) */
+  /** dir this craft's own files live in (personal dir, or the shared dir when scope is "shared") */
   dir: string;
   /** the craft's key on disk — sanitizeSegment of its name */
   slug: string;
-  /** the prep book — the craft's self-curated knowledge distillation */
+  /** the prep book — decisions, why, gotchas, domain facts (prose, rewrite-not-append) */
   book: string;
-  /** the craft's self-maintained SKILL file — its own operating manual */
+  /** the mise — keyed path/command anchors (hands#81/mise design): verifiable, mergeable */
+  mise: string;
+  /** the craft's operating SKILL — procedures, checks, result shape */
   skill: string;
-  /** true when the files live in the books clone (machine-portable via sync) */
-  durable: boolean;
+  /** "shared" when a <sharedCraftsDir>/<slug>.md already exists; "personal" otherwise */
+  scope: CraftScope;
+}
+
+/** Repo-committed dir for SHARED crafts — plain repo content, not the books (see craftFiles docstring). Null outside a git repo. */
+export function sharedCraftsDir(config: HandsConfig, cwd: string = process.cwd()): string | null {
+  const root = repoInfo(cwd)?.repoRoot;
+  if (!root) return null;
+  return path.join(root, config.crafts.sharedDir?.trim() || ".hands/crafts");
+}
+
+/** Personal-tier dir — unchanged from the original one-tier design: the books clone under the contributor's own handle namespace, or a local coordination-dir fallback when books aren't configured. */
+export function personalCraftsDir(
+  config: HandsConfig,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  const booksOn = Boolean(config.remote.url?.trim());
+  return booksOn
+    ? path.join(journalDir(env, cwd), "journal", resolveProject(config, cwd), resolveHandle(config), "crafts")
+    : path.join(coordinationDir(env, cwd), "crafts");
 }
 
 /**
- * Where a CRAFT's self-managed files live. A craft is a named, portable
- * specialization ("saucier", "ordering API") that a station holds via its
- * focus label — the seat is furniture, the craft carries the expertise.
- * Books on → inside the clone under the contributor's namespace
- * (`journal/<project>/<handle>/crafts/`), so normal sync ships the files and
- * they survive machine moves; digests never render them, so the shared
- * narrative stays the expo's. Books off → a local `crafts/` dir in the
- * coordination dir (reboot-durable, not portable). Spelling variants of one
- * name ("Ordering API" / "ordering api") deliberately converge on one slug.
+ * Where a CRAFT's files live — resolved SHARED-FIRST. A craft is a named,
+ * portable specialization ("saucier", "ordering API") dispatched as a
+ * sub-agent (hands#81/#96), not held by a station. Two scope tiers:
+ *
+ * - **shared**: `<repoRoot>/.hands/crafts/<slug>.{md,mise.md,skill.md}` — plain
+ *   repo content, reaches every clone. Deliberately NOT stored in the books:
+ *   syncPull's rebase-conflict resolver auto-resolves any conflicted
+ *   `journal/**\/*.md` with `--theirs` (safe for digests, which regenerate
+ *   from merged events; not safe for a craft book, which doesn't), and books
+ *   default to a local-only bare repo (hands#129) unless a real shared
+ *   remote is attached, so "shared in the books" often reaches one person.
+ * - **personal**: unchanged from the original design — inside the books
+ *   clone under the contributor's own handle namespace (books on), or a
+ *   local `crafts/` dir in the coordination dir (books off). Every craft
+ *   that exists before this scope split already lives here; nothing moves.
+ *
+ * A slug found under the shared dir wins scope resolution — promote via
+ * `hands craft promote <slug>` (copies personal → shared explicitly; never
+ * automatic). Spelling variants of one name ("Ordering API" / "ordering
+ * api") deliberately converge on one slug.
  */
 export function craftFiles(
   craft: string,
@@ -708,23 +742,17 @@ export function craftFiles(
   cwd: string = process.cwd(),
 ): CraftFiles {
   const config = loadConfig({ cwd, env });
-  const enabled = Boolean(config.remote.url?.trim());
-  const dir = enabled
-    ? path.join(
-        journalDir(env, cwd),
-        "journal",
-        resolveProject(config, cwd),
-        resolveHandle(config),
-        "crafts",
-      )
-    : path.join(coordinationDir(env, cwd), "crafts");
   const slug = sanitizeSegment(craft, "unnamed");
+  const shared = sharedCraftsDir(config, cwd);
+  const scope: CraftScope = shared && fs.existsSync(path.join(shared, `${slug}.md`)) ? "shared" : "personal";
+  const dir = scope === "shared" && shared ? shared : personalCraftsDir(config, env, cwd);
   return {
     dir,
     slug,
     book: path.join(dir, `${slug}.md`),
+    mise: path.join(dir, `${slug}.mise.md`),
     skill: path.join(dir, `${slug}.skill.md`),
-    durable: enabled,
+    scope,
   };
 }
 

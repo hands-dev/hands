@@ -70,6 +70,16 @@ export interface HandsConfig {
      */
     project: string | null;
   };
+  /**
+   * Crafts (hands#81/#96/#49): named, portable specializations dispatched as
+   * sub-agents. Personal-tier crafts need no config (they resolve under the
+   * books/coordination dir exactly as before); this only configures the
+   * SHARED tier, which is plain repo content.
+   */
+  crafts: {
+    /** repo-relative dir for shared crafts (null = ".hands/crafts") */
+    sharedDir: string | null;
+  };
   /** Review/merge authority the principal has delegated to the expo. */
   merge: {
     /**
@@ -96,6 +106,7 @@ export const DEFAULT_CONFIG: HandsConfig = {
     theming: true,
   },
   remote: { url: null, handle: null, project: null },
+  crafts: { sharedDir: null },
   merge: { adminMergeLowRisk: false },
   gh: { poll: true },
 };
@@ -149,6 +160,9 @@ function merge(base: HandsConfig, layer: DeepPartial<HandsConfig> | null): Hands
       url: layer.remote?.url !== undefined ? layer.remote.url : base.remote.url,
       handle: layer.remote?.handle !== undefined ? layer.remote.handle : base.remote.handle,
       project: layer.remote?.project !== undefined ? layer.remote.project : base.remote.project,
+    },
+    crafts: {
+      sharedDir: layer.crafts?.sharedDir !== undefined ? layer.crafts.sharedDir : base.crafts.sharedDir,
     },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll },

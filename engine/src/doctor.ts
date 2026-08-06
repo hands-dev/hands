@@ -5,8 +5,10 @@ import { CONFIG_BASENAME, type HandsConfig, loadConfig } from "./config.js";
 import { coordinationDir, dbPath, pidPath, repoInfo } from "./paths.js";
 import { listStations } from "./provision.js";
 import { pruneMissing, resolveProject } from "./projects.js";
+import { personalCraftsDir, sharedCraftsDir } from "./remote.js";
 import { seedStationPermissions } from "./seed-permissions.js";
 import { idleMs } from "./station-logs.js";
+import { Store } from "./store.js";
 
 /**
  * `hands doctor` — the checks are not hypothetical. Every one of them
@@ -287,6 +289,62 @@ export function runDoctor(opts?: {
           detail: `active ${Math.round(idle / 1000)}s ago`,
         });
       }
+    }
+  }
+
+  // ── crafts (hands#81/#96/#49): shadowed collisions + unfolded note backlog ──
+  if (cfg) {
+    const shared = sharedCraftsDir(cfg, info.repoRoot);
+    const personal = personalCraftsDir(cfg, env, info.repoRoot);
+    const slugsIn = (dir: string | null): string[] => {
+      if (!dir) return [];
+      try {
+        return fs
+          .readdirSync(dir)
+          .filter((f) => f.endsWith(".md") && !f.endsWith(".mise.md") && !f.endsWith(".skill.md"))
+          .map((f) => f.slice(0, -".md".length));
+      } catch {
+        return [];
+      }
+    };
+    const sharedSlugs = new Set(slugsIn(shared));
+    const shadowed = slugsIn(personal).filter((s) => sharedSlugs.has(s));
+    if (shadowed.length > 0) {
+      checks.push({
+        name: "crafts.shadowed",
+        severity: "warn",
+        detail:
+          `${shadowed.join(", ")} — personal craft${shadowed.length === 1 ? "" : "s"} shadowed by a ` +
+          "same-named SHARED craft; the shared copy is what every dispatch actually reads",
+      });
+    }
+
+    // A doctor check must never crash on a DB hiccup — this is diagnostics, not the bus itself.
+    // Driven by pendingCraftSlugs(), not the file-based roster — a craft can carry pending notes
+    // before it's ever founded with a book file, and this must still catch that backlog.
+    let store: Store | null = null;
+    try {
+      store = new Store({ env });
+      const stale = store
+        .pendingCraftSlugs()
+        .map((slug) => {
+          const pending = store!.pendingCraftNotes(slug);
+          return { slug, count: pending.length, ageMs: now - (pending[0]?.created_at ?? now) };
+        })
+        .filter((c) => c.count >= 3 || c.ageMs > 24 * 60 * 60_000);
+      if (stale.length > 0) {
+        checks.push({
+          name: "crafts.notes",
+          severity: "warn",
+          detail:
+            `${stale.map((c) => `${c.slug} (${c.count} pending, oldest ${Math.round(c.ageMs / 60_000)}m)`).join(", ")} ` +
+            "— run `hands craft distill` to fold them in",
+        });
+      }
+    } catch {
+      // best-effort — see comment above
+    } finally {
+      store?.close();
     }
   }
 

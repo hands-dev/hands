@@ -117,6 +117,43 @@ export interface TodoRow {
   updated_at: number;
 }
 
+export interface CraftNoteRow {
+  id: number;
+  craft_slug: string;
+  brief_id: number | null;
+  source_agent: string;
+  /** mise | book | skill | friction | spillover — the fold-time placement rule */
+  kind: string;
+  body: string;
+  /**
+   * Set only when kind = spillover: the craft whose sub-agent actually
+   * PRODUCED this note (craft_slug is the note's TARGET — the note is
+   * filed under the craft it's about, same as any other note; this column
+   * is provenance — "borrowed from a X sub-agent," hands#81 Q3).
+   */
+  spillover_craft: string | null;
+  /** NULL = pending a fold; set once a distill pass has folded it in */
+  folded_at: number | null;
+  created_at: number;
+}
+
+export interface CraftBriefRow {
+  id: number;
+  craft_slug: string;
+  /** plan (read-only) | execute */
+  mode: string;
+  /** the dispatching agent's worktree — execute-lease scoping */
+  cwd: string | null;
+  opened_by: string;
+  task: string | null;
+  /** stamped by hands_mise — separates pickup compliance from note compliance */
+  picked_up_at: number | null;
+  /** stamped once the craft-note block is harvested (subagent-stop.ts) */
+  noted_at: number | null;
+  created_at: number;
+  expires_at: number;
+}
+
 export interface GithubPrRow {
   number: number;
   title: string;
@@ -380,6 +417,50 @@ export class Store {
       );
 
       CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
+    `);
+
+    // Crafts as sub-agent-deployed specializations (hands#81/#96/#49). Sub-agents never write
+    // craft files directly — they append notes here; a single leased fold pass distills pending
+    // notes into the book/mise/skill (see engine/src/crafts.ts). Notes are journaled (durable,
+    // rebuildable via `hands restore` — losing unfolded learnings on a machine move would be
+    // exactly the silent loss the rest of the bus is designed to avoid); briefs/folds are
+    // operational bookkeeping in the same spirit as wake_log — local-only, never journaled.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS craft_notes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        craft_slug      TEXT NOT NULL,
+        brief_id        INTEGER,
+        source_agent    TEXT NOT NULL,
+        kind            TEXT NOT NULL,     -- mise | book | skill | friction | spillover
+        body            TEXT NOT NULL,
+        spillover_craft TEXT,
+        folded_at       INTEGER,           -- NULL = pending
+        created_at      INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_craft_notes_pending ON craft_notes (craft_slug, folded_at);
+
+      CREATE TABLE IF NOT EXISTS craft_briefs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        craft_slug   TEXT NOT NULL,
+        mode         TEXT NOT NULL,        -- plan | execute
+        cwd          TEXT,
+        opened_by    TEXT NOT NULL,
+        task         TEXT,
+        picked_up_at INTEGER,
+        noted_at     INTEGER,
+        created_at   INTEGER NOT NULL,
+        expires_at   INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_craft_briefs_lease ON craft_briefs (craft_slug, mode, cwd, expires_at);
+
+      -- One row per craft: who currently holds the single-writer fold/distill pass.
+      CREATE TABLE IF NOT EXISTS craft_folds (
+        craft_slug TEXT PRIMARY KEY,
+        holder     TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
     `);
 
     // Additive columns on agents (safe to run against a pre-Phase-1 DB).
@@ -1423,6 +1504,162 @@ export class Store {
     });
   }
 
+  // --- crafts: briefs (dispatch ledger), notes (append-only capture), fold lease ---
+
+  createCraftBrief(input: {
+    craftSlug: string;
+    mode: "plan" | "execute";
+    cwd?: string | null;
+    openedBy: string;
+    task?: string | null;
+    ttlMs?: number;
+    now?: number;
+  }): number {
+    const now = input.now ?? Date.now();
+    const expires = now + (input.ttlMs ?? 60 * 60_000); // an hour is generous for one sub-agent turn
+    return this.withRetry(() => {
+      const result = this.db
+        .prepare(
+          `INSERT INTO craft_briefs (craft_slug, mode, cwd, opened_by, task, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(input.craftSlug, input.mode, input.cwd ?? null, input.openedBy, input.task ?? null, now, expires);
+      return Number(result.lastInsertRowid);
+    });
+  }
+
+  getCraftBrief(id: number): CraftBriefRow | undefined {
+    return this.db.prepare("SELECT * FROM craft_briefs WHERE id = ?").get(id) as CraftBriefRow | undefined;
+  }
+
+  markCraftBriefPickedUp(id: number, now = Date.now()): void {
+    this.withRetry(() =>
+      this.db.prepare("UPDATE craft_briefs SET picked_up_at = COALESCE(picked_up_at, ?) WHERE id = ?").run(now, id),
+    );
+  }
+
+  markCraftBriefNoted(id: number, now = Date.now()): void {
+    this.withRetry(() =>
+      this.db.prepare("UPDATE craft_briefs SET noted_at = COALESCE(noted_at, ?) WHERE id = ?").run(now, id),
+    );
+  }
+
+  /**
+   * Is there already an open (un-noted, unexpired) EXECUTE brief for this craft+cwd? The guard
+   * behind "parallel dispatch implies read-only" — a second execute-mode brief against the same
+   * craft+worktree is refused while one is still open, rather than letting two sub-agents write
+   * one worktree concurrently.
+   */
+  openExecuteBrief(craftSlug: string, cwd: string, now = Date.now()): CraftBriefRow | undefined {
+    return this.db
+      .prepare(
+        `SELECT * FROM craft_briefs
+         WHERE craft_slug = ? AND cwd = ? AND mode = 'execute' AND noted_at IS NULL AND expires_at > ?
+         ORDER BY created_at DESC LIMIT 1`,
+      )
+      .get(craftSlug, cwd, now) as CraftBriefRow | undefined;
+  }
+
+  /** Append one learning. Concurrency-safe by construction — many writers, no read-modify-write. */
+  insertCraftNote(input: {
+    craftSlug: string;
+    briefId?: number | null;
+    sourceAgent: string;
+    kind: "mise" | "book" | "skill" | "friction" | "spillover";
+    body: string;
+    spilloverCraft?: string | null;
+    now?: number;
+  }): number {
+    const now = input.now ?? Date.now();
+    const id = this.withRetry(() => {
+      const result = this.db
+        .prepare(
+          `INSERT INTO craft_notes (craft_slug, brief_id, source_agent, kind, body, spillover_craft, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.craftSlug,
+          input.briefId ?? null,
+          input.sourceAgent,
+          input.kind,
+          input.body,
+          input.spilloverCraft ?? null,
+          now,
+        );
+      return Number(result.lastInsertRowid);
+    });
+    this.journal("craft.note", {
+      id,
+      craft: input.craftSlug,
+      briefId: input.briefId ?? null,
+      by: input.sourceAgent,
+      kind: input.kind,
+      body: input.body,
+      spilloverCraft: input.spilloverCraft ?? null,
+      at: now,
+    });
+    return id;
+  }
+
+  pendingCraftNotes(craftSlug: string): CraftNoteRow[] {
+    return this.db
+      .prepare("SELECT * FROM craft_notes WHERE craft_slug = ? AND folded_at IS NULL ORDER BY id")
+      .all(craftSlug) as unknown as CraftNoteRow[];
+  }
+
+  /**
+   * Every craft slug carrying at least one pending note — independent of whether a book file
+   * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
+   * doctor's backlog check doesn't miss a craft just because listCrafts()'s file-based roster
+   * hasn't picked it up.
+   */
+  pendingCraftSlugs(): string[] {
+    return (
+      this.db.prepare("SELECT DISTINCT craft_slug FROM craft_notes WHERE folded_at IS NULL").all() as Array<{
+        craft_slug: string;
+      }>
+    ).map((r) => r.craft_slug);
+  }
+
+  markCraftNotesFolded(craftSlug: string, throughNoteId: number, now = Date.now()): void {
+    this.withRetry(() =>
+      this.db
+        .prepare("UPDATE craft_notes SET folded_at = ? WHERE craft_slug = ? AND id <= ? AND folded_at IS NULL")
+        .run(now, craftSlug, throughNoteId),
+    );
+  }
+
+  /**
+   * Acquire the single-writer fold lease for a craft — an expired (or absent) lease is free to
+   * take; a live one held by someone else is refused. Not journaled: purely local coordination
+   * for "who is distilling this book right now," same spirit as wake_log.
+   */
+  acquireCraftFoldLease(craftSlug: string, holder: string, ttlMs = 10 * 60_000, now = Date.now()): boolean {
+    const expires = now + ttlMs;
+    const result = this.withRetry(() =>
+      this.db
+        .prepare(
+          `INSERT INTO craft_folds (craft_slug, holder, expires_at) VALUES (?, ?, ?)
+           ON CONFLICT(craft_slug) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at
+           WHERE craft_folds.expires_at < ?`,
+        )
+        .run(craftSlug, holder, expires, now),
+    );
+    if (result.changes > 0) return true;
+    // the INSERT half of the upsert didn't fire (row existed) and the WHERE blocked the
+    // UPDATE half (lease still live) — but a lease this same holder already owns is fine to renew
+    const existing = this.db
+      .prepare("SELECT holder FROM craft_folds WHERE craft_slug = ?")
+      .get(craftSlug) as { holder: string } | undefined;
+    return existing?.holder === holder;
+  }
+
+  releaseCraftFoldLease(craftSlug: string, holder: string): void {
+    this.withRetry(() =>
+      this.db.prepare("DELETE FROM craft_folds WHERE craft_slug = ? AND holder = ?").run(craftSlug, holder),
+    );
+  }
+
   // --- journal replay (remote.ts restore path) ---
 
   /**
@@ -1581,6 +1818,16 @@ export class Store {
                WHERE id = ?`,
             )
             .run(f("state"), f("doneSignal"), at, f("id")),
+        );
+        return true;
+      case "craft.note":
+        this.withRetry(() =>
+          this.db
+            .prepare(
+              `INSERT OR IGNORE INTO craft_notes (id, craft_slug, brief_id, source_agent, kind, body, spillover_craft, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            )
+            .run(f("id"), f("craft"), f("briefId"), f("by"), f("kind"), f("body"), f("spilloverCraft"), at),
         );
         return true;
       default:

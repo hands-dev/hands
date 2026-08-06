@@ -202,3 +202,48 @@ describe("the dashboard.serve pidfile check (hands#77/#82)", () => {
     expect(check("dashboard.serve", report)?.severity).toBe("ok");
   });
 });
+
+describe("crafts checks (hands#81/#96/#49)", () => {
+  it("warns when a personal craft is shadowed by a same-named shared craft", () => {
+    writeConfig();
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "saucier.md"), "> covers: sauces\n");
+    const personal = path.join(root, "coord", "crafts");
+    fs.mkdirSync(personal, { recursive: true });
+    fs.writeFileSync(path.join(personal, "saucier.md"), "> covers: SHADOWED\n");
+
+    const report = runDoctor({ cwd: repo, env });
+    const shadowed = check("crafts.shadowed", report);
+    expect(shadowed?.severity).toBe("warn");
+    expect(shadowed?.detail).toContain("saucier");
+  });
+
+  it("says nothing when no personal craft collides with a shared one", () => {
+    writeConfig();
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("crafts.shadowed", report)).toBeUndefined();
+  });
+
+  it("warns on a craft with a large or aging unfolded-note backlog", async () => {
+    writeConfig();
+    const { Store } = await import("../src/store.js");
+    const store = new Store({ env });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "a" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "b" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "c" });
+    store.close();
+
+    const report = runDoctor({ cwd: repo, env });
+    const notes = check("crafts.notes", report);
+    expect(notes?.severity).toBe("warn");
+    expect(notes?.detail).toContain("saucier");
+    expect(notes?.detail).toContain("3 pending");
+  });
+
+  it("says nothing when there's no unfolded-note backlog", () => {
+    writeConfig();
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("crafts.notes", report)).toBeUndefined();
+  });
+});

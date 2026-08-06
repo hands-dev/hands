@@ -8,6 +8,10 @@
  *   hands register [path]     enroll a kitchen so it resolves by name
  *   hands init                per-repo config scaffold
  *   hands books <url>         attach the books (durable journal) to this repo's config
+ *   hands craft ls             the craft roster — scope, covers, distilled, pending notes
+ *   hands craft promote <s>    move a personal craft to the repo-shared tier
+ *   hands craft localize <s>   move a shared craft back to the personal tier
+ *   hands craft distill [<s>]  list a craft's unfolded notes (hands_fold does the real fold)
  *   hands station add [-n N]   open N stations (worktree hidden inside)
  *   hands station ls           list this repo's stations
  *   hands station rm <id>      retire a station (idempotent; --force discards)
@@ -47,16 +51,20 @@ import { runDoctor } from "./doctor.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
+  craftFiles,
   ensureLocalBooksOrigin,
   githubUsername,
   listProjects,
   openJournal,
+  personalCraftsDir,
   readEvents,
   replayInto,
+  sharedCraftsDir,
   syncPull,
   syncPush,
   validateJournal,
 } from "./remote.js";
+import { listCrafts } from "./crafts.js";
 import {
   booksMcpEntry,
   desktopConfigPath,
@@ -211,6 +219,115 @@ function cmdBooks(argv: string[]): void {
   out(`✔ books attached: ${url} (handle "${String((cfg.remote as Record<string, unknown>).handle)}")`);
   out("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
   out("  (restart running Claude Code sessions so the bus picks up the config change)");
+}
+
+/**
+ * `hands craft ls|promote|localize|distill` — crafts are dispatched as
+ * sub-agents (hands_brief/hands_mise/hands_fold), never held by a station
+ * (hands#81/#96); this CLI covers the human-facing, non-agentic slice:
+ * seeing the roster and moving a craft between scope tiers. Distillation
+ * itself is a judgment call (rewrite prose, decide what to discard) that
+ * needs a model — `distill` here only surfaces the backlog for a human to
+ * read or hand to an agent via hands_fold; it never rewrites a book itself.
+ */
+function cmdCraft(argv: string[]): void {
+  const sub = argv[0];
+  const cfg = loadConfig();
+  const store = new Store();
+  try {
+    if (sub === "ls" || !sub) {
+      const roster = listCrafts(store, cfg);
+      if (roster.length === 0) {
+        out("no crafts founded yet — /hands:crafts surveys a repo for the ones worth establishing");
+        return;
+      }
+      for (const c of roster) {
+        const distilled = c.distilled ? `distilled ${c.distilled}` : "never distilled";
+        const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)` : "";
+        out(`${c.slug}\t[${c.scope}]\t${c.covers ?? "no covers stated"}\t${distilled}${pending}`);
+      }
+      return;
+    }
+
+    if (sub === "promote" || sub === "localize") {
+      const slug = argv[1];
+      if (!slug) fail(`usage: hands craft ${sub} <slug>`);
+      const files = craftFiles(slug!);
+      const wantScope = sub === "promote" ? "shared" : "personal";
+      if (files.scope === wantScope) fail(`"${files.slug}" is already ${wantScope}`);
+      const info = repoInfo(process.cwd());
+      if (!info) fail("not inside a git repo — run from your repo's main checkout");
+      const shared = sharedCraftsDir(cfg, info!.repoRoot);
+      if (!shared) fail("could not resolve the shared crafts dir");
+      const personal = personalCraftsDir(cfg);
+      const targetDir = sub === "promote" ? shared! : personal;
+      const sourceDir = sub === "promote" ? personal : shared!;
+
+      if (sub === "promote" && fs.existsSync(path.join(shared!, `${files.slug}.md`))) {
+        fail(`a shared craft named "${files.slug}" already exists — resolve manually, then localize or edit it directly`);
+      }
+
+      fs.mkdirSync(targetDir, { recursive: true });
+      const moved: string[] = [];
+      for (const name of [`${files.slug}.md`, `${files.slug}.mise.md`, `${files.slug}.skill.md`]) {
+        const from = path.join(sourceDir, name);
+        if (!fs.existsSync(from)) continue;
+        fs.copyFileSync(from, path.join(targetDir, name));
+        fs.rmSync(from);
+        moved.push(name);
+      }
+      if (moved.length === 0) fail(`no files found for "${files.slug}" at ${sourceDir}`);
+
+      if (sub === "promote") {
+        try {
+          execFileSync("git", ["add", ...moved.map((m) => path.join(shared!, m))], { cwd: info!.repoRoot, stdio: "ignore" });
+        } catch {
+          // best-effort — staging failure just means the human runs git add themselves
+        }
+        out(`✔ "${files.slug}" promoted to shared — staged at ${shared}, not committed`);
+        out(`  next: git commit -m "craft: promote ${files.slug} to shared" && open a PR`);
+      } else {
+        try {
+          execFileSync("git", ["rm", "--cached", "-q", ...moved.map((m) => path.join(shared!, m))], {
+            cwd: info!.repoRoot,
+            stdio: "ignore",
+          });
+        } catch {
+          // best-effort — same as above
+        }
+        out(`✔ "${files.slug}" localized — copied to ${personal}, unstaged from the repo`);
+        out(`  next: git commit -m "craft: localize ${files.slug}" (or git checkout . to keep it shared)`);
+      }
+      return;
+    }
+
+    if (sub === "distill") {
+      const only = argv[1] && !argv[1].startsWith("--") ? argv[1] : null;
+      const slugs = only ? [only] : store.pendingCraftSlugs();
+      if (slugs.length === 0) {
+        out("no pending craft notes to distill");
+        return;
+      }
+      for (const slug of slugs) {
+        const pending = store.pendingCraftNotes(slug);
+        if (pending.length === 0) {
+          if (only) out(`"${slug}": no pending notes`);
+          continue;
+        }
+        out(`\n${slug} — ${pending.length} pending note(s):`);
+        for (const n of pending) out(`  [${n.kind}] ${n.body} (from ${n.source_agent})`);
+      }
+      out(
+        "\nThis lists the backlog only — distillation is a judgment call. Read it and edit the " +
+          "book/mise/skill by hand, or ask an agent to run hands_fold on this craft.",
+      );
+      return;
+    }
+
+    fail("usage: hands craft <ls|promote|localize|distill> [<slug>]");
+  } finally {
+    store.close();
+  }
 }
 
 function requireRemote() {
@@ -684,6 +801,8 @@ async function main(): Promise<void> {
         return cmdStation(rest);
       case "books":
         return cmdBooks(rest);
+      case "craft":
+        return cmdCraft(rest);
       case "scale":
         return cmdScale(rest);
       case "restore":
