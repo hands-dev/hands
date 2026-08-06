@@ -6960,6 +6960,9 @@ function dbPath(env = process.env, cwd = process.cwd()) {
 function notifyPath(agentId, env = process.env, cwd = process.cwd()) {
   return path.join(coordinationDir(env, cwd), `${agentId}.notify`);
 }
+function pidPath(env = process.env, cwd = process.cwd()) {
+  return path.join(coordinationDir(env, cwd), "dashboard.pid");
+}
 var repoInfoCache;
 var init_paths = __esm({
   "src/paths.ts"() {
@@ -10191,6 +10194,11 @@ function serve(opts) {
     server.listen(port, host, () => {
       const addr = server.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
+      const pidFile = pidPath(env);
+      try {
+        fs15.writeFileSync(pidFile, String(process.pid), { mode: 384 });
+      } catch {
+      }
       resolve2({
         port: boundPort,
         host,
@@ -10212,6 +10220,10 @@ function serve(opts) {
           clients.clear();
           server.close();
           store.close();
+          try {
+            if (fs15.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs15.unlinkSync(pidFile);
+          } catch {
+          }
         }
       });
     });

@@ -98,6 +98,9 @@ function dbPath(env = process.env, cwd = process.cwd()) {
 function notifyPath(agentId, env = process.env, cwd = process.cwd()) {
   return path.join(coordinationDir(env, cwd), `${agentId}.notify`);
 }
+function pidPath(env = process.env, cwd = process.cwd()) {
+  return path.join(coordinationDir(env, cwd), "dashboard.pid");
+}
 var repoInfoCache;
 var init_paths = __esm({
   "src/paths.ts"() {
@@ -24579,6 +24582,11 @@ function serve(opts) {
     server.listen(port, host, () => {
       const addr = server.address();
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
+      const pidFile = pidPath(env);
+      try {
+        fs15.writeFileSync(pidFile, String(process.pid), { mode: 384 });
+      } catch {
+      }
       resolve3({
         port: boundPort,
         host,
@@ -24600,6 +24608,10 @@ function serve(opts) {
           clients.clear();
           server.close();
           store.close();
+          try {
+            if (fs15.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs15.unlinkSync(pidFile);
+          } catch {
+          }
         }
       });
     });
@@ -48920,6 +48932,14 @@ function worstOf(checks) {
   if (checks.some((c) => c.severity === "warn")) return "warn";
   return "ok";
 }
+function isProcessAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
 function gitHead(cwd) {
   try {
     return execFileSync7("git", ["rev-parse", "HEAD"], {
@@ -49011,6 +49031,28 @@ function runDoctor(opts) {
   checks.push(
     fs19.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
   );
+  const pid = pidPath(env, info.repoRoot);
+  if (fs19.existsSync(pid)) {
+    const raw = fs19.readFileSync(pid, "utf8").trim();
+    const parsedPid = Number(raw);
+    if (Number.isInteger(parsedPid) && parsedPid > 0 && isProcessAlive(parsedPid)) {
+      checks.push({ name: "dashboard.serve", severity: "ok", detail: `running (pid ${parsedPid})` });
+    } else if (opts?.fix) {
+      fs19.rmSync(pid, { force: true });
+      checks.push({
+        name: "dashboard.serve",
+        severity: "ok",
+        detail: `stale pidfile (pid ${raw || "?"} not running) \u2014 removed`
+      });
+    } else {
+      checks.push({
+        name: "dashboard.serve",
+        severity: "warn",
+        detail: `stale pidfile \u2014 pid ${raw || "?"} isn't running`,
+        fixable: "remove the stale pidfile"
+      });
+    }
+  }
   const running = opts?.entry ?? process.argv[1] ?? "";
   const cached2 = /plugins\/cache\/[^/]+\/[^/]+\/([0-9a-f]{7,40})\//.exec(running);
   if (cached2?.[1]) {
@@ -49739,6 +49781,12 @@ async function main2() {
         const handle = await serve2();
         out2(`hands dashboard \u2192 ${handle.url}
 (Ctrl-C to stop)`);
+        const shutdown = () => {
+          handle.close();
+          process.exit(0);
+        };
+        process.on("SIGINT", shutdown);
+        process.on("SIGTERM", shutdown);
         return;
       }
       case "paths":
