@@ -28,6 +28,11 @@ beforeEach(() => {
   repo = path.join(root, "proj");
   fs.mkdirSync(repo);
   git(repo, ["init", "-q", "-b", "main"]);
+  // Ignore the developer's global gitignore. This machine's ~/.config/git/ignore
+  // hides .claude/settings.local.json, so the seeded file never registers as
+  // dirty here — which is exactly why the station-rm regression passed locally
+  // and broke CI. Pin it off so these tests see what CI sees.
+  git(repo, ["config", "core.excludesFile", "/dev/null"]);
   fs.writeFileSync(path.join(repo, "README.md"), "hi\n");
   git(repo, ["add", "."]);
   git(repo, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"]);
@@ -111,6 +116,44 @@ describe("station provisioning (manual launcher)", () => {
     const plain = path.join(root, "plain");
     fs.mkdirSync(plain);
     expect(() => addStations(1, { cwd: plain, config: cfg })).toThrow(ProvisionError);
+  });
+
+  // Regression: seeding writes .claude/settings.local.json into every station
+  // worktree, which makes it untracked-dirty, and `git worktree remove` refuses
+  // a dirty worktree — so `station rm` and `scale` down broke for every seeded
+  // station. It passed locally only because the developer's global gitignore
+  // (~/.config/git/ignore) hid the file; CI has no such ignore. Hence the
+  // core.excludesFile pin in beforeEach — without it these tests are vacuous
+  // on any machine that ignores .claude/.
+  it("clears its own seeded scaffolding so a station can be retired", () => {
+    addStations(1, { cwd: repo, config: cfg });
+    const dir = path.join(stationRoot(repo, cfg), "station-1");
+    expect(fs.existsSync(path.join(dir, ".claude", "settings.local.json"))).toBe(true);
+
+    expect(removeStation("station-1", { cwd: repo, config: cfg }).removed).toBe(true);
+    expect(fs.existsSync(dir)).toBe(false);
+  });
+
+  it("scale down still works with every station seeded", () => {
+    scaleStations(3, { cwd: repo, config: cfg });
+    for (const s of listStations(repo, cfg)) {
+      expect(fs.existsSync(path.join(s.dir, ".claude", "settings.local.json"))).toBe(true);
+    }
+    const down = scaleStations(1, { cwd: repo, config: cfg });
+    expect(down.removed).toEqual(["station-2", "station-3"]);
+    expect(listStations(repo, cfg).map((w) => w.id)).toEqual(["station-1"]);
+  });
+
+  it("does NOT clear scaffolding when there is real work — that must still block", () => {
+    addStations(1, { cwd: repo, config: cfg });
+    const dir = path.join(stationRoot(repo, cfg), "station-1");
+    fs.writeFileSync(path.join(dir, "wip.txt"), "uncommitted\n");
+
+    expect(() => removeStation("station-1", { cwd: repo, config: cfg })).toThrow(ProvisionError);
+    // the guardrail is the point: our file stays put too, because we never got
+    // to the "only our dirt" branch
+    expect(fs.existsSync(path.join(dir, ".claude", "settings.local.json"))).toBe(true);
+    expect(removeStation("station-1", { cwd: repo, config: cfg, force: true }).removed).toBe(true);
   });
 
   it("launchCommand quotes odd paths", () => {

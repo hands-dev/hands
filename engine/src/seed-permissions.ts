@@ -96,6 +96,36 @@ export function stationSettings(): Record<string, unknown> {
  * checkout is theirs — writing a permission policy into it uninvited would be
  * a surprising side effect of launching a session.
  */
+/** The path this module owns, relative to a station worktree. */
+export const SEEDED_RELPATH = ".claude/settings.local.json";
+
+/**
+ * Remove the seeded settings so a station worktree can be retired.
+ *
+ * `git worktree remove` refuses to delete a worktree with untracked files, and
+ * seeding creates one in every station — which quietly broke `hands station rm`
+ * and `hands scale <N>` downward for every seeded seat. (Caught in CI, not
+ * locally: git versions differ on whether untracked files block a remove.)
+ *
+ * Deliberately narrow: the caller must have established that this scaffolding
+ * is the ONLY thing dirtying the worktree. Real uncommitted work must still
+ * block removal without --force — that guardrail is the point of the check,
+ * and this must not become a hole in it.
+ */
+export function unseedStationPermissions(dir: string): boolean {
+  const file = path.join(dir, SEEDED_RELPATH);
+  if (!fs.existsSync(file)) return false;
+  fs.rmSync(file, { force: true });
+  // take the .claude dir too, but only if seeding is all that was in it
+  const parent = path.dirname(file);
+  try {
+    if (fs.readdirSync(parent).length === 0) fs.rmdirSync(parent);
+  } catch {
+    // non-empty or already gone — leave it
+  }
+  return true;
+}
+
 export function seedStationPermissions(dir: string): SeedResult {
   const file = path.join(dir, ".claude", "settings.local.json");
   if (fs.existsSync(file)) return { path: file, written: false };

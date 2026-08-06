@@ -4,7 +4,11 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { type HandsConfig, loadConfig } from "./config.js";
 import { type RepoInfo, repoInfo } from "./paths.js";
-import { seedStationPermissions } from "./seed-permissions.js";
+import {
+  SEEDED_RELPATH,
+  seedStationPermissions,
+  unseedStationPermissions,
+} from "./seed-permissions.js";
 
 /**
  * Station provisioning — the user thinks in STATIONS, never worktrees. Each
@@ -88,6 +92,28 @@ export function listStations(cwd: string = process.cwd(), config?: HandsConfig):
     });
   }
   return stations.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * True when the ONLY thing making this worktree dirty is the permission
+ * scaffolding hands itself seeded. Deliberately conservative: any other
+ * modified or untracked path (real work) returns false, so `station rm` still
+ * refuses without --force. An unreadable status also returns false — if we
+ * can't prove the tree is clean of user work, we don't touch it.
+ */
+function onlyDirtInWorktreeIsOurs(dir: string): boolean {
+  let status: string;
+  try {
+    status = git(dir, ["status", "--porcelain", "--untracked-files=all"]);
+  } catch {
+    return false;
+  }
+  const paths = status
+    .split("\n")
+    .map((line) => line.slice(3).trim())
+    .filter(Boolean);
+  if (paths.length === 0) return false; // already clean — nothing to clear
+  return paths.every((p) => p === SEEDED_RELPATH);
 }
 
 function branchExists(cwd: string, branch: string): boolean {
@@ -273,6 +299,13 @@ export function removeStation(
 
   let removed = false;
   if (fs.existsSync(dir)) {
+    // Our own seeded permission file makes the worktree dirty, and newer git
+    // refuses to remove a dirty worktree (2.43 allows it, ubuntu-latest's does
+    // not — which is exactly why this passed locally and broke CI). Clear the
+    // scaffolding we put there, but ONLY when it is the sole thing dirtying the
+    // tree: real uncommitted work must still block removal without --force.
+    if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
+
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
     try {
