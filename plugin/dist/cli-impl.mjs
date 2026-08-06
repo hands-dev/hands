@@ -191,7 +191,8 @@ function merge(base, layer) {
       launcher: stationsLayer?.launcher ?? base.stations.launcher,
       worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
       baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
-      allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling
+      allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling,
+      theming: stationsLayer?.theming ?? base.stations.theming
     },
     remote: {
       url: layer.remote?.url !== void 0 ? layer.remote.url : base.remote.url,
@@ -246,7 +247,8 @@ var init_config = __esm({
         launcher: "auto",
         worktreeRoot: null,
         baseBranch: null,
-        allowScaling: true
+        allowScaling: true,
+        theming: true
       },
       remote: { url: null, handle: null, project: null },
       merge: { adminMergeLowRisk: false },
@@ -565,10 +567,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path22) {
-  if (!path22)
+function getElementAtPath(obj, path23) {
+  if (!path23)
     return obj;
-  return path22.reduce((acc, key) => acc?.[key], obj);
+  return path23.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -880,11 +882,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path22, issues) {
+function prefixIssues(path23, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path22);
+    iss.path.unshift(path23);
     return iss;
   });
 }
@@ -1126,7 +1128,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path22 = []) => {
+  const processError = (error49, path23 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1136,7 +1138,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path22, ...issue2.path];
+        const fullpath = [...path23, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1168,8 +1170,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path22 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path22) {
+  const path23 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path23) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13863,13 +13865,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path22 = ref.slice(1).split("/").filter(Boolean);
-  if (path22.length === 0) {
+  const path23 = ref.slice(1).split("/").filter(Boolean);
+  if (path23.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path22[0] === defsKey) {
-    const key = path22[1];
+  if (path23[0] === defsKey) {
+    const key = path23[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17832,8 +17834,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path22) {
-      let input = path22;
+    function removeDotSegments(path23) {
+      let input = path23;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18085,8 +18087,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path22, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
+        const [path23, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -21711,6 +21713,7 @@ var init_store = __esm({
         this.ensureColumn("questions", "outcome", "TEXT");
         this.ensureColumn("questions", "outcome_note", "TEXT");
         this.ensureColumn("questions", "outcome_at", "INTEGER");
+        this.ensureColumn("agents", "session_name", "TEXT");
       }
       ensureColumn(table, column, ddl) {
         const cols = this.db.prepare(`PRAGMA table_info(${table})`).all();
@@ -21792,6 +21795,27 @@ var init_store = __esm({
       getFocus(agentId) {
         const row = this.db.prepare(`SELECT focus FROM agents WHERE id = ?`).get(agentId);
         return row?.focus ?? null;
+      }
+      /**
+       * Set a station's hands-owned display name (hands#104). Source of truth —
+       * NEVER derived by reading Claude Code's own `/rename` output back (that
+       * data path doesn't reach hands' hooks). Upserts so a name assigned at
+       * `station add` sticks even before the station's first turn registers it.
+       */
+      setSessionName(agentId, sessionName, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare(
+            `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, session_name)
+           VALUES (?, '', 0, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name`
+          ).run(agentId, now, now, sessionName)
+        );
+        this.journal("session_name.set", { station: agentId, sessionName, at: now });
+      }
+      /** An agent's hands-owned display name, or null if none was ever assigned. */
+      getSessionName(agentId) {
+        const row = this.db.prepare(`SELECT session_name FROM agents WHERE id = ?`).get(agentId);
+        return row?.session_name ?? null;
       }
       /** Agent ids whose focus label matches (case-insensitive) — label addressing. */
       findByFocus(label) {
@@ -22948,8 +22972,65 @@ var init_digest = __esm({
   }
 });
 
-// src/snapshot.ts
+// src/theming.ts
+import * as os5 from "node:os";
 import * as path9 from "node:path";
+function themeColorForIndex(index) {
+  const n = THEME_PALETTE.length;
+  const i = ((index - 1) % n + n) % n;
+  return THEME_PALETTE[i];
+}
+function themeFileName(repoSlug, index) {
+  return `${repoSlug}-station-${index}`;
+}
+function themesDir(env = process.env) {
+  const home = env.HANDS_TEST_HOME?.trim() || os5.homedir();
+  return path9.join(home, ".claude", "themes");
+}
+function themeFilePath(repoSlug, index, env = process.env) {
+  return path9.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
+}
+function assignStationTheme(opts) {
+  const color = themeColorForIndex(opts.index);
+  const name = themeFileName(opts.repoSlug, opts.index);
+  return {
+    index: opts.index,
+    color,
+    file: themeFilePath(opts.repoSlug, opts.index, opts.env),
+    themeId: `custom:${name}`,
+    sessionName: `${opts.repoLabel} \xB7 station-${opts.index} (${color.name})`
+  };
+}
+function themeFileContents(assignment) {
+  return {
+    name: assignment.sessionName,
+    base: "dark",
+    overrides: { claude: assignment.color.hex, promptBorder: assignment.color.hex }
+  };
+}
+var THEME_PALETTE;
+var init_theming = __esm({
+  "src/theming.ts"() {
+    "use strict";
+    THEME_PALETTE = [
+      { name: "blue", hex: "#4a9eff" },
+      { name: "amber", hex: "#f5a623" },
+      { name: "violet", hex: "#9b59f6" },
+      { name: "teal", hex: "#2dd4bf" },
+      { name: "rose", hex: "#fb7185" },
+      { name: "lime", hex: "#a3e635" },
+      { name: "orange", hex: "#fb923c" },
+      { name: "sky", hex: "#38bdf8" }
+    ];
+  }
+});
+
+// src/snapshot.ts
+import * as path10 from "node:path";
+function stationIndex(id) {
+  const m = /^station-(\d+)$/.exec(id);
+  return m ? Number.parseInt(m[1], 10) : null;
+}
 function activity(raw) {
   if (!raw) return { files: [], ticket: null };
   try {
@@ -22966,6 +23047,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     const { files, ticket } = activity(p.activity);
     const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
     const state = !p.online ? "offline" : activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
+    const index = stationIndex(p.id);
     return {
       id: p.id,
       state,
@@ -22980,7 +23062,9 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
       wakes24h: wakes.get(p.id)?.last24h ?? 0,
       focus: p.focus,
-      pendingCommands: p.id === "expo" ? [] : store.pendingFromExpo(p.id).map((m) => ({ id: m.id, subject: m.subject, body: m.body, at: m.created_at }))
+      pendingCommands: p.id === "expo" ? [] : store.pendingFromExpo(p.id).map((m) => ({ id: m.id, subject: m.subject, body: m.body, at: m.created_at })),
+      sessionName: p.session_name,
+      themeColor: index !== null ? themeColorForIndex(index).hex : null
     };
   });
   const collisions = [];
@@ -22991,7 +23075,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       const b = online[j];
       const shared = a.files.find((f) => b.files.includes(f));
       if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path9.basename(shared) });
+        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path10.basename(shared) });
       } else if (a.ticket && a.ticket === b.ticket) {
         collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
       }
@@ -23126,14 +23210,15 @@ var init_snapshot = __esm({
     init_board();
     init_priorities();
     init_store();
+    init_theming();
   }
 });
 
 // src/remote.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
 import * as fs11 from "node:fs";
-import * as os5 from "node:os";
-import * as path10 from "node:path";
+import * as os6 from "node:os";
+import * as path11 from "node:path";
 function git3(cwd, args) {
   return execFileSync4("git", args, {
     cwd,
@@ -23177,7 +23262,7 @@ function resolveProject(config2, cwd = process.cwd()) {
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   const origin = tryGit(root, ["remote", "get-url", "origin"]);
   if (origin) project = projectFromOrigin(origin);
-  if (!project) project = sanitizeSegment(path10.basename(root));
+  if (!project) project = sanitizeSegment(path11.basename(root));
   projectCache.set(cwd, project);
   return project;
 }
@@ -23197,18 +23282,33 @@ function resolveHandle(config2) {
   const h = config2.remote.handle?.trim();
   if (h) return sanitizeSegment(h, "local");
   try {
-    return sanitizeSegment(os5.userInfo().username, "local");
+    return sanitizeSegment(os6.userInfo().username, "local");
   } catch {
     return "local";
   }
 }
 function journalDir(env = process.env, cwd = process.cwd()) {
-  return path10.join(coordinationDir(env, cwd), "remote");
+  return path11.join(coordinationDir(env, cwd), "remote");
+}
+function localBooksOriginPath(env = process.env, cwd = process.cwd()) {
+  return path11.join(coordinationDir(env, cwd), "books-origin.git");
+}
+function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
+  const dir = localBooksOriginPath(env, cwd);
+  try {
+    if (!fs11.existsSync(path11.join(dir, "HEAD"))) {
+      fs11.mkdirSync(dir, { recursive: true, mode: 448 });
+      git3(dir, ["init", "-q", "--bare", "-b", "main", dir]);
+    }
+    return dir;
+  } catch {
+    return null;
+  }
 }
 function ensureRepo(dir, url2) {
   try {
     fs11.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs11.existsSync(path10.join(dir, ".git"))) {
+    if (!fs11.existsSync(path11.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
       git3(dir, ["config", "user.name", "hands"]);
       git3(dir, ["config", "user.email", "hands@localhost"]);
@@ -23247,7 +23347,7 @@ function syncPull(dir) {
   return { ok: false, reason: "conflict" };
 }
 function readMarker(dir) {
-  const file2 = path10.join(dir, MARKER_FILE);
+  const file2 = path11.join(dir, MARKER_FILE);
   let raw;
   try {
     raw = fs11.readFileSync(file2, "utf8");
@@ -23296,15 +23396,15 @@ function validateJournal(dir, opts) {
       reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
-  fs11.writeFileSync(path10.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+  fs11.writeFileSync(path11.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
   return { ok: true, bootstrapped: true };
 }
 function debounceMarkerPath(dir) {
-  return path10.join(dir, ".git", "hands-last-push");
+  return path11.join(dir, ".git", "hands-last-push");
 }
 function syncStatusPath(dir) {
-  return path10.join(dir, ".git", "hands-sync-status");
+  return path11.join(dir, ".git", "hands-sync-status");
 }
 function writeSyncStatus(dir, result, now) {
   try {
@@ -23327,12 +23427,12 @@ function changedLogDates(dir, head0, journal) {
     "--name-only",
     `${head0}..HEAD`,
     "--",
-    path10.join("journal", journal.project, journal.handle, "log")
+    path11.join("journal", journal.project, journal.handle, "log")
   ]);
   if (diff === null) return void 0;
   const dates = /* @__PURE__ */ new Set();
   for (const line of diff.split("\n")) {
-    const m = path10.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
+    const m = path11.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
     if (m) dates.add(m[1]);
   }
   return dates;
@@ -23361,8 +23461,8 @@ function syncPush(journal, opts) {
   };
   try {
     const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
-    const ownPaths = [path10.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs11.existsSync(path10.join(dir, p)));
+    const ownPaths = [path11.join("journal", project, handle), MARKER_FILE];
+    const own = ownPaths.filter((p) => fs11.existsSync(path11.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
     let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
@@ -23385,14 +23485,14 @@ function syncPush(journal, opts) {
     const digestDates = changedLogDates(dir, head0, journal);
     const changedDigests = regenerateDigests(journal, digestDates);
     if (changedDigests.length > 0) {
-      git3(dir, ["add", "--", path10.join("journal", project, handle)]);
+      git3(dir, ["add", "--", path11.join("journal", project, handle)]);
       git3(dir, ["commit", "-q", "-m", "journal: digests"]);
       dirty = true;
     }
     if (opts?.store) {
-      const handleDir = path10.join(dir, "journal", project, handle);
+      const handleDir = path11.join(dir, "journal", project, handle);
       fs11.mkdirSync(handleDir, { recursive: true });
-      const snapshotFile = path10.join(handleDir, "dashboard.json");
+      const snapshotFile = path11.join(handleDir, "dashboard.json");
       const pub = buildPublicSnapshot(opts.store, { handle, project, now });
       if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}
 `)) {
@@ -23420,14 +23520,15 @@ function openJournal(options) {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
   const config2 = options?.config ?? loadConfig({ cwd, env });
-  const url2 = config2.remote.url?.trim();
+  const configuredUrl = config2.remote.url?.trim();
+  const url2 = configuredUrl || ensureLocalBooksOrigin(env, cwd);
   if (!url2) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url2);
   const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
   const agentId = options?.agentId ?? null;
-  const logDir = path10.join(dir, "journal", project, handle, "log");
+  const logDir = path11.join(dir, "journal", project, handle, "log");
   return {
     dir,
     project,
@@ -23446,7 +23547,7 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs11.appendFileSync(path10.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+        fs11.appendFileSync(path11.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
 `, {
           mode: 384
         });
@@ -23466,7 +23567,7 @@ function readEventsFromDir(logDir, into, onlyFile) {
   for (const file2 of files) {
     let body;
     try {
-      body = fs11.readFileSync(path10.join(logDir, file2), "utf8");
+      body = fs11.readFileSync(path11.join(logDir, file2), "utf8");
     } catch {
       continue;
     }
@@ -23482,25 +23583,25 @@ function readEventsFromDir(logDir, into, onlyFile) {
 }
 function readEvents(dir, project, handle) {
   const events = [];
-  readEventsFromDir(path10.join(dir, "journal", project, handle, "log"), events);
+  readEventsFromDir(path11.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
   const enabled = Boolean(config2.remote.url?.trim());
-  const dir = enabled ? path10.join(
+  const dir = enabled ? path11.join(
     journalDir(env, cwd),
     "journal",
     resolveProject(config2, cwd),
     resolveHandle(config2),
     "crafts"
-  ) : path10.join(coordinationDir(env, cwd), "crafts");
+  ) : path11.join(coordinationDir(env, cwd), "crafts");
   const slug = sanitizeSegment(craft, "unnamed");
   return {
     dir,
     slug,
-    book: path10.join(dir, `${slug}.md`),
-    skill: path10.join(dir, `${slug}.skill.md`),
+    book: path11.join(dir, `${slug}.md`),
+    skill: path11.join(dir, `${slug}.skill.md`),
     durable: enabled
   };
 }
@@ -23544,13 +23645,13 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
   const limit = opts?.limitPerHandle ?? 15;
   let handles = [];
   try {
-    handles = fs11.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs11.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const kitchens = [];
   for (const handle of handles) {
-    const logDir = path10.join(dir, "journal", project, handle, "log");
+    const logDir = path11.join(dir, "journal", project, handle, "log");
     let files = [];
     try {
       files = fs11.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
@@ -23576,7 +23677,7 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
 function readOtherCrafts(dir, project, ownHandle) {
   let handles = [];
   try {
-    handles = fs11.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs11.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -23589,7 +23690,7 @@ function readOtherCrafts(dir, project, ownHandle) {
   };
   const crafts = [];
   for (const handle of handles) {
-    const craftsDir = path10.join(dir, "journal", project, handle, "crafts");
+    const craftsDir = path11.join(dir, "journal", project, handle, "crafts");
     let files = [];
     try {
       files = fs11.readdirSync(craftsDir);
@@ -23603,8 +23704,8 @@ function readOtherCrafts(dir, project, ownHandle) {
       crafts.push({
         handle,
         slug,
-        book: read(path10.join(craftsDir, `${slug}.md`)),
-        skill: read(path10.join(craftsDir, `${slug}.skill.md`))
+        book: read(path11.join(craftsDir, `${slug}.md`)),
+        skill: read(path11.join(craftsDir, `${slug}.skill.md`))
       });
     }
   }
@@ -23612,7 +23713,7 @@ function readOtherCrafts(dir, project, ownHandle) {
 }
 function listProjects(dir) {
   try {
-    return fs11.readdirSync(path10.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs11.readdirSync(path11.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -23662,15 +23763,15 @@ var init_remote = __esm({
 
 // src/seed-permissions.ts
 import * as fs12 from "node:fs";
-import * as path11 from "node:path";
+import * as path12 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function unseedStationPermissions(dir) {
-  const file2 = path11.join(dir, SEEDED_RELPATH);
+  const file2 = path12.join(dir, SEEDED_RELPATH);
   if (!fs12.existsSync(file2)) return false;
   fs12.rmSync(file2, { force: true });
-  const parent = path11.dirname(file2);
+  const parent = path12.dirname(file2);
   try {
     if (fs12.readdirSync(parent).length === 0) fs12.rmdirSync(parent);
   } catch {
@@ -23678,10 +23779,33 @@ function unseedStationPermissions(dir) {
   return true;
 }
 function seedStationPermissions(dir) {
-  const file2 = path11.join(dir, ".claude", "settings.local.json");
+  const file2 = path12.join(dir, ".claude", "settings.local.json");
   if (fs12.existsSync(file2)) return { path: file2, written: false };
-  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
+  fs12.mkdirSync(path12.dirname(file2), { recursive: true });
   fs12.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+`);
+  return { path: file2, written: true };
+}
+function mergeStationSettings(dir, patch) {
+  const file2 = path12.join(dir, SEEDED_RELPATH);
+  let existing = {};
+  try {
+    const raw = fs12.readFileSync(file2, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") existing = parsed;
+  } catch {
+    existing = {};
+  }
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (!(key in existing)) {
+      existing[key] = value;
+      changed = true;
+    }
+  }
+  if (!changed) return { path: file2, written: false };
+  fs12.mkdirSync(path12.dirname(file2), { recursive: true });
+  fs12.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -23755,8 +23879,8 @@ __export(provision_exports, {
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
 import * as fs13 from "node:fs";
-import * as os6 from "node:os";
-import * as path12 from "node:path";
+import * as os7 from "node:os";
+import * as path13 from "node:path";
 function git4(cwd, args) {
   return execFileSync5("git", args, {
     cwd,
@@ -23773,7 +23897,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path12.join(os6.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path13.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -23794,7 +23918,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path12.join(root, name),
+      dir: path13.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -23886,7 +24010,7 @@ function addStations(count, opts) {
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path12.join(root, id);
+    const dir = path13.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -23896,6 +24020,22 @@ function addStations(count, opts) {
     }
     const model = cfg.stations.overrides[id] ?? cfg.stations.model;
     seedStationPermissions(dir);
+    let themeColor;
+    let sessionName;
+    if (cfg.stations.theming) {
+      const assignment = assignStationTheme({
+        repoLabel: path13.basename(info.repoRoot),
+        repoSlug: info.slug,
+        index,
+        env: opts?.env
+      });
+      fs13.mkdirSync(path13.dirname(assignment.file), { recursive: true });
+      fs13.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+`);
+      mergeStationSettings(dir, { theme: assignment.themeId });
+      themeColor = assignment.color.hex;
+      sessionName = assignment.sessionName;
+    }
     const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,
@@ -23904,7 +24044,9 @@ function addStations(count, opts) {
       model,
       command: launchCommand({ id, dir, model }),
       launcher: res.launcher,
-      launched: res.launched
+      launched: res.launched,
+      ...themeColor ? { themeColor } : {},
+      ...sessionName ? { sessionName } : {}
     });
     created++;
   }
@@ -23918,7 +24060,13 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path12.join(root, `station-${index}`);
+  const dir = path13.join(root, `station-${index}`);
+  if (cfg.stations.theming) {
+    try {
+      fs13.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+    } catch {
+    }
+  }
   try {
     execFileSync5("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
   } catch {
@@ -23961,7 +24109,7 @@ function scaleStations(target, opts) {
   }
   const removed = [];
   for (const w of current.slice(target)) {
-    removeStation(w.id, { cwd, config: cfg, force: opts?.force });
+    removeStation(w.id, { cwd, config: cfg, force: opts?.force, env: opts?.env });
     removed.push(w.id);
   }
   return { added: [], removed };
@@ -23973,6 +24121,7 @@ var init_provision = __esm({
     init_config();
     init_paths();
     init_seed_permissions();
+    init_theming();
     ProvisionError = class extends Error {
     };
   }
@@ -24055,8 +24204,8 @@ var init_feedback = __esm({
 
 // src/tokens.ts
 import * as fs14 from "node:fs";
-import * as os7 from "node:os";
-import * as path13 from "node:path";
+import * as os8 from "node:os";
+import * as path14 from "node:path";
 function encodeProjectDir(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
@@ -24075,14 +24224,14 @@ var init_tokens = __esm({
       /** agentId → messageId → final usage (last write wins — the dedupe) */
       messages = /* @__PURE__ */ new Map();
       constructor(opts) {
-        this.projectsDir = opts?.projectsDir ?? path13.join(os7.homedir(), ".claude", "projects");
+        this.projectsDir = opts?.projectsDir ?? path14.join(os8.homedir(), ".claude", "projects");
         this.now = opts?.now ?? (() => Date.now());
       }
       sample(agents) {
         const now = this.now();
         for (const agent of agents) {
           if (!agent.cwd) continue;
-          const dir = path13.join(this.projectsDir, encodeProjectDir(agent.cwd));
+          const dir = path14.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
             names = fs14.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
@@ -24095,7 +24244,7 @@ var init_tokens = __esm({
             this.messages.set(agent.id, byMsg);
           }
           for (const name of names) {
-            const file2 = path13.join(dir, name);
+            const file2 = path14.join(dir, name);
             try {
               const stat = fs14.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
@@ -24105,7 +24254,7 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs14.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path13.join(dir, e.name, "subagents"));
+            sessionDirs = fs14.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path14.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
@@ -24117,7 +24266,7 @@ var init_tokens = __esm({
               continue;
             }
             for (const name of subNames) {
-              const file2 = path13.join(subDir, name);
+              const file2 = path14.join(subDir, name);
               try {
                 const stat = fs14.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
@@ -24208,7 +24357,7 @@ var init_tokens = __esm({
       callLabel(callFile) {
         const cached2 = this.metaLabels.get(callFile);
         if (cached2) return cached2;
-        let label = path13.basename(callFile, ".jsonl");
+        let label = path14.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
             fs14.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
@@ -24279,7 +24428,7 @@ __export(serve_exports, {
 });
 import * as fs15 from "node:fs";
 import { createServer } from "node:http";
-import * as path14 from "node:path";
+import * as path15 from "node:path";
 import { fileURLToPath } from "node:url";
 function isTrustedOrigin(req) {
   const host = req.headers.host;
@@ -24305,7 +24454,7 @@ function escapeHtml(s) {
   );
 }
 function kitchenName(db) {
-  return path14.basename(path14.dirname(db)) || "kitchen";
+  return path15.basename(path15.dirname(db)) || "kitchen";
 }
 function shellHtml(kitchen) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
@@ -24317,11 +24466,11 @@ function shellHtml(kitchen) {
 `;
 }
 function defaultAssetsDir() {
-  const here = path14.dirname(fileURLToPath(import.meta.url));
+  const here = path15.dirname(fileURLToPath(import.meta.url));
   return [
-    path14.join(here, "assets"),
+    path15.join(here, "assets"),
     // plugin/dist/server-impl.mjs → sibling assets/
-    path14.join(here, "..", "..", "plugin", "dist", "assets")
+    path15.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
   ].find((d) => fs15.existsSync(d)) ?? null;
 }
@@ -24444,7 +24593,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs15.readFileSync(path14.join(assetsDir, name));
+        const body = fs15.readFileSync(path15.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -24641,11 +24790,11 @@ var init_serve = __esm({
 
 // src/projects.ts
 import * as fs17 from "node:fs";
-import * as os8 from "node:os";
-import * as path15 from "node:path";
+import * as os9 from "node:os";
+import * as path16 from "node:path";
 function registryPath(env = process.env) {
-  const home = env.HANDS_TEST_HOME?.trim() || os8.homedir();
-  return path15.join(home, ".hands", "projects.json");
+  const home = env.HANDS_TEST_HOME?.trim() || os9.homedir();
+  return path16.join(home, ".hands", "projects.json");
 }
 function readRegistry(env = process.env) {
   try {
@@ -24666,7 +24815,7 @@ function isProjectEntry(value) {
 }
 function writeRegistry(registry2, env = process.env) {
   const file2 = registryPath(env);
-  fs17.mkdirSync(path15.dirname(file2), { recursive: true, mode: 448 });
+  fs17.mkdirSync(path16.dirname(file2), { recursive: true, mode: 448 });
   fs17.writeFileSync(file2, `${JSON.stringify(registry2, null, 2)}
 `, { mode: 384 });
 }
@@ -24675,7 +24824,7 @@ function registerProject(cwd = process.cwd(), opts) {
   if (!info) return null;
   const env = opts?.env ?? process.env;
   const entry = {
-    name: opts?.name?.trim() || path15.basename(info.repoRoot),
+    name: opts?.name?.trim() || path16.basename(info.repoRoot),
     repoRoot: info.repoRoot,
     slug: info.slug,
     registeredAt: opts?.now ?? Date.now()
@@ -27990,7 +28139,7 @@ function convertStandardElicitationSchema(schema) {
 function isAnnotationOnlyJsonSchemaKeyword(key) {
   return ANNOTATION_ONLY_JSON_SCHEMA_KEYWORDS.has(key) || key.startsWith("x-");
 }
-function walkProperty(node, path22, vendor, unsupported) {
+function walkProperty(node, path23, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -27998,8 +28147,8 @@ function walkProperty(node, path22, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path22}.${key}`);
-  } else unsupported.push(`${path22}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path23}.${key}`);
+  } else unsupported.push(`${path23}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -28016,11 +28165,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema2, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path22 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path22}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path23 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path23}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path22 ? `${path22}.${key}` : key;
+    const childPath = path23 ? `${path23}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -28633,9 +28782,9 @@ var init_src_D_zzAWoS = __esm({
         });
         const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
         if (!parsed.success) for (const issue2 of parsed.error.issues) {
-          const path22 = issue2.path.map(String);
-          const key = path22.length > 0 ? path22.join(".") : "_meta";
-          if (path22.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+          const path23 = issue2.path.map(String);
+          const key = path23.length > 0 ? path23.join(".") : "_meta";
+          if (path23.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
           issues.push({
             key,
             problem: issue2.message
@@ -32790,8 +32939,8 @@ var init_ajvProvider_97rDpkRx = __esm({
         for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
         return ind;
       }
-      function removeDotSegments(path22) {
-        let input = path22;
+      function removeDotSegments(path23) {
+        let input = path23;
         const output = [];
         let nextSlash = -1;
         let len = 0;
@@ -32944,8 +33093,8 @@ var init_ajvProvider_97rDpkRx = __esm({
           wsComponent.secure = void 0;
         }
         if (wsComponent.resourceName) {
-          const [path22, query] = wsComponent.resourceName.split("?");
-          wsComponent.path = path22 && path22 !== "/" ? path22 : void 0;
+          const [path23, query] = wsComponent.resourceName.split("?");
+          wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
           wsComponent.query = query;
           wsComponent.resourceName = void 0;
         }
@@ -37963,8 +38112,8 @@ __export(init_exports, {
   runInit: () => runInit
 });
 import * as fs22 from "node:fs";
-import * as os12 from "node:os";
-import * as path20 from "node:path";
+import * as os13 from "node:os";
+import * as path21 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -37998,7 +38147,7 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path20.join(info.repoRoot, CONFIG_BASENAME);
+      const configPath = path21.join(info.repoRoot, CONFIG_BASENAME);
       const entry = registerProject(info.repoRoot);
       if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
       if (fs22.existsSync(configPath)) {
@@ -38007,7 +38156,7 @@ async function runInit(argv) {
       } else {
         const principal = flags.principal ?? await ask("Who is the principal (the human the expo reports to)?", "Michael");
         const journalUrl = flags.journalUrl ?? await ask(
-          "Books repo (a separate PRIVATE git repo for the durable journal; empty = books off)?",
+          "Books repo (a separate PRIVATE git repo for the durable journal; empty = local-only for now, still fully durable \u2014 attach a shared repo anytime with: hands books <url>)?",
           ""
         );
         const scaffold = {
@@ -38025,7 +38174,7 @@ async function runInit(argv) {
         if (journalUrl.trim()) {
           const handle = flags.handle ?? await ask(
             "Books handle (your fleet's namespace)?",
-            githubUsername() ?? os12.userInfo().username
+            githubUsername() ?? os13.userInfo().username
           );
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
@@ -38059,7 +38208,7 @@ init_config();
 init_identity();
 init_paths();
 import { execFileSync as execFileSync9, spawnSync } from "node:child_process";
-import * as os13 from "node:os";
+import * as os14 from "node:os";
 
 // src/server.ts
 import * as fs16 from "node:fs";
@@ -38424,8 +38573,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path22, errorMaps, issueData } = params;
-  const fullPath = [...path22, ...issueData.path || []];
+  const { data, path: path23, errorMaps, issueData } = params;
+  const fullPath = [...path23, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -38540,11 +38689,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path22, key) {
+  constructor(parent, value, path23, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path22;
+    this._path = path23;
     this._key = key;
   }
   get path() {
@@ -48028,6 +48177,7 @@ function buildServer(store, agentId, config2) {
       const peers = store.listPeers().map((p) => ({
         id: p.id,
         focus: p.focus ?? void 0,
+        sessionName: p.session_name ?? void 0,
         online: p.online,
         cwd: p.cwd,
         pid: p.pid,
@@ -48584,7 +48734,10 @@ function buildServer(store, agentId, config2) {
       launched: p.launched,
       launcher: p.launcher,
       // when not auto-launched, this is the command to hand to the principal
-      pasteCommand: p.launched ? void 0 : p.command
+      pasteCommand: p.launched ? void 0 : p.command,
+      // hands#104 — undefined when stations.theming is off
+      themeColor: p.themeColor,
+      sessionName: p.sessionName
     }));
     server.registerTool(
       "hands_station_add",
@@ -48598,7 +48751,9 @@ function buildServer(store, agentId, config2) {
         store.touch(agentId);
         const { addStations: addStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
         try {
-          return asToolResult({ ok: true, added: presentPlans(addStations2(input.count ?? 1)) });
+          const plans = addStations2(input.count ?? 1);
+          for (const p of plans) if (p.sessionName) store.setSessionName(p.id, p.sessionName);
+          return asToolResult({ ok: true, added: presentPlans(plans) });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
         }
@@ -48641,6 +48796,7 @@ function buildServer(store, agentId, config2) {
         const { scaleStations: scaleStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
         try {
           const res = scaleStations2(input.target, { force: input.force });
+          for (const p of res.added) if (p.sessionName) store.setSessionName(p.id, p.sessionName);
           return asToolResult({ ok: true, added: presentPlans(res.added), removed: res.removed });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
@@ -48816,12 +48972,12 @@ init_seed_permissions();
 // src/station-logs.ts
 init_tokens();
 import * as fs18 from "node:fs";
-import * as os9 from "node:os";
-import * as path16 from "node:path";
-function transcriptDir(cwd, home = os9.homedir()) {
-  return path16.join(home, ".claude", "projects", encodeProjectDir(cwd));
+import * as os10 from "node:os";
+import * as path17 from "node:path";
+function transcriptDir(cwd, home = os10.homedir()) {
+  return path17.join(home, ".claude", "projects", encodeProjectDir(cwd));
 }
-function latestTranscript(cwd, home = os9.homedir()) {
+function latestTranscript(cwd, home = os10.homedir()) {
   const dir = transcriptDir(cwd, home);
   let names;
   try {
@@ -48831,7 +48987,7 @@ function latestTranscript(cwd, home = os9.homedir()) {
   }
   let newest = null;
   for (const name of names) {
-    const file2 = path16.join(dir, name);
+    const file2 = path17.join(dir, name);
     try {
       const { mtimeMs } = fs18.statSync(file2);
       if (!newest || mtimeMs > newest.mtime) newest = { file: file2, mtime: mtimeMs };
@@ -48840,9 +48996,9 @@ function latestTranscript(cwd, home = os9.homedir()) {
   }
   return newest?.file ?? null;
 }
-function latestSessionId(cwd, home = os9.homedir()) {
+function latestSessionId(cwd, home = os10.homedir()) {
   const file2 = latestTranscript(cwd, home);
-  return file2 ? path16.basename(file2, ".jsonl") : null;
+  return file2 ? path17.basename(file2, ".jsonl") : null;
 }
 function clip2(s, max = 160) {
   const flat = s.replace(/\s+/g, " ").trim();
@@ -48884,7 +49040,7 @@ function eventsFromLine(raw) {
 }
 function recentActivity(cwd, opts) {
   const limit = opts?.limit ?? 20;
-  const file2 = latestTranscript(cwd, opts?.home ?? os9.homedir());
+  const file2 = latestTranscript(cwd, opts?.home ?? os10.homedir());
   if (!file2) return { file: null, events: [] };
   let text = "";
   try {
@@ -48924,7 +49080,7 @@ init_projects();
 init_seed_permissions();
 import { execFileSync as execFileSync7 } from "node:child_process";
 import * as fs19 from "node:fs";
-import * as path17 from "node:path";
+import * as path18 from "node:path";
 var IDLE_WARN_MS = 30 * 6e4;
 var WAL_RATIO_WARN = 10;
 function worstOf(checks) {
@@ -48963,7 +49119,7 @@ function runDoctor(opts) {
     return { checks, worst: "fail" };
   }
   checks.push({ name: "repo", severity: "ok", detail: `${info.repoRoot} (${info.slug})` });
-  const configPath = path17.join(info.repoRoot, CONFIG_BASENAME);
+  const configPath = path18.join(info.repoRoot, CONFIG_BASENAME);
   let cfg = null;
   if (!fs19.existsSync(configPath)) {
     checks.push({
@@ -48983,7 +49139,7 @@ function runDoctor(opts) {
       });
     }
   }
-  const name = path17.basename(info.repoRoot);
+  const name = path18.basename(info.repoRoot);
   const registered = resolveProject2(name, env);
   if (registered?.repoRoot === info.repoRoot) {
     checks.push({ name: "registry", severity: "ok", detail: `resolves as "${name}"` });
@@ -49058,7 +49214,7 @@ function runDoctor(opts) {
   if (cached2?.[1]) {
     const pluginCommit = cached2[1];
     const head = gitHead(info.repoRoot);
-    const selfHosted = fs19.existsSync(path17.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
+    const selfHosted = fs19.existsSync(path18.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
     if (selfHosted && head && !head.startsWith(pluginCommit) && !pluginCommit.startsWith(head.slice(0, 7))) {
       checks.push({
         name: "build",
@@ -49085,7 +49241,7 @@ function runDoctor(opts) {
         });
         continue;
       }
-      const settings = path17.join(station.dir, ".claude", "settings.local.json");
+      const settings = path18.join(station.dir, ".claude", "settings.local.json");
       if (fs19.existsSync(settings)) {
         checks.push({ name: `${station.id}.permissions`, severity: "ok", detail: "seeded" });
       } else if (opts?.fix) {
@@ -49131,13 +49287,13 @@ function runDoctor(opts) {
 // src/version.ts
 import { execFileSync as execFileSync8 } from "node:child_process";
 import * as fs20 from "node:fs";
-import * as os10 from "node:os";
-import * as path18 from "node:path";
+import * as os11 from "node:os";
+import * as path19 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var STAMP_BASENAME = "BUILD.json";
-function classifyInstall(entry, home = os10.homedir()) {
+function classifyInstall(entry, home = os11.homedir()) {
   if (!entry) return "unknown";
-  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path18.join(home, ".hands", "lib"))) {
+  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path19.join(home, ".hands", "lib"))) {
     return "standalone";
   }
   if (/[/\\]plugins[/\\]cache[/\\]/.test(entry)) return "plugin";
@@ -49146,7 +49302,7 @@ function classifyInstall(entry, home = os10.homedir()) {
 }
 function readStamp(dir) {
   try {
-    const raw = fs20.readFileSync(path18.join(dir, STAMP_BASENAME), "utf8");
+    const raw = fs20.readFileSync(path19.join(dir, STAMP_BASENAME), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.version !== "string" || typeof parsed.builtAt !== "string") return null;
     return {
@@ -49172,8 +49328,8 @@ function gitShort(cwd) {
 }
 function buildInfo(opts) {
   const entry = opts?.entry ?? process.argv[1] ?? fileURLToPath3(import.meta.url);
-  const kind = classifyInstall(entry, opts?.home ?? os10.homedir());
-  const stamp = readStamp(path18.dirname(entry));
+  const kind = classifyInstall(entry, opts?.home ?? os11.homedir());
+  const stamp = readStamp(path19.dirname(entry));
   if (stamp) {
     return { version: stamp.version, commit: stamp.commit, builtAt: stamp.builtAt, kind, entry };
   }
@@ -49185,16 +49341,16 @@ function buildInfo(opts) {
     entry
   };
 }
-function otherInstall(current, home = os10.homedir()) {
+function otherInstall(current, home = os11.homedir()) {
   if (current !== "standalone") {
-    const stamp = readStamp(path18.join(home, ".hands", "lib"));
+    const stamp = readStamp(path19.join(home, ".hands", "lib"));
     if (stamp) return { kind: "standalone", stamp };
   }
   if (current !== "plugin") {
-    const cacheRoot = path18.join(home, ".claude", "plugins", "cache", "hands", "hands");
+    const cacheRoot = path19.join(home, ".claude", "plugins", "cache", "hands", "hands");
     try {
       for (const dir of fs20.readdirSync(cacheRoot)) {
-        const stamp = readStamp(path18.join(cacheRoot, dir, "dist"));
+        const stamp = readStamp(path19.join(cacheRoot, dir, "dist"));
         if (stamp) return { kind: "plugin", stamp };
       }
     } catch {
@@ -49219,10 +49375,10 @@ init_config();
 init_paths();
 init_remote();
 import * as fs21 from "node:fs";
-import * as os11 from "node:os";
-import * as path19 from "node:path";
+import * as os12 from "node:os";
+import * as path20 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
-var NO_BOOKS_REASON = "no books attached \u2014 run: hands books <path-or-url> to enable books first";
+var NO_BOOKS_REASON = "books are unavailable in this environment \u2014 git isn't working (run: hands doctor)";
 function resolveBooksTarget(opts) {
   const cwd = opts?.cwd ?? process.cwd();
   const env = opts?.env ?? process.env;
@@ -49230,10 +49386,9 @@ function resolveBooksTarget(opts) {
     return { ok: false, reason: "not inside a git repo \u2014 run from your repo's main checkout" };
   }
   const config2 = loadConfig({ cwd, env });
-  if (!config2.remote.url?.trim()) return { ok: false, reason: NO_BOOKS_REASON };
   const j = openJournal({ cwd, env, config: config2 });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
-  if (!fs21.existsSync(path19.join(j.dir, ".git"))) {
+  if (!fs21.existsSync(path20.join(j.dir, ".git"))) {
     return { ok: false, reason: `could not set up the journal clone at ${j.dir}` };
   }
   syncPull(j.dir);
@@ -49241,25 +49396,25 @@ function resolveBooksTarget(opts) {
   if (!shape.ok) return { ok: false, reason: shape.reason ?? "journal repo failed validation" };
   return { ok: true, target: { dir: j.dir, project: j.project, handle: j.handle, url: j.url } };
 }
-function resolveBooksServerEntry(here = path19.dirname(fileURLToPath4(import.meta.url))) {
-  const bundled = path19.join(here, "books-server.mjs");
+function resolveBooksServerEntry(here = path20.dirname(fileURLToPath4(import.meta.url))) {
+  const bundled = path20.join(here, "books-server.mjs");
   if (fs21.existsSync(bundled)) return bundled;
-  const devFallback = path19.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
+  const devFallback = path20.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
   if (fs21.existsSync(devFallback)) return devFallback;
   return null;
 }
 function desktopConfigPath(env = process.env) {
   const override = env.HANDS_TEST_DESKTOP_CONFIG?.trim();
   if (override) return override;
-  const home = os11.homedir();
+  const home = os12.homedir();
   if (process.platform === "darwin") {
-    return path19.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+    return path20.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
   }
   if (process.platform === "win32") {
-    const appData = env.APPDATA?.trim() || path19.join(home, "AppData", "Roaming");
-    return path19.join(appData, "Claude", "claude_desktop_config.json");
+    const appData = env.APPDATA?.trim() || path20.join(home, "AppData", "Roaming");
+    return path20.join(appData, "Claude", "claude_desktop_config.json");
   }
-  return path19.join(home, ".config", "Claude", "claude_desktop_config.json");
+  return path20.join(home, ".config", "Claude", "claude_desktop_config.json");
 }
 function serverName(project) {
   return `hands-books-${project}`;
@@ -49283,7 +49438,7 @@ function writeDesktopConfig(configPath, name, entry) {
   const servers = parsed.mcpServers && typeof parsed.mcpServers === "object" ? parsed.mcpServers : {};
   servers[name] = entry;
   parsed.mcpServers = servers;
-  fs21.mkdirSync(path19.dirname(configPath), { recursive: true });
+  fs21.mkdirSync(path20.dirname(configPath), { recursive: true });
   fs21.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
 `);
   return { ok: true };
@@ -49292,7 +49447,7 @@ function writeDesktopConfig(configPath, name, entry) {
 // src/cli.ts
 init_store();
 import * as fs23 from "node:fs";
-import * as path21 from "node:path";
+import * as path22 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -49320,6 +49475,17 @@ function reportPlans(plans) {
       out2(`\u25CF ${p.id} provisioned (${p.model}) \u2014 start it by pasting into a new terminal:`);
       out2(`    ${p.command}`);
     }
+    if (p.sessionName) out2(`    theme: ${p.sessionName}`);
+  }
+}
+function persistSessionNames(plans) {
+  const named = plans.filter((p) => p.sessionName);
+  if (named.length === 0) return;
+  const store = new Store();
+  try {
+    for (const p of named) store.setSessionName(p.id, p.sessionName);
+  } finally {
+    store.close();
   }
 }
 function cmdStation(argv) {
@@ -49328,6 +49494,7 @@ function cmdStation(argv) {
     const n = intOpt(argv, "-n", 1);
     const plans = addStations(n);
     if (plans.length === 0) out2("nothing to add");
+    persistSessionNames(plans);
     reportPlans(plans);
     out2(`
 Stations register with the expo on their first turn (hands_peers to check).`);
@@ -49355,6 +49522,7 @@ function cmdScale(argv) {
   const target = Number.parseInt(argv[0] ?? "", 10);
   if (!Number.isInteger(target) || target < 0) fail("usage: hands scale <N>");
   const { added, removed } = scaleStations(target, { force: flag(argv, "--force") });
+  persistSessionNames(added);
   reportPlans(added);
   for (const id of removed) out2(`\u2714 ${id} retired`);
   if (added.length === 0 && removed.length === 0) out2(`already at ${target} stations`);
@@ -49362,7 +49530,7 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path21.join(info.repoRoot, CONFIG_BASENAME);
+  const configPath = path22.join(info.repoRoot, CONFIG_BASENAME);
   if (!fs23.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
@@ -49374,9 +49542,15 @@ function cmdBooks(argv) {
   const url2 = argv.find((a) => !a.startsWith("--"));
   if (!url2) {
     if (typeof remote.url === "string" && remote.url) {
-      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os13.userInfo().username)}")`);
+      out2(`books: ${remote.url} (handle "${String(remote.handle ?? os14.userInfo().username)}")`);
     } else {
-      out2("no books attached \u2014 attach with: hands books <private-git-url> [--handle <name>]");
+      const local = ensureLocalBooksOrigin();
+      if (local) {
+        out2(`books: local only \u2014 ${local} (handle "${String(remote.handle ?? os14.userInfo().username)}")`);
+        out2("  this machine only \u2014 not shared. hands books <url> to sync across machines/collaborators.");
+      } else {
+        out2("books are unavailable in this environment \u2014 git isn't working (run: hands doctor)");
+      }
     }
     return;
   }
@@ -49385,7 +49559,7 @@ function cmdBooks(argv) {
   cfg.remote = {
     ...remote,
     url: url2,
-    handle: handleArg ?? remote.handle ?? githubUsername() ?? os13.userInfo().username
+    handle: handleArg ?? remote.handle ?? githubUsername() ?? os14.userInfo().username
   };
   fs23.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
@@ -49396,9 +49570,9 @@ function cmdBooks(argv) {
 function requireRemote() {
   const j = openJournal();
   if (!j) {
-    fail("no books attached \u2014 run: hands books git@github.com:you/hands-books.git");
+    fail("books are unavailable in this environment \u2014 git isn't working (run: hands doctor)");
   }
-  if (!fs23.existsSync(path21.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs23.existsSync(path22.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -49638,7 +49812,7 @@ function cmdLs() {
     return;
   }
   for (const p of projects) {
-    const configured = fs23.existsSync(path21.join(p.repoRoot, CONFIG_BASENAME));
+    const configured = fs23.existsSync(path22.join(p.repoRoot, CONFIG_BASENAME));
     let seats = "";
     try {
       if (configured) {
@@ -49711,7 +49885,7 @@ function launchStationSeat(_repoRoot, id, dir, cfg) {
 function tryLaunch(cmd, rest) {
   if (!cmd) {
     const info = repoInfo(process.cwd());
-    if (!info || !fs23.existsSync(path21.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    if (!info || !fs23.existsSync(path22.join(info.repoRoot, CONFIG_BASENAME))) return false;
     launchAt(info.repoRoot, "expo", "expo");
     return true;
   }

@@ -31,6 +31,14 @@ export interface AgentRow {
   last_active: number | null;
   /** the station's evolving specialization label ("developer API") — not part of its id */
   focus: string | null;
+  /**
+   * hands-owned display name (hands#104) — assigned at `station add`, never
+   * read back from Claude Code's own `/rename` (that only surfaces in the
+   * statusline JSON payload, not anywhere hands' hooks can see it). hands may
+   * optionally *push* this into the session via `/rename` for terminal-tab
+   * benefit, but this column is the source of truth.
+   */
+  session_name: string | null;
 }
 
 export interface JournalRow {
@@ -388,6 +396,9 @@ export class Store {
     this.ensureColumn("questions", "outcome", "TEXT");
     this.ensureColumn("questions", "outcome_note", "TEXT");
     this.ensureColumn("questions", "outcome_at", "INTEGER");
+
+    // hands-owned session display name (hands#104) — see AgentRow.session_name.
+    this.ensureColumn("agents", "session_name", "TEXT");
   }
 
   private ensureColumn(table: string, column: string, ddl: string): void {
@@ -484,6 +495,33 @@ export class Store {
       .prepare(`SELECT focus FROM agents WHERE id = ?`)
       .get(agentId) as { focus: string | null } | undefined;
     return row?.focus ?? null;
+  }
+
+  /**
+   * Set a station's hands-owned display name (hands#104). Source of truth —
+   * NEVER derived by reading Claude Code's own `/rename` output back (that
+   * data path doesn't reach hands' hooks). Upserts so a name assigned at
+   * `station add` sticks even before the station's first turn registers it.
+   */
+  setSessionName(agentId: string, sessionName: string | null, now: number = Date.now()): void {
+    this.withRetry(() =>
+      this.db
+        .prepare(
+          `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, session_name)
+           VALUES (?, '', 0, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name`,
+        )
+        .run(agentId, now, now, sessionName),
+    );
+    this.journal("session_name.set", { station: agentId, sessionName, at: now });
+  }
+
+  /** An agent's hands-owned display name, or null if none was ever assigned. */
+  getSessionName(agentId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT session_name FROM agents WHERE id = ?`)
+      .get(agentId) as { session_name: string | null } | undefined;
+    return row?.session_name ?? null;
   }
 
   /** Agent ids whose focus label matches (case-insensitive) — label addressing. */

@@ -105,6 +105,14 @@ move the saucier to the poissonnier's station and the whole skillset moves too. 
 crafts your repo warrants? `/hands:crafts` surveys the codebase and proposes a tight roster — or
 tells you honestly that the kitchen is small and doesn't need one.
 
+Each provisioned station also gets a distinct **theme colour** and a **session name**, assigned
+deterministically by station index (station-3 is always the same colour, in every repo, across
+`hands scale` up/down and re-creation) — a Claude Code custom theme file under
+`~/.claude/themes/`, selected via that worktree's `.claude/settings.local.json`, and mirrored as
+an accent + label on the dashboard's line panel, so a pane, its terminal chrome, and its row on
+the board all read as the same agent at a glance. Set `stations.theming: false` to opt out
+entirely (e.g. you already hand-roll your own per-station theme files).
+
 ## How it stays cheap (wakes are the cost)
 
 A **wake** — a `.notify` line firing a station's Monitor — costs one full model turn over that
@@ -226,7 +234,8 @@ Scaffold it with `hands init`; attach the books to an existing config with
     "launcher": "auto",                        // auto | tmux | iterm | manual
     "worktreeRoot": null,                      // null = ~/.hands/worktrees/<slug>
     "baseBranch": null,                        // null = current HEAD of the main checkout
-    "allowScaling": true                       // may the expo open/close stations itself
+    "allowScaling": true,                      // may the expo open/close stations itself
+    "theming": true                            // deterministic per-station theme colour + session name
   },
   "merge":  { "adminMergeLowRisk": false },    // may the expo admin-merge low-risk PRs
   "remote": { "url": null, "handle": null, "project": null },   // null = local-only books (default)

@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { type HandsConfig, DEFAULT_CONFIG } from "../src/config.js";
-import { resetRepoInfoCache } from "../src/paths.js";
+import { repoInfo, resetRepoInfoCache } from "../src/paths.js";
 import {
   addStations,
   launchCommand,
@@ -14,6 +14,7 @@ import {
   scaleStations,
   stationRoot,
 } from "../src/provision.js";
+import { themeColorForIndex, themeFilePath, themesDir } from "../src/theming.js";
 
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -189,5 +190,114 @@ describe("station provisioning (manual launcher)", () => {
     // a permission prompt before it can read anything. Cost ~14h on 2026-08-05.
     const parsed = JSON.parse(fs.readFileSync(settings, "utf8"));
     expect(parsed.permissions.allow).toContain("mcp__plugin_hands_hands__hands_receive");
+  });
+});
+
+describe("station theming (hands#104)", () => {
+  // themesDir() is under $HOME/.claude/themes — isolate it into the sandbox
+  // the same way HANDS_TEST_HOME isolates it for config.ts/credentials.ts.
+  const env = () => ({ HANDS_TEST_HOME: path.join(root, "home") });
+  const slug = () => repoInfo(repo)!.slug;
+
+  it("assigns a deterministic-by-index colour, writes the theme file, and merges the theme key", () => {
+    const [plan] = addStations(1, { cwd: repo, config: cfg, env: env() });
+    if (!plan) throw new Error("addStations returned no plan");
+
+    expect(plan.themeColor).toBe(themeColorForIndex(1).hex);
+    expect(plan.sessionName).toBeTruthy();
+
+    const file = themeFilePath(slug(), 1, env());
+    expect(fs.existsSync(file)).toBe(true);
+    const theme = JSON.parse(fs.readFileSync(file, "utf8"));
+    expect(theme.base).toBe("dark");
+    expect(theme.overrides.claude).toBe(themeColorForIndex(1).hex);
+    expect(theme.overrides.promptBorder).toBe(themeColorForIndex(1).hex);
+    expect(theme.name).toBe(plan.sessionName);
+
+    // merged into the SAME settings.local.json seedStationPermissions wrote —
+    // permissions must survive alongside it.
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(plan.dir, ".claude", "settings.local.json"), "utf8"),
+    );
+    expect(settings.theme).toBe(`custom:${slug()}-station-1`);
+    expect(settings.permissions.allow).toContain("mcp__plugin_hands_hands__hands_receive");
+  });
+
+  it("is deterministic by index — station-3 gets the same colour every time, independent of what else is open", () => {
+    const withOthersFirst = addStations(3, { cwd: repo, config: cfg, env: env() });
+    const station3 = withOthersFirst.find((p) => p.id === "station-3")!;
+    expect(station3.themeColor).toBe(themeColorForIndex(3).hex);
+  });
+
+  it("scale up assigns new stations following the same deterministic index rule", () => {
+    scaleStations(2, { cwd: repo, config: cfg, env: env() });
+    const grown = scaleStations(4, { cwd: repo, config: cfg, env: env() });
+    const s3 = grown.added.find((p) => p.id === "station-3")!;
+    const s4 = grown.added.find((p) => p.id === "station-4")!;
+    expect(s3.themeColor).toBe(themeColorForIndex(3).hex);
+    expect(s4.themeColor).toBe(themeColorForIndex(4).hex);
+  });
+
+  it("re-creating the same index after rm+add reassigns the identical colour and theme id", () => {
+    const first = addStations(1, { cwd: repo, config: cfg, env: env() });
+    const firstColor = first[0]!.themeColor;
+    const firstThemeId = JSON.parse(
+      fs.readFileSync(path.join(first[0]!.dir, ".claude", "settings.local.json"), "utf8"),
+    ).theme;
+
+    removeStation("station-1", { cwd: repo, config: cfg, env: env() });
+    const second = addStations(1, { cwd: repo, config: cfg, env: env() });
+    const secondThemeId = JSON.parse(
+      fs.readFileSync(path.join(second[0]!.dir, ".claude", "settings.local.json"), "utf8"),
+    ).theme;
+
+    expect(second[0]!.themeColor).toBe(firstColor);
+    expect(secondThemeId).toBe(firstThemeId);
+  });
+
+  it("removeStation cleans up the theme file it created — no orphans under ~/.claude/themes", () => {
+    addStations(1, { cwd: repo, config: cfg, env: env() });
+    const file = themeFilePath(slug(), 1, env());
+    expect(fs.existsSync(file)).toBe(true);
+
+    removeStation("station-1", { cwd: repo, config: cfg, env: env() });
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  it("scale down cleans up every retired station's theme file", () => {
+    scaleStations(3, { cwd: repo, config: cfg, env: env() });
+    scaleStations(1, { cwd: repo, config: cfg, env: env() });
+    expect(fs.existsSync(themeFilePath(slug(), 2, env()))).toBe(false);
+    expect(fs.existsSync(themeFilePath(slug(), 3, env()))).toBe(false);
+    expect(fs.existsSync(themeFilePath(slug(), 1, env()))).toBe(true); // still open
+  });
+
+  it("stations.theming: false opts out entirely — no theme file, no theme key, no plan fields", () => {
+    const offCfg: HandsConfig = { ...cfg, stations: { ...cfg.stations, theming: false } };
+    const [plan] = addStations(1, { cwd: repo, config: offCfg, env: env() });
+    if (!plan) throw new Error("addStations returned no plan");
+
+    expect(plan.themeColor).toBeUndefined();
+    expect(plan.sessionName).toBeUndefined();
+    expect(fs.existsSync(themesDir(env()))).toBe(false);
+
+    const settings = JSON.parse(
+      fs.readFileSync(path.join(plan.dir, ".claude", "settings.local.json"), "utf8"),
+    );
+    expect(settings.theme).toBeUndefined();
+    // permission seeding is unaffected by the opt-out
+    expect(settings.permissions.allow).toContain("mcp__plugin_hands_hands__hands_receive");
+  });
+
+  it("opting out leaves a theme file created while it was ON untouched on rm", () => {
+    const onCfg: HandsConfig = { ...cfg, stations: { ...cfg.stations, theming: true } };
+    addStations(1, { cwd: repo, config: onCfg, env: env() });
+    const file = themeFilePath(slug(), 1, env());
+    expect(fs.existsSync(file)).toBe(true);
+
+    const offCfg: HandsConfig = { ...cfg, stations: { ...cfg.stations, theming: false } };
+    removeStation("station-1", { cwd: repo, config: offCfg, env: env() });
+    // opted out at rm-time → hands doesn't touch ~/.claude/themes at all
+    expect(fs.existsSync(file)).toBe(true);
   });
 });

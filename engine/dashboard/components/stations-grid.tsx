@@ -68,10 +68,27 @@ function StationCell({
   const buckets = tokens?.perAgent[agent.id];
   const total = tokens?.totals24h[agent.id]?.out ?? 0;
   return (
-    <div className={cn("rounded-lg border p-3", agent.state === "offline" && "opacity-50")}>
+    <div
+      className={cn(
+        "rounded-lg border p-3",
+        agent.state === "offline" && "opacity-50",
+        agent.themeColor && "border-l-[3px]",
+      )}
+      style={agent.themeColor ? { borderLeftColor: agent.themeColor } : undefined}
+    >
       <div className="flex items-center gap-2">
         <StateDot state={agent.state} />
-        <span className="font-medium">{agent.id}</span>
+        {agent.themeColor ? (
+          <span
+            className="size-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: agent.themeColor }}
+            title={`theme colour — ${agent.themeColor}`}
+          />
+        ) : null}
+        <span className="font-medium">{agent.sessionName ?? agent.id}</span>
+        {agent.sessionName ? (
+          <span className="truncate font-mono text-xs text-muted-foreground">{agent.id}</span>
+        ) : null}
         {agent.focus ? (
           <span className="truncate text-sm text-muted-foreground">{agent.focus}</span>
         ) : null}

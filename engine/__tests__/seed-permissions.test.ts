@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { seedStationPermissions, stationSettings } from "../src/seed-permissions.js";
+import { mergeStationSettings, seedStationPermissions, stationSettings } from "../src/seed-permissions.js";
 
 let dir: string;
 
@@ -46,6 +46,48 @@ describe("seedStationPermissions", () => {
   it("is idempotent — a second call is a no-op", () => {
     expect(seedStationPermissions(dir).written).toBe(true);
     expect(seedStationPermissions(dir).written).toBe(false);
+  });
+});
+
+describe("mergeStationSettings", () => {
+  it("creates the file when absent", () => {
+    const res = mergeStationSettings(dir, { theme: "custom:foo-station-1" });
+    expect(res.written).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(parsed.theme).toBe("custom:foo-station-1");
+  });
+
+  it("merges into an existing file WITHOUT clobbering keys already there (hands#104's whole point)", () => {
+    seedStationPermissions(dir);
+    const before = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(Array.isArray(before.permissions.allow)).toBe(true);
+
+    const res = mergeStationSettings(dir, { theme: "custom:foo-station-1" });
+    expect(res.written).toBe(true);
+
+    const after = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(after.theme).toBe("custom:foo-station-1");
+    expect(after.permissions).toEqual(before.permissions);
+  });
+
+  it("never overwrites a key that's already set, and reports written:false", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(settingsFile(), JSON.stringify({ theme: "custom:hand-rolled" }));
+
+    const res = mergeStationSettings(dir, { theme: "custom:foo-station-1" });
+    expect(res.written).toBe(false);
+    const parsed = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(parsed.theme).toBe("custom:hand-rolled");
+  });
+
+  it("tolerates a malformed existing file by starting fresh rather than throwing", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(settingsFile(), "{not json");
+
+    const res = mergeStationSettings(dir, { theme: "custom:foo-station-1" });
+    expect(res.written).toBe(true);
+    const parsed = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(parsed.theme).toBe("custom:foo-station-1");
   });
 });
 

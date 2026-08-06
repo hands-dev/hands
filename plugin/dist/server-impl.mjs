@@ -3237,8 +3237,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path15) {
-      let input = path15;
+    function removeDotSegments(path16) {
+      let input = path16;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3490,8 +3490,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path15, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path15 && path15 !== "/" ? path15 : void 0;
+        const [path16, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path16 && path16 !== "/" ? path16 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -7240,6 +7240,7 @@ var init_store = __esm({
         this.ensureColumn("questions", "outcome", "TEXT");
         this.ensureColumn("questions", "outcome_note", "TEXT");
         this.ensureColumn("questions", "outcome_at", "INTEGER");
+        this.ensureColumn("agents", "session_name", "TEXT");
       }
       ensureColumn(table, column, ddl) {
         const cols = this.db.prepare(`PRAGMA table_info(${table})`).all();
@@ -7321,6 +7322,27 @@ var init_store = __esm({
       getFocus(agentId) {
         const row = this.db.prepare(`SELECT focus FROM agents WHERE id = ?`).get(agentId);
         return row?.focus ?? null;
+      }
+      /**
+       * Set a station's hands-owned display name (hands#104). Source of truth —
+       * NEVER derived by reading Claude Code's own `/rename` output back (that
+       * data path doesn't reach hands' hooks). Upserts so a name assigned at
+       * `station add` sticks even before the station's first turn registers it.
+       */
+      setSessionName(agentId, sessionName, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare(
+            `INSERT INTO agents (id, cwd, pid, registered_at, last_seen_at, session_name)
+           VALUES (?, '', 0, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET session_name = excluded.session_name`
+          ).run(agentId, now, now, sessionName)
+        );
+        this.journal("session_name.set", { station: agentId, sessionName, at: now });
+      }
+      /** An agent's hands-owned display name, or null if none was ever assigned. */
+      getSessionName(agentId) {
+        const row = this.db.prepare(`SELECT session_name FROM agents WHERE id = ?`).get(agentId);
+        return row?.session_name ?? null;
       }
       /** Agent ids whose focus label matches (case-insensitive) — label addressing. */
       findByFocus(label) {
@@ -8323,7 +8345,8 @@ function merge2(base, layer) {
       launcher: stationsLayer?.launcher ?? base.stations.launcher,
       worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
       baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
-      allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling
+      allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling,
+      theming: stationsLayer?.theming ?? base.stations.theming
     },
     remote: {
       url: layer.remote?.url !== void 0 ? layer.remote.url : base.remote.url,
@@ -8378,7 +8401,8 @@ var init_config = __esm({
         launcher: "auto",
         worktreeRoot: null,
         baseBranch: null,
-        allowScaling: true
+        allowScaling: true,
+        theming: true
       },
       remote: { url: null, handle: null, project: null },
       merge: { adminMergeLowRisk: false },
@@ -8611,8 +8635,65 @@ var init_digest = __esm({
   }
 });
 
-// src/snapshot.ts
+// src/theming.ts
+import * as os5 from "node:os";
 import * as path9 from "node:path";
+function themeColorForIndex(index) {
+  const n = THEME_PALETTE.length;
+  const i = ((index - 1) % n + n) % n;
+  return THEME_PALETTE[i];
+}
+function themeFileName(repoSlug, index) {
+  return `${repoSlug}-station-${index}`;
+}
+function themesDir(env = process.env) {
+  const home = env.HANDS_TEST_HOME?.trim() || os5.homedir();
+  return path9.join(home, ".claude", "themes");
+}
+function themeFilePath(repoSlug, index, env = process.env) {
+  return path9.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
+}
+function assignStationTheme(opts) {
+  const color = themeColorForIndex(opts.index);
+  const name = themeFileName(opts.repoSlug, opts.index);
+  return {
+    index: opts.index,
+    color,
+    file: themeFilePath(opts.repoSlug, opts.index, opts.env),
+    themeId: `custom:${name}`,
+    sessionName: `${opts.repoLabel} \xB7 station-${opts.index} (${color.name})`
+  };
+}
+function themeFileContents(assignment) {
+  return {
+    name: assignment.sessionName,
+    base: "dark",
+    overrides: { claude: assignment.color.hex, promptBorder: assignment.color.hex }
+  };
+}
+var THEME_PALETTE;
+var init_theming = __esm({
+  "src/theming.ts"() {
+    "use strict";
+    THEME_PALETTE = [
+      { name: "blue", hex: "#4a9eff" },
+      { name: "amber", hex: "#f5a623" },
+      { name: "violet", hex: "#9b59f6" },
+      { name: "teal", hex: "#2dd4bf" },
+      { name: "rose", hex: "#fb7185" },
+      { name: "lime", hex: "#a3e635" },
+      { name: "orange", hex: "#fb923c" },
+      { name: "sky", hex: "#38bdf8" }
+    ];
+  }
+});
+
+// src/snapshot.ts
+import * as path10 from "node:path";
+function stationIndex(id) {
+  const m = /^station-(\d+)$/.exec(id);
+  return m ? Number.parseInt(m[1], 10) : null;
+}
 function activity(raw) {
   if (!raw) return { files: [], ticket: null };
   try {
@@ -8629,6 +8710,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     const { files, ticket } = activity(p.activity);
     const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
     const state = !p.online ? "offline" : activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
+    const index = stationIndex(p.id);
     return {
       id: p.id,
       state,
@@ -8643,7 +8725,9 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
       wakes24h: wakes.get(p.id)?.last24h ?? 0,
       focus: p.focus,
-      pendingCommands: p.id === "expo" ? [] : store.pendingFromExpo(p.id).map((m) => ({ id: m.id, subject: m.subject, body: m.body, at: m.created_at }))
+      pendingCommands: p.id === "expo" ? [] : store.pendingFromExpo(p.id).map((m) => ({ id: m.id, subject: m.subject, body: m.body, at: m.created_at })),
+      sessionName: p.session_name,
+      themeColor: index !== null ? themeColorForIndex(index).hex : null
     };
   });
   const collisions = [];
@@ -8654,7 +8738,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       const b = online[j];
       const shared = a.files.find((f) => b.files.includes(f));
       if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path9.basename(shared) });
+        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path10.basename(shared) });
       } else if (a.ticket && a.ticket === b.ticket) {
         collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
       }
@@ -8789,14 +8873,15 @@ var init_snapshot = __esm({
     init_board();
     init_priorities();
     init_store();
+    init_theming();
   }
 });
 
 // src/remote.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
 import * as fs11 from "node:fs";
-import * as os5 from "node:os";
-import * as path10 from "node:path";
+import * as os6 from "node:os";
+import * as path11 from "node:path";
 function git3(cwd, args) {
   return execFileSync4("git", args, {
     cwd,
@@ -8840,7 +8925,7 @@ function resolveProject(config2, cwd = process.cwd()) {
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   const origin = tryGit(root, ["remote", "get-url", "origin"]);
   if (origin) project = projectFromOrigin(origin);
-  if (!project) project = sanitizeSegment(path10.basename(root));
+  if (!project) project = sanitizeSegment(path11.basename(root));
   projectCache.set(cwd, project);
   return project;
 }
@@ -8848,18 +8933,33 @@ function resolveHandle(config2) {
   const h = config2.remote.handle?.trim();
   if (h) return sanitizeSegment(h, "local");
   try {
-    return sanitizeSegment(os5.userInfo().username, "local");
+    return sanitizeSegment(os6.userInfo().username, "local");
   } catch {
     return "local";
   }
 }
 function journalDir(env = process.env, cwd = process.cwd()) {
-  return path10.join(coordinationDir(env, cwd), "remote");
+  return path11.join(coordinationDir(env, cwd), "remote");
+}
+function localBooksOriginPath(env = process.env, cwd = process.cwd()) {
+  return path11.join(coordinationDir(env, cwd), "books-origin.git");
+}
+function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
+  const dir = localBooksOriginPath(env, cwd);
+  try {
+    if (!fs11.existsSync(path11.join(dir, "HEAD"))) {
+      fs11.mkdirSync(dir, { recursive: true, mode: 448 });
+      git3(dir, ["init", "-q", "--bare", "-b", "main", dir]);
+    }
+    return dir;
+  } catch {
+    return null;
+  }
 }
 function ensureRepo(dir, url2) {
   try {
     fs11.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs11.existsSync(path10.join(dir, ".git"))) {
+    if (!fs11.existsSync(path11.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
       git3(dir, ["config", "user.name", "hands"]);
       git3(dir, ["config", "user.email", "hands@localhost"]);
@@ -8898,7 +8998,7 @@ function syncPull(dir) {
   return { ok: false, reason: "conflict" };
 }
 function readMarker(dir) {
-  const file2 = path10.join(dir, MARKER_FILE);
+  const file2 = path11.join(dir, MARKER_FILE);
   let raw;
   try {
     raw = fs11.readFileSync(file2, "utf8");
@@ -8947,15 +9047,15 @@ function validateJournal(dir, opts) {
       reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
-  fs11.writeFileSync(path10.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+  fs11.writeFileSync(path11.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
   return { ok: true, bootstrapped: true };
 }
 function debounceMarkerPath(dir) {
-  return path10.join(dir, ".git", "hands-last-push");
+  return path11.join(dir, ".git", "hands-last-push");
 }
 function syncStatusPath(dir) {
-  return path10.join(dir, ".git", "hands-sync-status");
+  return path11.join(dir, ".git", "hands-sync-status");
 }
 function writeSyncStatus(dir, result, now) {
   try {
@@ -8978,12 +9078,12 @@ function changedLogDates(dir, head0, journal) {
     "--name-only",
     `${head0}..HEAD`,
     "--",
-    path10.join("journal", journal.project, journal.handle, "log")
+    path11.join("journal", journal.project, journal.handle, "log")
   ]);
   if (diff === null) return void 0;
   const dates = /* @__PURE__ */ new Set();
   for (const line of diff.split("\n")) {
-    const m = path10.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
+    const m = path11.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
     if (m) dates.add(m[1]);
   }
   return dates;
@@ -9012,8 +9112,8 @@ function syncPush(journal, opts) {
   };
   try {
     const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
-    const ownPaths = [path10.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs11.existsSync(path10.join(dir, p)));
+    const ownPaths = [path11.join("journal", project, handle), MARKER_FILE];
+    const own = ownPaths.filter((p) => fs11.existsSync(path11.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
     let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
@@ -9036,14 +9136,14 @@ function syncPush(journal, opts) {
     const digestDates = changedLogDates(dir, head0, journal);
     const changedDigests = regenerateDigests(journal, digestDates);
     if (changedDigests.length > 0) {
-      git3(dir, ["add", "--", path10.join("journal", project, handle)]);
+      git3(dir, ["add", "--", path11.join("journal", project, handle)]);
       git3(dir, ["commit", "-q", "-m", "journal: digests"]);
       dirty = true;
     }
     if (opts?.store) {
-      const handleDir = path10.join(dir, "journal", project, handle);
+      const handleDir = path11.join(dir, "journal", project, handle);
       fs11.mkdirSync(handleDir, { recursive: true });
-      const snapshotFile = path10.join(handleDir, "dashboard.json");
+      const snapshotFile = path11.join(handleDir, "dashboard.json");
       const pub = buildPublicSnapshot(opts.store, { handle, project, now });
       if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}
 `)) {
@@ -9071,14 +9171,15 @@ function openJournal(options) {
   const env = options?.env ?? process.env;
   const cwd = options?.cwd ?? process.cwd();
   const config2 = options?.config ?? loadConfig({ cwd, env });
-  const url2 = config2.remote.url?.trim();
+  const configuredUrl = config2.remote.url?.trim();
+  const url2 = configuredUrl || ensureLocalBooksOrigin(env, cwd);
   if (!url2) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url2);
   const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
   const agentId = options?.agentId ?? null;
-  const logDir = path10.join(dir, "journal", project, handle, "log");
+  const logDir = path11.join(dir, "journal", project, handle, "log");
   return {
     dir,
     project,
@@ -9097,7 +9198,7 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs11.appendFileSync(path10.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+        fs11.appendFileSync(path11.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
 `, {
           mode: 384
         });
@@ -9117,7 +9218,7 @@ function readEventsFromDir(logDir, into, onlyFile) {
   for (const file2 of files) {
     let body;
     try {
-      body = fs11.readFileSync(path10.join(logDir, file2), "utf8");
+      body = fs11.readFileSync(path11.join(logDir, file2), "utf8");
     } catch {
       continue;
     }
@@ -9133,25 +9234,25 @@ function readEventsFromDir(logDir, into, onlyFile) {
 }
 function readEvents(dir, project, handle) {
   const events = [];
-  readEventsFromDir(path10.join(dir, "journal", project, handle, "log"), events);
+  readEventsFromDir(path11.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
   const enabled = Boolean(config2.remote.url?.trim());
-  const dir = enabled ? path10.join(
+  const dir = enabled ? path11.join(
     journalDir(env, cwd),
     "journal",
     resolveProject(config2, cwd),
     resolveHandle(config2),
     "crafts"
-  ) : path10.join(coordinationDir(env, cwd), "crafts");
+  ) : path11.join(coordinationDir(env, cwd), "crafts");
   const slug = sanitizeSegment(craft, "unnamed");
   return {
     dir,
     slug,
-    book: path10.join(dir, `${slug}.md`),
-    skill: path10.join(dir, `${slug}.skill.md`),
+    book: path11.join(dir, `${slug}.md`),
+    skill: path11.join(dir, `${slug}.skill.md`),
     durable: enabled
   };
 }
@@ -9195,13 +9296,13 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
   const limit = opts?.limitPerHandle ?? 15;
   let handles = [];
   try {
-    handles = fs11.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs11.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const kitchens = [];
   for (const handle of handles) {
-    const logDir = path10.join(dir, "journal", project, handle, "log");
+    const logDir = path11.join(dir, "journal", project, handle, "log");
     let files = [];
     try {
       files = fs11.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
@@ -9227,7 +9328,7 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
 function readOtherCrafts(dir, project, ownHandle) {
   let handles = [];
   try {
-    handles = fs11.readdirSync(path10.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs11.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -9240,7 +9341,7 @@ function readOtherCrafts(dir, project, ownHandle) {
   };
   const crafts = [];
   for (const handle of handles) {
-    const craftsDir = path10.join(dir, "journal", project, handle, "crafts");
+    const craftsDir = path11.join(dir, "journal", project, handle, "crafts");
     let files = [];
     try {
       files = fs11.readdirSync(craftsDir);
@@ -9254,8 +9355,8 @@ function readOtherCrafts(dir, project, ownHandle) {
       crafts.push({
         handle,
         slug,
-        book: read(path10.join(craftsDir, `${slug}.md`)),
-        skill: read(path10.join(craftsDir, `${slug}.skill.md`))
+        book: read(path11.join(craftsDir, `${slug}.md`)),
+        skill: read(path11.join(craftsDir, `${slug}.skill.md`))
       });
     }
   }
@@ -9282,15 +9383,15 @@ var init_remote = __esm({
 
 // src/seed-permissions.ts
 import * as fs12 from "node:fs";
-import * as path11 from "node:path";
+import * as path12 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function unseedStationPermissions(dir) {
-  const file2 = path11.join(dir, SEEDED_RELPATH);
+  const file2 = path12.join(dir, SEEDED_RELPATH);
   if (!fs12.existsSync(file2)) return false;
   fs12.rmSync(file2, { force: true });
-  const parent = path11.dirname(file2);
+  const parent = path12.dirname(file2);
   try {
     if (fs12.readdirSync(parent).length === 0) fs12.rmdirSync(parent);
   } catch {
@@ -9298,10 +9399,33 @@ function unseedStationPermissions(dir) {
   return true;
 }
 function seedStationPermissions(dir) {
-  const file2 = path11.join(dir, ".claude", "settings.local.json");
+  const file2 = path12.join(dir, ".claude", "settings.local.json");
   if (fs12.existsSync(file2)) return { path: file2, written: false };
-  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
+  fs12.mkdirSync(path12.dirname(file2), { recursive: true });
   fs12.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+`);
+  return { path: file2, written: true };
+}
+function mergeStationSettings(dir, patch) {
+  const file2 = path12.join(dir, SEEDED_RELPATH);
+  let existing = {};
+  try {
+    const raw = fs12.readFileSync(file2, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") existing = parsed;
+  } catch {
+    existing = {};
+  }
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (!(key in existing)) {
+      existing[key] = value;
+      changed = true;
+    }
+  }
+  if (!changed) return { path: file2, written: false };
+  fs12.mkdirSync(path12.dirname(file2), { recursive: true });
+  fs12.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -9375,8 +9499,8 @@ __export(provision_exports, {
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
 import * as fs13 from "node:fs";
-import * as os6 from "node:os";
-import * as path12 from "node:path";
+import * as os7 from "node:os";
+import * as path13 from "node:path";
 function git4(cwd, args) {
   return execFileSync5("git", args, {
     cwd,
@@ -9393,7 +9517,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path12.join(os6.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path13.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -9414,7 +9538,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path12.join(root, name),
+      dir: path13.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -9506,7 +9630,7 @@ function addStations(count, opts) {
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path12.join(root, id);
+    const dir = path13.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -9516,6 +9640,22 @@ function addStations(count, opts) {
     }
     const model = cfg.stations.overrides[id] ?? cfg.stations.model;
     seedStationPermissions(dir);
+    let themeColor;
+    let sessionName;
+    if (cfg.stations.theming) {
+      const assignment = assignStationTheme({
+        repoLabel: path13.basename(info.repoRoot),
+        repoSlug: info.slug,
+        index,
+        env: opts?.env
+      });
+      fs13.mkdirSync(path13.dirname(assignment.file), { recursive: true });
+      fs13.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+`);
+      mergeStationSettings(dir, { theme: assignment.themeId });
+      themeColor = assignment.color.hex;
+      sessionName = assignment.sessionName;
+    }
     const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({
       id,
@@ -9524,7 +9664,9 @@ function addStations(count, opts) {
       model,
       command: launchCommand({ id, dir, model }),
       launcher: res.launcher,
-      launched: res.launched
+      launched: res.launched,
+      ...themeColor ? { themeColor } : {},
+      ...sessionName ? { sessionName } : {}
     });
     created++;
   }
@@ -9538,7 +9680,13 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path12.join(root, `station-${index}`);
+  const dir = path13.join(root, `station-${index}`);
+  if (cfg.stations.theming) {
+    try {
+      fs13.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+    } catch {
+    }
+  }
   try {
     execFileSync5("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
   } catch {
@@ -9581,7 +9729,7 @@ function scaleStations(target, opts) {
   }
   const removed = [];
   for (const w of current.slice(target)) {
-    removeStation(w.id, { cwd, config: cfg, force: opts?.force });
+    removeStation(w.id, { cwd, config: cfg, force: opts?.force, env: opts?.env });
     removed.push(w.id);
   }
   return { added: [], removed };
@@ -9593,6 +9741,7 @@ var init_provision = __esm({
     init_config();
     init_paths();
     init_seed_permissions();
+    init_theming();
     ProvisionError = class extends Error {
     };
   }
@@ -9667,8 +9816,8 @@ var init_feedback = __esm({
 
 // src/tokens.ts
 import * as fs14 from "node:fs";
-import * as os7 from "node:os";
-import * as path13 from "node:path";
+import * as os8 from "node:os";
+import * as path14 from "node:path";
 function encodeProjectDir(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
@@ -9687,14 +9836,14 @@ var init_tokens = __esm({
       /** agentId → messageId → final usage (last write wins — the dedupe) */
       messages = /* @__PURE__ */ new Map();
       constructor(opts) {
-        this.projectsDir = opts?.projectsDir ?? path13.join(os7.homedir(), ".claude", "projects");
+        this.projectsDir = opts?.projectsDir ?? path14.join(os8.homedir(), ".claude", "projects");
         this.now = opts?.now ?? (() => Date.now());
       }
       sample(agents) {
         const now = this.now();
         for (const agent of agents) {
           if (!agent.cwd) continue;
-          const dir = path13.join(this.projectsDir, encodeProjectDir(agent.cwd));
+          const dir = path14.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
             names = fs14.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
@@ -9707,7 +9856,7 @@ var init_tokens = __esm({
             this.messages.set(agent.id, byMsg);
           }
           for (const name of names) {
-            const file2 = path13.join(dir, name);
+            const file2 = path14.join(dir, name);
             try {
               const stat = fs14.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
@@ -9717,7 +9866,7 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs14.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path13.join(dir, e.name, "subagents"));
+            sessionDirs = fs14.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path14.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
@@ -9729,7 +9878,7 @@ var init_tokens = __esm({
               continue;
             }
             for (const name of subNames) {
-              const file2 = path13.join(subDir, name);
+              const file2 = path14.join(subDir, name);
               try {
                 const stat = fs14.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
@@ -9820,7 +9969,7 @@ var init_tokens = __esm({
       callLabel(callFile) {
         const cached2 = this.metaLabels.get(callFile);
         if (cached2) return cached2;
-        let label = path13.basename(callFile, ".jsonl");
+        let label = path14.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
             fs14.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
@@ -9891,7 +10040,7 @@ __export(serve_exports, {
 });
 import * as fs15 from "node:fs";
 import { createServer } from "node:http";
-import * as path14 from "node:path";
+import * as path15 from "node:path";
 import { fileURLToPath } from "node:url";
 function isTrustedOrigin(req) {
   const host = req.headers.host;
@@ -9917,7 +10066,7 @@ function escapeHtml(s) {
   );
 }
 function kitchenName(db) {
-  return path14.basename(path14.dirname(db)) || "kitchen";
+  return path15.basename(path15.dirname(db)) || "kitchen";
 }
 function shellHtml(kitchen) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
@@ -9929,11 +10078,11 @@ function shellHtml(kitchen) {
 `;
 }
 function defaultAssetsDir() {
-  const here = path14.dirname(fileURLToPath(import.meta.url));
+  const here = path15.dirname(fileURLToPath(import.meta.url));
   return [
-    path14.join(here, "assets"),
+    path15.join(here, "assets"),
     // plugin/dist/server-impl.mjs → sibling assets/
-    path14.join(here, "..", "..", "plugin", "dist", "assets")
+    path15.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
   ].find((d) => fs15.existsSync(d)) ?? null;
 }
@@ -10056,7 +10205,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs15.readFileSync(path14.join(assetsDir, name));
+        const body = fs15.readFileSync(path15.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -10614,8 +10763,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path15, errorMaps, issueData } = params;
-  const fullPath = [...path15, ...issueData.path || []];
+  const { data, path: path16, errorMaps, issueData } = params;
+  const fullPath = [...path16, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -10730,11 +10879,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path15, key) {
+  constructor(parent, value, path16, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path15;
+    this._path = path16;
     this._key = key;
   }
   get path() {
@@ -14657,10 +14806,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path15) {
-  if (!path15)
+function getElementAtPath(obj, path16) {
+  if (!path16)
     return obj;
-  return path15.reduce((acc, key) => acc?.[key], obj);
+  return path16.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -15043,11 +15192,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path15, issues) {
+function prefixIssues(path16, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path15);
+    iss.path.unshift(path16);
     return iss;
   });
 }
@@ -15230,7 +15379,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path15 = []) => {
+  const processError = (error49, path16 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -15240,7 +15389,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path15, ...issue2.path];
+        const fullpath = [...path16, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -15272,8 +15421,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path15 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path15) {
+  const path16 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path16) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -27679,13 +27828,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path15 = ref.slice(1).split("/").filter(Boolean);
-  if (path15.length === 0) {
+  const path16 = ref.slice(1).split("/").filter(Boolean);
+  if (path16.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path15[0] === defsKey) {
-    const key = path15[1];
+  if (path16[0] === defsKey) {
+    const key = path16[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -33959,6 +34108,7 @@ function buildServer(store, agentId, config2) {
       const peers = store.listPeers().map((p) => ({
         id: p.id,
         focus: p.focus ?? void 0,
+        sessionName: p.session_name ?? void 0,
         online: p.online,
         cwd: p.cwd,
         pid: p.pid,
@@ -34515,7 +34665,10 @@ function buildServer(store, agentId, config2) {
       launched: p.launched,
       launcher: p.launcher,
       // when not auto-launched, this is the command to hand to the principal
-      pasteCommand: p.launched ? void 0 : p.command
+      pasteCommand: p.launched ? void 0 : p.command,
+      // hands#104 — undefined when stations.theming is off
+      themeColor: p.themeColor,
+      sessionName: p.sessionName
     }));
     server.registerTool(
       "hands_station_add",
@@ -34529,7 +34682,9 @@ function buildServer(store, agentId, config2) {
         store.touch(agentId);
         const { addStations: addStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
         try {
-          return asToolResult({ ok: true, added: presentPlans(addStations2(input.count ?? 1)) });
+          const plans = addStations2(input.count ?? 1);
+          for (const p of plans) if (p.sessionName) store.setSessionName(p.id, p.sessionName);
+          return asToolResult({ ok: true, added: presentPlans(plans) });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };
         }
@@ -34572,6 +34727,7 @@ function buildServer(store, agentId, config2) {
         const { scaleStations: scaleStations2 } = await Promise.resolve().then(() => (init_provision(), provision_exports));
         try {
           const res = scaleStations2(input.target, { force: input.force });
+          for (const p of res.added) if (p.sessionName) store.setSessionName(p.id, p.sessionName);
           return asToolResult({ ok: true, added: presentPlans(res.added), removed: res.removed });
         } catch (err) {
           return { ...asToolResult({ ok: false, error: String(err) }), isError: true };

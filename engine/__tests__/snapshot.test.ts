@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildSnapshot } from "../src/snapshot.js";
 import { Store } from "../src/store.js";
+import { themeColorForIndex } from "../src/theming.js";
 
 let home: string;
 let env: NodeJS.ProcessEnv;
@@ -87,6 +88,32 @@ describe("buildSnapshot", () => {
     store.setCursor("wt1", id1);
     snap = buildSnapshot(store, now, env);
     expect(snap.agents.find((a) => a.id === "wt1")!.pendingCommands.map((c) => c.body)).toEqual(["swap to #39"]);
+    store.close();
+  });
+
+  it("mirrors hands-owned session name and the deterministic theme colour (hands#104)", () => {
+    const store = new Store({ env });
+    const now = 3_000_000_000_000;
+    store.setStatus({ id: "station-1", cwd: "/w1", pid: 1, now });
+    store.setStatus({ id: "station-2", cwd: "/w2", pid: 2, now });
+    store.setStatus({ id: "expo", cwd: "/e", pid: 3, now });
+    store.setSessionName("station-1", "myrepo · station-1 (blue)");
+    // station-2 never got a name assigned (e.g. provisioned before this feature)
+
+    const snap = buildSnapshot(store, now, env);
+    const s1 = snap.agents.find((a) => a.id === "station-1")!;
+    const s2 = snap.agents.find((a) => a.id === "station-2")!;
+    const expo = snap.agents.find((a) => a.id === "expo")!;
+
+    expect(s1.sessionName).toBe("myrepo · station-1 (blue)");
+    expect(s1.themeColor).toBe(themeColorForIndex(1).hex);
+    // deterministic by INDEX, not by whether a name was ever assigned
+    expect(s2.sessionName).toBeNull();
+    expect(s2.themeColor).toBe(themeColorForIndex(2).hex);
+    // station-1 and station-2 never share a colour
+    expect(s1.themeColor).not.toBe(s2.themeColor);
+    // expo doesn't parse as station-<n> — no computed theme colour
+    expect(expo.themeColor).toBeNull();
     store.close();
   });
 });
