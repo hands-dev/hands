@@ -1,0 +1,5 @@
+{
+  "commit": "991916a",
+  "publishedAt": "2026-08-06T03:10:09Z",
+  "changelog": "Station resiliency + observability: Monitor self-heal, restart-context recovery, /hands:rail and /hands:hands status commands."
+}
