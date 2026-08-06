@@ -72,7 +72,8 @@ export async function runInit(argv: string[]): Promise<void> {
         const journalUrl =
           flags.journalUrl ??
           (await ask(
-            "Books repo (a separate PRIVATE git repo for the durable journal; empty = books off)?",
+            "Books repo (a separate PRIVATE git repo for the durable journal; empty = local-only " +
+              "for now, still fully durable — attach a shared repo anytime with: hands books <url>)?",
             "",
           ));
         const scaffold: Record<string, unknown> = {

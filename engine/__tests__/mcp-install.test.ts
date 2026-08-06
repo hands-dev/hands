@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_BASENAME, resetConfigCache } from "../src/config.js";
 import { resetRepoInfoCache } from "../src/paths.js";
-import { resetProjectCache } from "../src/remote.js";
+import { localBooksOriginPath, resetProjectCache } from "../src/remote.js";
 import {
   booksMcpEntry,
   desktopConfigPath,
@@ -63,11 +63,15 @@ describe("resolveBooksTarget", () => {
     if (!res.ok) expect(res.reason).toContain("not inside a git repo");
   });
 
-  it("fails with the exact actionable message when no books are attached", () => {
+  it("succeeds via the local-default origin when nothing is configured (hands#129 — books are always on)", () => {
     const dir = repoWithConfig();
-    const res = resolveBooksTarget({ cwd: dir, env: { HANDS_HOME: path.join(root, "home") } });
-    expect(res.ok).toBe(false);
-    if (!res.ok) expect(res.reason).toBe("no books attached — run: hands books <path-or-url> to enable books first");
+    const env = { HANDS_HOME: path.join(root, "home") };
+    const res = resolveBooksTarget({ cwd: dir, env });
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.target.url).toBe(localBooksOriginPath(env, dir));
+      expect(fs.existsSync(path.join(res.target.dir, ".git"))).toBe(true);
+    }
   });
 
   it("resolves a target for a LOCAL PATH remote.url (free tier, no real git host)", () => {
