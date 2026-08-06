@@ -10,7 +10,8 @@ chef. Everything is coordinated over a local, per-repo message bus with strict p
 and optionally recorded in **the books**: a durable, browsable journal. The fleet is Hands — and
 calling *"hands"* on a finished dish is how you summon them to ship it.
 
-Distributed as a Claude Code plugin (this repo is its own marketplace).
+Distributed as a Claude Code plugin (this repo is its own marketplace); its skills and MCP
+server also conform to the [Agent Plugins](https://agent-plugins.org) open standard.
 
 ## Install
 
