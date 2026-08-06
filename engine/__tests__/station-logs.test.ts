@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { encodeProjectDir } from "../src/tokens.js";
-import { idleMs, latestTranscript, recentActivity, transcriptDir } from "../src/station-logs.js";
+import { idleMs, latestSessionId, latestTranscript, recentActivity, transcriptDir } from "../src/station-logs.js";
 
 let home: string;
 const cwd = "/home/x/.hands/worktrees/demo/station-1";
@@ -47,6 +47,26 @@ describe("transcript location", () => {
     writeTranscript("old.jsonl", [assistant("2026-08-05T10:00:00Z", [])], new Date(1_000_000));
     const newer = writeTranscript("new.jsonl", [assistant("2026-08-05T11:00:00Z", [])], new Date(9_000_000));
     expect(latestTranscript(cwd, home)).toBe(newer);
+  });
+});
+
+describe("latestSessionId — the id `claude --resume` expects", () => {
+  it("returns null when the pane has never taken a turn", () => {
+    expect(latestSessionId(cwd, home)).toBeNull();
+  });
+
+  it("strips the .jsonl extension from the most recent session's filename", () => {
+    writeTranscript(
+      "8f14e45f-ceea-467e-953e-2a8de0eb2bfa.jsonl",
+      [assistant("2026-08-05T10:00:00Z", [])],
+      new Date(1_000_000),
+    );
+    writeTranscript(
+      "550e8400-e29b-41d4-a716-446655440000.jsonl",
+      [assistant("2026-08-05T11:00:00Z", [])],
+      new Date(9_000_000),
+    );
+    expect(latestSessionId(cwd, home)).toBe("550e8400-e29b-41d4-a716-446655440000");
   });
 });
 
