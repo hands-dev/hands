@@ -1,0 +1,73 @@
+name: Bundle plugin for distribution
+
+# The marketplace serves plugin/dist/* directly — a plugin install/update is a
+# plain file copy, no build step (see engine/scripts/bundle.mjs's own header
+# comment and __tests__/bundle.test.ts). ci.yml's test suite already CATCHES
+# a stale committed bundle (bundle.test.ts fails the PR), but catching isn't
+# fixing: a PR merged without running `npm run bundle` locally lands on main
+# with a stale plugin/dist, and nothing closes that gap automatically today —
+# `claude plugin update` would keep serving the old build until someone
+# notices and bundles by hand.
+#
+# This workflow closes it: on every push to main that touches bundle inputs,
+# rebuild and commit the refreshed plugin/dist straight back to main. Direct
+# commit, not a sync PR (contrast sync-dashboard-assets.yml/sync-installer.yml,
+# which vendor into a DIFFERENT repo and use a PR there deliberately) — the
+# source already went through PR review to reach main, the bundle is a fully
+# deterministic function of that reviewed source (byte-compared by
+# bundle.test.ts), and main carries no branch protection requiring a PR here.
+# The bot commit only touches plugin/dist/**, which isn't in this workflow's
+# own path filter, so it can't retrigger itself.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "engine/src/**"
+      - "engine/dashboard/**"
+      - "engine/scripts/bundle.mjs"
+      - "engine/package.json"
+      - "engine/package-lock.json"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  # Never cancel a queued bundle for a newer commit — each push's bundle is
+  # worth landing in order; skipping one would leave main's dist stamped with
+  # an earlier commit than what's actually on main.
+  group: bundle-plugin
+  cancel-in-progress: false
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # matches ci.yml — store.ts's node:sqlite floor
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: engine/package-lock.json
+
+      - name: Build the plugin bundles
+        working-directory: engine
+        run: |
+          npm ci
+          npm run bundle
+
+      - name: Commit the refreshed bundle if it changed
+        run: |
+          set -euo pipefail
+          git config user.name "hands-bundle-bot"
+          git config user.email "actions@github.com"
+          git add plugin/dist
+          if git diff --cached --quiet; then
+            echo "bundle unchanged — nothing to commit"
+            exit 0
+          fi
+          git commit -m "bundle: refresh plugin/dist from $(git rev-parse --short HEAD)"
+          git push origin HEAD:main
