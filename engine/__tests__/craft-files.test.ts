@@ -4,7 +4,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config.js";
-import { composeChit, listCrafts, parseCraftHeader, parseCraftNoteBlock } from "../src/crafts.js";
+import {
+  composeChit,
+  craftAgentPath,
+  craftSkillPath,
+  formatRosterContext,
+  listCrafts,
+  materializeCraftAgents,
+  parseCraftHeader,
+  parseCraftNoteBlock,
+} from "../src/crafts.js";
 import { resetRepoInfoCache } from "../src/paths.js";
 import { craftFiles } from "../src/remote.js";
 import { craftRosterContext, pathsReport } from "../src/server.js";
@@ -153,7 +162,7 @@ describe("craftRosterContext (roster injection, not full content — hands#81/#9
       `> covers: sauces, stocks · distilled: 2026-08-01 from 3 learnings\n${"x".repeat(5000)}`,
     );
     const ctx = craftRosterContext(loadConfig({ env }), store, env);
-    expect(ctx).toContain("craft-saucier [personal] — sauces, stocks");
+    expect(ctx).toContain("craft-saucier [personal, not yet synced] — sauces, stocks");
     expect(ctx.length).toBeLessThan(2000); // roster summary, not the 5000-char book itself
     store.close();
   });
@@ -317,5 +326,83 @@ describe("pathsReport — no held-craft fields, plain lane label + both craft di
     expect(report).not.toHaveProperty("craftSlug");
     expect(report).not.toHaveProperty("book");
     expect(report).not.toHaveProperty("skillFile");
+  });
+});
+
+describe("materializeCraftAgents — real, session-discoverable Agent types + Skills (hands#81/#96)", () => {
+  it("generates an Agent type + Skill per craft, discoverable at the expected paths", () => {
+    const files = craftFiles("saucier", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: sauces, stocks\nBeurre blanc breaks over 58C.");
+    fs.writeFileSync(files.skill, "Always taste before plating.");
+
+    const target = fs.mkdtempSync(path.join(home, "target-"));
+    const res = materializeCraftAgents(loadConfig({ env }), target, env);
+    expect(res.written).toEqual(["saucier"]);
+
+    const agentBody = fs.readFileSync(craftAgentPath(target, "saucier"), "utf8");
+    expect(agentBody).toContain("name: craft-saucier");
+    expect(agentBody).toContain('hands_brief({ craft: "saucier"');
+    expect(agentBody).toContain('Skill({ skill: "craft-saucier" })');
+
+    const skillBody = fs.readFileSync(craftSkillPath(target, "saucier"), "utf8");
+    expect(skillBody).toContain("name: craft-saucier");
+    expect(skillBody).toContain("hands_mise({ briefId:");
+    expect(skillBody).toContain("Always taste before plating.");
+    expect(skillBody).toContain("```craft-note");
+  });
+
+  it("a craft with no skill.md yet still generates, with a founding-message placeholder", () => {
+    const files = craftFiles("poissonnier", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: fish\n");
+    const target = fs.mkdtempSync(path.join(home, "target-"));
+    materializeCraftAgents(loadConfig({ env }), target, env);
+    expect(fs.readFileSync(craftSkillPath(target, "poissonnier"), "utf8")).toContain("founding this craft");
+  });
+
+  it("is idempotent, and removes generated files for a craft no longer on the roster", () => {
+    const target = fs.mkdtempSync(path.join(home, "target-"));
+    const cfg = loadConfig({ env });
+
+    const a = craftFiles("saucier", env);
+    fs.mkdirSync(a.dir, { recursive: true });
+    fs.writeFileSync(a.book, "> covers: sauces\n");
+    const first = materializeCraftAgents(cfg, target, env);
+    expect(first.written).toEqual(["saucier"]);
+    const second = materializeCraftAgents(cfg, target, env);
+    expect(second.written).toEqual(["saucier"]); // idempotent — same craft regenerates cleanly
+
+    // "remove" saucier from the roster (as `hands craft localize`'s inverse would if a shared
+    // craft's file disappeared) and confirm a resync cleans up its generated files.
+    fs.rmSync(a.book);
+    const third = materializeCraftAgents(cfg, target, env);
+    expect(third.written).toEqual([]);
+    expect(third.removed).toEqual(["saucier"]);
+    expect(fs.existsSync(craftAgentPath(target, "saucier"))).toBe(false);
+    expect(fs.existsSync(path.dirname(craftSkillPath(target, "saucier")))).toBe(false);
+  });
+
+  it("the roster context's synced/not-yet-synced flag tracks whether THAT target dir has been materialized", () => {
+    const files = craftFiles("saucier", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: sauces\n");
+    const store = new Store({ env });
+    const cfg = loadConfig({ env });
+    // An isolated target dir — never the real process.cwd() — so this test can never leave
+    // generated files behind in the actual checkout running the suite.
+    const target = fs.mkdtempSync(path.join(home, "target-"));
+
+    const before = formatRosterContext(listCrafts(store, cfg, env), target);
+    expect(before).toContain("craft-saucier [personal, not yet synced]");
+
+    materializeCraftAgents(cfg, target, env);
+    const after = formatRosterContext(listCrafts(store, cfg, env), target);
+    // the craft's own line drops the annotation once synced — the static help text below it
+    // still mentions the phrase generically, so assert the specific line, not "anywhere at all".
+    expect(after).toMatch(/craft-saucier \[personal\] —/);
+    expect(after).not.toContain("craft-saucier [personal, not yet synced]");
+
+    store.close();
   });
 });

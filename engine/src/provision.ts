@@ -3,6 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { type HandsConfig, loadConfig } from "./config.js";
+import { materializeCraftAgents } from "./crafts.js";
 import { type RepoInfo, repoInfo } from "./paths.js";
 import {
   mergeStationSettings,
@@ -281,6 +282,13 @@ export function addStations(
       themeColor = assignment.color.hex;
       sessionName = assignment.sessionName;
     }
+
+    // Materialize crafts as real, session-discoverable Agent types BEFORE the station's Claude
+    // Code process launches — Skill/agentType discovery is fixed at session start, not live, so
+    // this is the only point where a station can come up with one-call craft dispatch already
+    // working (hands#81/#96). A craft founded/edited after this station is already running still
+    // needs hands_brief/hands_mise until a restart re-syncs.
+    materializeCraftAgents(cfg, dir, opts?.env, cwd);
 
     const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
     plans.push({

@@ -9,6 +9,7 @@
  *   hands init                per-repo config scaffold
  *   hands books <url>         attach the books (durable journal) to this repo's config
  *   hands craft ls             the craft roster — scope, covers, distilled, pending notes
+ *   hands craft sync           materialize crafts as real Agent types + Skills (one-call dispatch)
  *   hands craft promote <s>    move a personal craft to the repo-shared tier
  *   hands craft localize <s>   move a shared craft back to the personal tier
  *   hands craft distill [<s>]  list a craft's unfolded notes (hands_fold does the real fold)
@@ -64,7 +65,7 @@ import {
   syncPush,
   validateJournal,
 } from "./remote.js";
-import { listCrafts } from "./crafts.js";
+import { listCrafts, materializeCraftAgents } from "./crafts.js";
 import {
   booksMcpEntry,
   desktopConfigPath,
@@ -222,13 +223,15 @@ function cmdBooks(argv: string[]): void {
 }
 
 /**
- * `hands craft ls|promote|localize|distill` — crafts are dispatched as
+ * `hands craft ls|sync|promote|localize|distill` — crafts are dispatched as
  * sub-agents (hands_brief/hands_mise/hands_fold), never held by a station
  * (hands#81/#96); this CLI covers the human-facing, non-agentic slice:
- * seeing the roster and moving a craft between scope tiers. Distillation
- * itself is a judgment call (rewrite prose, decide what to discard) that
- * needs a model — `distill` here only surfaces the backlog for a human to
- * read or hand to an agent via hands_fold; it never rewrites a book itself.
+ * seeing the roster, materializing crafts into real session-discoverable
+ * Agent types + Skills (`sync`), and moving a craft between scope tiers.
+ * Distillation itself is a judgment call (rewrite prose, decide what to
+ * discard) that needs a model — `distill` here only surfaces the backlog
+ * for a human to read or hand to an agent via hands_fold; it never
+ * rewrites a book itself.
  */
 function cmdCraft(argv: string[]): void {
   const sub = argv[0];
@@ -277,6 +280,7 @@ function cmdCraft(argv: string[]): void {
         moved.push(name);
       }
       if (moved.length === 0) fail(`no files found for "${files.slug}" at ${sourceDir}`);
+      materializeCraftAgents(cfg, info!.repoRoot, process.env, info!.repoRoot);
 
       if (sub === "promote") {
         try {
@@ -297,6 +301,29 @@ function cmdCraft(argv: string[]): void {
         }
         out(`✔ "${files.slug}" localized — copied to ${personal}, unstaged from the repo`);
         out(`  next: git commit -m "craft: localize ${files.slug}" (or git checkout . to keep it shared)`);
+      }
+      return;
+    }
+
+    if (sub === "sync") {
+      const info = repoInfo(process.cwd());
+      if (!info) fail("not inside a git repo — run from your repo's main checkout");
+      const targets: Array<{ label: string; dir: string }> = [{ label: "main checkout", dir: info!.repoRoot }];
+      for (const station of listStations(info!.repoRoot, cfg)) {
+        if (station.present) targets.push({ label: station.id, dir: station.dir });
+      }
+      let total = 0;
+      for (const t of targets) {
+        const res = materializeCraftAgents(cfg, t.dir, process.env, info!.repoRoot);
+        if (res.written.length > 0) out(`${t.label}: synced ${res.written.join(", ")}`);
+        if (res.removed.length > 0) out(`${t.label}: removed stale ${res.removed.join(", ")}`);
+        total += res.written.length;
+      }
+      if (total === 0) {
+        out("no crafts to sync — /hands:crafts surveys a repo for the ones worth establishing");
+      } else {
+        out(`\n✔ synced ${targets.length} checkout(s)`);
+        out("  running stations need a restart to pick this up — hands craft sync doesn't restart them itself");
       }
       return;
     }
@@ -324,7 +351,7 @@ function cmdCraft(argv: string[]): void {
       return;
     }
 
-    fail("usage: hands craft <ls|promote|localize|distill> [<slug>]");
+    fail("usage: hands craft <ls|sync|promote|localize|distill> [<slug>]");
   } finally {
     store.close();
   }
@@ -588,6 +615,10 @@ function cmdRestart(argv: string[]): void {
   // whose settings were removed, would otherwise come back up just as stuck.
   const seeded = seedStationPermissions(dir);
   if (seeded.written) out(`  seeded missing permission allowlist`);
+  // Re-sync crafts too — a restart is a fresh Claude Code process, exactly the point where
+  // newly-founded/edited crafts can finally become one-call-dispatchable here (hands#81/#96).
+  const synced = materializeCraftAgents(cfg, dir, process.env, repoRoot);
+  if (synced.written.length > 0) out(`  synced ${synced.written.length} craft(s)`);
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
   const command = launchCommand({ id, dir, model }, "station");
   // tmux names each station's window by its id (see provision.ts), so a

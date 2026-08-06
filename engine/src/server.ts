@@ -38,7 +38,14 @@ import {
   sharedCraftsDir,
   syncPush,
 } from "./remote.js";
-import { buildFoldContext, composeChit, formatRosterContext, listCrafts, parseCraftHeader } from "./crafts.js";
+import {
+  buildFoldContext,
+  composeChit,
+  craftAgentPath,
+  formatRosterContext,
+  listCrafts,
+  parseCraftHeader,
+} from "./crafts.js";
 import { type CraftBriefRow, type MessageRow, Store } from "./store.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
@@ -82,7 +89,7 @@ export function craftRosterContext(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): string {
-  return formatRosterContext(listCrafts(store, config, env, cwd));
+  return formatRosterContext(listCrafts(store, config, env, cwd), cwd);
 }
 
 export function buildServer(store: Store, agentId: string, config?: HandsConfig): McpServer {
@@ -909,14 +916,18 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       title: "List the craft roster",
       description:
         "The full craft roster — scope (personal/shared), covers, when last distilled, pending " +
-        "note count. Use when the roster summary already in your instructions isn't enough (a " +
+        "note count, and whether it's synced (has a generated agentType in THIS checkout, so " +
+        'Agent({ agentType: "craft-<slug>" }) dispatches it directly — unsynced falls back to ' +
+        "hands_brief). Use when the roster summary already in your instructions isn't enough (a " +
         "ticket names a craft you don't see there, or one was just founded this session).",
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async () => {
       store.touch(agentId);
-      return asToolResult({ crafts: listCrafts(store, cfg) });
+      const cwd = process.cwd();
+      const crafts = listCrafts(store, cfg).map((c) => ({ ...c, synced: fs.existsSync(craftAgentPath(cwd, c.slug)) }));
+      return asToolResult({ crafts });
     },
   );
 
