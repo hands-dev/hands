@@ -9283,6 +9283,17 @@ import * as path11 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
+function unseedStationPermissions(dir) {
+  const file2 = path11.join(dir, SEEDED_RELPATH);
+  if (!fs12.existsSync(file2)) return false;
+  fs12.rmSync(file2, { force: true });
+  const parent = path11.dirname(file2);
+  try {
+    if (fs12.readdirSync(parent).length === 0) fs12.rmdirSync(parent);
+  } catch {
+  }
+  return true;
+}
 function seedStationPermissions(dir) {
   const file2 = path11.join(dir, ".claude", "settings.local.json");
   if (fs12.existsSync(file2)) return { path: file2, written: false };
@@ -9291,7 +9302,7 @@ function seedStationPermissions(dir) {
 `);
   return { path: file2, written: true };
 }
-var ALLOW, DENY;
+var ALLOW, DENY, SEEDED_RELPATH;
 var init_seed_permissions = __esm({
   "src/seed-permissions.ts"() {
     "use strict";
@@ -9342,6 +9353,7 @@ var init_seed_permissions = __esm({
       "mcp__plugin_hands_hands__hands_scale",
       "mcp__plugin_hands_hands__hands_station_remove"
     ];
+    SEEDED_RELPATH = ".claude/settings.local.json";
   }
 });
 
@@ -9405,6 +9417,17 @@ function listStations(cwd = process.cwd(), config2) {
     });
   }
   return stations.sort((a, b) => a.index - b.index);
+}
+function onlyDirtInWorktreeIsOurs(dir) {
+  let status;
+  try {
+    status = git4(dir, ["status", "--porcelain", "--untracked-files=all"]);
+  } catch {
+    return false;
+  }
+  const paths = status.split("\n").map((line) => line.slice(3).trim()).filter(Boolean);
+  if (paths.length === 0) return false;
+  return paths.every((p) => p === SEEDED_RELPATH);
 }
 function branchExists(cwd, branch) {
   try {
@@ -9523,6 +9546,7 @@ function removeStation(id, opts) {
   }
   let removed = false;
   if (fs13.existsSync(dir)) {
+    if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
     try {
