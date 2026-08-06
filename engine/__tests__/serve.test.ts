@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IDLE_THRESHOLD_MS } from "../src/board.js";
 import { DEFAULT_CONFIG, resetConfigCache } from "../src/config.js";
+import type { FeedbackResult, GhRunner } from "../src/feedback.js";
 import { openJournal, syncPush } from "../src/remote.js";
 import { buildSnapshot } from "../src/snapshot.js";
 import { kitchenName, serve, type ServeHandle, snapshotKey } from "../src/serve.js";
@@ -42,6 +43,26 @@ function get(url: string): Promise<{ status: number; type: string; body: string 
         );
       })
       .on("error", reject);
+  });
+}
+
+function post(
+  url: string,
+  body: string,
+  headers?: Record<string, string>,
+): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      url,
+      { method: "POST", headers: { "content-type": "application/json", ...headers } },
+      (res) => {
+        let data = "";
+        res.on("data", (c: Buffer) => (data += c.toString()));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body: data }));
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
   });
 }
 
@@ -329,5 +350,228 @@ describe("kitchenName (dashboard repo/kitchen namespacing, #40)", () => {
 
   it("falls back to a generic label when the parent basename is empty", () => {
     expect(kitchenName("/hands.db")).toBe("kitchen");
+  });
+});
+
+describe("POST /api/feedback", () => {
+  it("files via the injected fileFeedback and returns its url", async () => {
+    let received: { body: string; title?: string } | null = null;
+    handle = await serve({
+      port: 0,
+      env,
+      fileFeedback: (opts) => {
+        received = { body: opts.body, title: opts.title };
+        return { ok: true, url: "https://github.com/hands-dev/hands/issues/1" };
+      },
+    });
+
+    const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "the rail truncates", title: "feedback: rail" }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ url: "https://github.com/hands-dev/hands/issues/1" });
+    expect(received).toEqual({ body: "the rail truncates", title: "feedback: rail" });
+  });
+
+  it("passes title through as undefined when the client omits it", async () => {
+    let received: { title?: string } | null = null;
+    handle = await serve({
+      port: 0,
+      env,
+      fileFeedback: (opts) => {
+        received = { title: opts.title };
+        return { ok: true, url: "https://example/1" };
+      },
+    });
+    await post(`${handle.url}api/feedback`, JSON.stringify({ body: "no title given" }));
+    expect(received).toEqual({ title: undefined });
+  });
+
+  it("returns 400 for a missing/empty body without calling fileFeedback", async () => {
+    let called = false;
+    handle = await serve({
+      port: 0,
+      env,
+      fileFeedback: (): FeedbackResult => {
+        called = true;
+        return { ok: true, url: "https://example/1" };
+      },
+    });
+
+    const missing = await post(`${handle.url}api/feedback`, JSON.stringify({}));
+    expect(missing.status).toBe(400);
+    const blank = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "   " }));
+    expect(blank.status).toBe(400);
+    expect(called).toBe(false);
+  });
+
+  it("returns 400 for malformed JSON", async () => {
+    handle = await serve({ port: 0, env });
+    const res = await post(`${handle.url}api/feedback`, "not json");
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 502 with the underlying error when filing fails", async () => {
+    handle = await serve({
+      port: 0,
+      env,
+      fileFeedback: () => ({ ok: false, error: "gh: authentication required" }),
+    });
+    const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "bug: X" }));
+    expect(res.status).toBe(502);
+    expect(JSON.parse(res.body)).toEqual({ error: "gh: authentication required" });
+  });
+
+  it("rejects an oversized body without ever reaching fileFeedback", async () => {
+    let called = false;
+    handle = await serve({
+      port: 0,
+      env,
+      fileFeedback: (): FeedbackResult => {
+        called = true;
+        return { ok: true, url: "https://example/1" };
+      },
+    });
+    const huge = JSON.stringify({ body: "x".repeat(200_000) });
+    const res = await post(`${handle.url}api/feedback`, huge);
+    expect(res.status).toBe(413);
+    expect(called).toBe(false);
+  });
+
+  it("a GET to the same path is not treated as the feedback route (falls through to 404)", async () => {
+    handle = await serve({ port: 0, env });
+    const res = await get(`${handle.url}api/feedback`);
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a title over the independent title bound, without ever reaching fileFeedback", async () => {
+    let called = false;
+    handle = await serve({
+      port: 0,
+      env,
+      fileFeedback: (): FeedbackResult => {
+        called = true;
+        return { ok: true, url: "https://example/1" };
+      },
+    });
+    const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "x", title: "y".repeat(301) }));
+    expect(res.status).toBe(400);
+    expect(called).toBe(false);
+  });
+
+  it("drives the real HTTP route through the REAL fileFeedback() to a fake gh — not just the route handler and fileFeedback tested in isolation", async () => {
+    const calls: string[][] = [];
+    const gh: GhRunner = (args) => {
+      calls.push(args);
+      if (args[0] === "issue") return "https://github.com/hands-dev/hands/issues/999\n";
+      return "";
+    };
+    handle = await serve({ port: 0, env, feedbackGh: gh });
+
+    const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "end-to-end note", title: "feedback: e2e" }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ url: "https://github.com/hands-dev/hands/issues/999" });
+    const issueCall = calls.find((c) => c[0] === "issue")!;
+    expect(issueCall).toContain("feedback: e2e");
+    expect(issueCall.find((a) => a.includes("end-to-end note"))).toBeDefined();
+  });
+
+  describe("CSRF (same-origin) protection", () => {
+    it("rejects a cross-origin POST (a same-machine malicious page can't silently file feedback under the operator's identity)", async () => {
+      let called = false;
+      handle = await serve({
+        port: 0,
+        env,
+        fileFeedback: (): FeedbackResult => {
+          called = true;
+          return { ok: true, url: "https://example/1" };
+        },
+      });
+      const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "x" }), {
+        origin: "https://evil.example",
+      });
+      expect(res.status).toBe(403);
+      expect(called).toBe(false);
+    });
+
+    it("rejects based on a mismatched Referer when Origin is absent", async () => {
+      let called = false;
+      handle = await serve({
+        port: 0,
+        env,
+        fileFeedback: (): FeedbackResult => {
+          called = true;
+          return { ok: true, url: "https://example/1" };
+        },
+      });
+      const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "x" }), {
+        referer: "https://evil.example/attack.html",
+      });
+      expect(res.status).toBe(403);
+      expect(called).toBe(false);
+    });
+
+    it("accepts a same-origin POST (Origin matching the dashboard's own host:port)", async () => {
+      handle = await serve({
+        port: 0,
+        env,
+        fileFeedback: (): FeedbackResult => ({ ok: true, url: "https://example/1" }),
+      });
+      const origin = new URL(handle.url).origin;
+      const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "x" }), { origin });
+      expect(res.status).toBe(200);
+    });
+
+    it("allows a request with neither Origin nor Referer (non-browser callers — curl, scripts — aren't the threat this guards against)", async () => {
+      handle = await serve({
+        port: 0,
+        env,
+        fileFeedback: (): FeedbackResult => ({ ok: true, url: "https://example/1" }),
+      });
+      const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "x" }));
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe("rate limiting", () => {
+    it("allows up to the limit, then 429s, without reaching fileFeedback on the throttled request", async () => {
+      let calls = 0;
+      handle = await serve({
+        port: 0,
+        env,
+        fileFeedback: (): FeedbackResult => {
+          calls++;
+          return { ok: true, url: "https://example/1" };
+        },
+      });
+      const body = JSON.stringify({ body: "x" });
+      for (let i = 0; i < 5; i++) {
+        const res = await post(`${handle.url}api/feedback`, body);
+        expect(res.status).toBe(200);
+      }
+      const sixth = await post(`${handle.url}api/feedback`, body);
+      expect(sixth.status).toBe(429);
+      expect(calls).toBe(5);
+    });
+
+    it("does NOT consume a slot for a request that fails validation — a typo'd request retried a few times shouldn't trip the limit for legitimate use right after", async () => {
+      let calls = 0;
+      handle = await serve({
+        port: 0,
+        env,
+        fileFeedback: (): FeedbackResult => {
+          calls++;
+          return { ok: true, url: "https://example/1" };
+        },
+      });
+
+      // 10 back-to-back INVALID requests (empty body) — well past the limit of 5, if they counted
+      for (let i = 0; i < 10; i++) {
+        const res = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "   " }));
+        expect(res.status).toBe(400);
+      }
+      // the window is untouched — a genuinely valid request right after still succeeds
+      const valid = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "real feedback" }));
+      expect(valid.status).toBe(200);
+      expect(calls).toBe(1);
+    });
   });
 });

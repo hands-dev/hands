@@ -250,6 +250,18 @@ function cmdDigest(argv: string[]): void {
   out("(committed + pushed on the next sync — or run: hands sync)");
 }
 
+/** File a note to the plugin's maintainer as a GitHub issue on hands-dev/hands — the CLI entry point both `/hands:feedback` and the dashboard's feedback form call, so the filing mechanics (footer, label fallback) live in exactly one place. */
+async function cmdFeedback(argv: string[]): Promise<void> {
+  const body = argv[0];
+  if (!body || body.startsWith("--")) fail('usage: hands feedback "<body>" [--title "<title>"]');
+  const i = argv.indexOf("--title");
+  const title = i !== -1 ? argv[i + 1] : undefined;
+  const { fileFeedback } = await import("./feedback.js");
+  const result = fileFeedback({ body, title });
+  if (!result.ok) fail(result.error ?? "filing failed");
+  out(`✔ ${result.url}`);
+}
+
 /**
  * Bridge the live, cwd/git-derived books config to a standalone MCP server
  * registration a client outside the repo (Claude Desktop) can run. Requires
@@ -623,6 +635,9 @@ async function main(): Promise<void> {
         return await cmdLogout();
       case "whoami":
         return await cmdWhoami();
+      case "feedback":
+        await cmdFeedback(rest);
+        return;
       case "serve":
       case "dashboard": {
         const { serve } = await import("./serve.js");
@@ -687,6 +702,7 @@ async function main(): Promise<void> {
         out("  hands login               sign in with GitHub (optional — free tier never needs it)");
         out("  hands logout              clear the local sign-in");
         out("  hands whoami               show the signed-in identity (local only, no network call)");
+        out('  hands feedback "<body>" [--title "<title>"]  file a note to the maintainer (GitHub issue)');
         out("  hands serve               live dashboard → http://localhost:4319");
         out("  hands paths               show where this directory resolves (debug)");
         // Asking for help is not an error; an unrecognized word is.

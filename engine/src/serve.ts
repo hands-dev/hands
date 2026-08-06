@@ -1,8 +1,9 @@
 import * as fs from "node:fs";
-import { createServer, type ServerResponse } from "node:http";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type HandsConfig, loadConfig } from "./config.js";
+import { fileFeedback, type FeedbackResult, type GhRunner } from "./feedback.js";
 import { dbPath } from "./paths.js";
 import {
   openJournal,
@@ -65,6 +66,50 @@ const ASSETS: Record<string, string> = {
   "dashboard.css": "text/css; charset=utf-8",
 };
 
+/** Feedback is a short note, not a file upload — generous enough for anything a human would type, small enough that a runaway client can't build up memory on this server. */
+const MAX_FEEDBACK_BODY_BYTES = 100_000;
+/** A title is a one-liner, not a body — bounded independently of the aggregate body cap so a huge "title" alone can't slip through under it. */
+const MAX_FEEDBACK_TITLE_BYTES = 300;
+const FEEDBACK_RATE_LIMIT_MAX = 5;
+const FEEDBACK_RATE_LIMIT_WINDOW_MS = 60_000;
+
+/**
+ * Same-origin check for state-changing routes (currently just POST
+ * /api/feedback). Binding to 127.0.0.1 stops a remote attacker but NOT a
+ * same-machine cross-origin request — any webpage open in the same browser
+ * while `hands serve` runs could otherwise POST here and file an issue
+ * under the operator's own `gh` identity. Origin is checked first: it's
+ * sent by browsers on every cross-origin "unsafe method" request (POST
+ * included) and — unlike Referer — can't be suppressed via
+ * `Referrer-Policy`, so it's the harder-to-spoof signal. Neither header
+ * present at all (no browser involved — curl, a script, these tests)
+ * is allowed: that's not the threat this guards against.
+ *
+ * Accepted residual risk: Origin/Host-based localhost defenses are
+ * generically exposed to DNS rebinding (a public DNS name resolving to
+ * 127.0.0.1, satisfying the Host check while genuinely being cross-origin)
+ * — the same gap webpack-dev-server, Vite, etc. carry, not specific to
+ * this implementation. Not worth defending against for a single-operator
+ * local tool.
+ */
+function isTrustedOrigin(req: IncomingMessage): boolean {
+  const host = req.headers.host;
+  if (!host) return false;
+  const matchesHost = (value: string | undefined): boolean | null => {
+    if (!value) return null;
+    try {
+      return new URL(value).host === host;
+    } catch {
+      return false; // present but unparseable — treat as a mismatch, not "absent"
+    }
+  };
+  const origin = matchesHost(req.headers.origin);
+  if (origin !== null) return origin;
+  const referer = matchesHost(req.headers.referer);
+  if (referer !== null) return referer;
+  return true;
+}
+
 function escapeHtml(s: string): string {
   return s.replace(
     /[&<>"']/g,
@@ -113,10 +158,14 @@ export function snapshotKey(snapshot: Snapshot): string {
 }
 
 /**
- * Start the read-only dashboard server. Binds to localhost only. Does NOT
- * register itself as an agent — it's a viewer, not a participant. Live
- * updates ride /api/events (SSE): a lazy ~1s tick rebuilds the snapshot
- * while at least one client is connected and pushes only when it changed.
+ * Start the dashboard server. Binds to localhost only — that keeps remote
+ * attackers out, but NOT another page in the operator's own browser, which
+ * is why the one write route (POST /api/feedback) has its own same-origin
+ * check and rate limit (see isTrustedOrigin above). Everything else is
+ * read-only. Does NOT register itself as an agent — it's a viewer/reporter,
+ * not a participant. Live updates ride /api/events (SSE): a lazy ~1s tick
+ * rebuilds the snapshot while at least one client is connected and pushes
+ * only when it changed.
  */
 export function serve(opts?: {
   port?: number;
@@ -134,6 +183,10 @@ export function serve(opts?: {
   assetsDir?: string;
   /** bypass loadConfig's real repo/user file lookup entirely (test hook) */
   config?: HandsConfig;
+  /** override the whole feedback-filing function POST /api/feedback calls (test hook) — takes priority over feedbackGh below */
+  fileFeedback?: (opts: { body: string; title?: string; cwd?: string }) => FeedbackResult;
+  /** override just the `gh` invocation the REAL fileFeedback() uses (test hook) — lets a test drive the actual route → fileFeedback() → gh chain without either mocking the whole function or shelling out for real */
+  feedbackGh?: GhRunner;
 }): Promise<ServeHandle> {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
@@ -141,6 +194,10 @@ export function serve(opts?: {
   const tickMs = opts?.tickMs ?? 1000;
   const booksTickMs = opts?.booksTickMs ?? 60_000;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
+  const fileFeedbackFn =
+    opts?.fileFeedback ?? ((args: { body: string; title?: string; cwd?: string }) =>
+      fileFeedback({ ...args, gh: opts?.feedbackGh }));
+  let feedbackRequestTimes: number[] = [];
   const store = new Store({ env });
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
@@ -333,6 +390,77 @@ export function serve(opts?: {
         res.writeHead(500, { "content-type": "application/json" });
         res.end(JSON.stringify({ error: String(err) }));
       }
+      return;
+    }
+
+    if (req.method === "POST" && url.startsWith("/api/feedback")) {
+      if (!isTrustedOrigin(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "cross-origin request rejected" }));
+        return;
+      }
+      // Check-but-don't-yet-consume: fail fast on a request that's already
+      // over the limit (skip buffering its body), but the slot itself is
+      // only spent once the request passes validation below — a user
+      // retrying after a typo'd title shouldn't burn through the window on
+      // requests that never reached fileFeedback() at all.
+      const now = Date.now();
+      feedbackRequestTimes = feedbackRequestTimes.filter((t) => now - t < FEEDBACK_RATE_LIMIT_WINDOW_MS);
+      if (feedbackRequestTimes.length >= FEEDBACK_RATE_LIMIT_MAX) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "too many feedback submissions — try again in a minute" }));
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let tooLarge = false;
+      req.on("data", (chunk: Buffer) => {
+        if (tooLarge) return;
+        chunks.push(chunk);
+        if (chunks.reduce((n, c) => n + c.length, 0) > MAX_FEEDBACK_BODY_BYTES) {
+          tooLarge = true;
+          res.writeHead(413, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "feedback body too large" }));
+          req.destroy();
+        }
+      });
+      req.on("end", () => {
+        if (tooLarge) return;
+        let parsed: { body?: unknown; title?: unknown };
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+        if (typeof parsed.body !== "string" || !parsed.body.trim()) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "body is required" }));
+          return;
+        }
+        if (typeof parsed.title === "string" && Buffer.byteLength(parsed.title, "utf8") > MAX_FEEDBACK_TITLE_BYTES) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: `title exceeds the ${MAX_FEEDBACK_TITLE_BYTES}-byte size bound` }));
+          return;
+        }
+        // validation passed — NOW this request counts against the window
+        feedbackRequestTimes.push(now);
+        const title = typeof parsed.title === "string" ? parsed.title : undefined;
+        let result: FeedbackResult;
+        try {
+          result = fileFeedbackFn({ body: parsed.body, title });
+        } catch (err) {
+          result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (result.ok) {
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ url: result.url }));
+        } else {
+          res.writeHead(502, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: result.error ?? "filing failed" }));
+        }
+      });
       return;
     }
 
