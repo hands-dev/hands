@@ -199,6 +199,9 @@ function merge(base, layer) {
       handle: layer.remote?.handle !== void 0 ? layer.remote.handle : base.remote.handle,
       project: layer.remote?.project !== void 0 ? layer.remote.project : base.remote.project
     },
+    crafts: {
+      sharedDir: layer.crafts?.sharedDir !== void 0 ? layer.crafts.sharedDir : base.crafts.sharedDir
+    },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll }
   };
@@ -251,6 +254,7 @@ var init_config = __esm({
         theming: true
       },
       remote: { url: null, handle: null, project: null },
+      crafts: { sharedDir: null },
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
@@ -567,10 +571,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path23) {
-  if (!path23)
+function getElementAtPath(obj, path24) {
+  if (!path24)
     return obj;
-  return path23.reduce((acc, key) => acc?.[key], obj);
+  return path24.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -882,11 +886,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path23, issues) {
+function prefixIssues(path24, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path23);
+    iss.path.unshift(path24);
     return iss;
   });
 }
@@ -1128,7 +1132,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path23 = []) => {
+  const processError = (error49, path24 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1138,7 +1142,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path23, ...issue2.path];
+        const fullpath = [...path24, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1170,8 +1174,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path23 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path23) {
+  const path24 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path24) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13865,13 +13869,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path23 = ref.slice(1).split("/").filter(Boolean);
-  if (path23.length === 0) {
+  const path24 = ref.slice(1).split("/").filter(Boolean);
+  if (path24.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path23[0] === defsKey) {
-    const key = path23[1];
+  if (path24[0] === defsKey) {
+    const key = path24[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17834,8 +17838,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path23) {
-      let input = path23;
+    function removeDotSegments(path24) {
+      let input = path24;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18087,8 +18091,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path23, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
+        const [path24, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path24 && path24 !== "/" ? path24 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -21487,12 +21491,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats2(ajv, list, fs24, exportName) {
+    function addFormats2(ajv, list, fs25, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs24[f]);
+        ajv.addFormat(f, fs25[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -21701,6 +21705,43 @@ var init_store = __esm({
       );
 
       CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
+    `);
+        this.db.exec(`
+      CREATE TABLE IF NOT EXISTS craft_notes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        craft_slug      TEXT NOT NULL,
+        brief_id        INTEGER,
+        source_agent    TEXT NOT NULL,
+        kind            TEXT NOT NULL,     -- mise | book | skill | friction | spillover
+        body            TEXT NOT NULL,
+        spillover_craft TEXT,
+        folded_at       INTEGER,           -- NULL = pending
+        created_at      INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_craft_notes_pending ON craft_notes (craft_slug, folded_at);
+
+      CREATE TABLE IF NOT EXISTS craft_briefs (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        craft_slug   TEXT NOT NULL,
+        mode         TEXT NOT NULL,        -- plan | execute
+        cwd          TEXT,
+        opened_by    TEXT NOT NULL,
+        task         TEXT,
+        picked_up_at INTEGER,
+        noted_at     INTEGER,
+        created_at   INTEGER NOT NULL,
+        expires_at   INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_craft_briefs_lease ON craft_briefs (craft_slug, mode, cwd, expires_at);
+
+      -- One row per craft: who currently holds the single-writer fold/distill pass.
+      CREATE TABLE IF NOT EXISTS craft_folds (
+        craft_slug TEXT PRIMARY KEY,
+        holder     TEXT NOT NULL,
+        expires_at INTEGER NOT NULL
+      );
     `);
         this.ensureColumn("agents", "branch", "TEXT");
         this.ensureColumn("agents", "activity", "TEXT");
@@ -22466,6 +22507,114 @@ var init_store = __esm({
           at: now
         });
       }
+      // --- crafts: briefs (dispatch ledger), notes (append-only capture), fold lease ---
+      createCraftBrief(input) {
+        const now = input.now ?? Date.now();
+        const expires = now + (input.ttlMs ?? 60 * 6e4);
+        return this.withRetry(() => {
+          const result = this.db.prepare(
+            `INSERT INTO craft_briefs (craft_slug, mode, cwd, opened_by, task, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).run(input.craftSlug, input.mode, input.cwd ?? null, input.openedBy, input.task ?? null, now, expires);
+          return Number(result.lastInsertRowid);
+        });
+      }
+      getCraftBrief(id) {
+        return this.db.prepare("SELECT * FROM craft_briefs WHERE id = ?").get(id);
+      }
+      markCraftBriefPickedUp(id, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare("UPDATE craft_briefs SET picked_up_at = COALESCE(picked_up_at, ?) WHERE id = ?").run(now, id)
+        );
+      }
+      markCraftBriefNoted(id, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare("UPDATE craft_briefs SET noted_at = COALESCE(noted_at, ?) WHERE id = ?").run(now, id)
+        );
+      }
+      /**
+       * Is there already an open (un-noted, unexpired) EXECUTE brief for this craft+cwd? The guard
+       * behind "parallel dispatch implies read-only" — a second execute-mode brief against the same
+       * craft+worktree is refused while one is still open, rather than letting two sub-agents write
+       * one worktree concurrently.
+       */
+      openExecuteBrief(craftSlug, cwd, now = Date.now()) {
+        return this.db.prepare(
+          `SELECT * FROM craft_briefs
+         WHERE craft_slug = ? AND cwd = ? AND mode = 'execute' AND noted_at IS NULL AND expires_at > ?
+         ORDER BY created_at DESC LIMIT 1`
+        ).get(craftSlug, cwd, now);
+      }
+      /** Append one learning. Concurrency-safe by construction — many writers, no read-modify-write. */
+      insertCraftNote(input) {
+        const now = input.now ?? Date.now();
+        const id = this.withRetry(() => {
+          const result = this.db.prepare(
+            `INSERT INTO craft_notes (craft_slug, brief_id, source_agent, kind, body, spillover_craft, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            input.craftSlug,
+            input.briefId ?? null,
+            input.sourceAgent,
+            input.kind,
+            input.body,
+            input.spilloverCraft ?? null,
+            now
+          );
+          return Number(result.lastInsertRowid);
+        });
+        this.journal("craft.note", {
+          id,
+          craft: input.craftSlug,
+          briefId: input.briefId ?? null,
+          by: input.sourceAgent,
+          kind: input.kind,
+          body: input.body,
+          spilloverCraft: input.spilloverCraft ?? null,
+          at: now
+        });
+        return id;
+      }
+      pendingCraftNotes(craftSlug) {
+        return this.db.prepare("SELECT * FROM craft_notes WHERE craft_slug = ? AND folded_at IS NULL ORDER BY id").all(craftSlug);
+      }
+      /**
+       * Every craft slug carrying at least one pending note — independent of whether a book file
+       * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
+       * doctor's backlog check doesn't miss a craft just because listCrafts()'s file-based roster
+       * hasn't picked it up.
+       */
+      pendingCraftSlugs() {
+        return this.db.prepare("SELECT DISTINCT craft_slug FROM craft_notes WHERE folded_at IS NULL").all().map((r) => r.craft_slug);
+      }
+      markCraftNotesFolded(craftSlug, throughNoteId, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare("UPDATE craft_notes SET folded_at = ? WHERE craft_slug = ? AND id <= ? AND folded_at IS NULL").run(now, craftSlug, throughNoteId)
+        );
+      }
+      /**
+       * Acquire the single-writer fold lease for a craft — an expired (or absent) lease is free to
+       * take; a live one held by someone else is refused. Not journaled: purely local coordination
+       * for "who is distilling this book right now," same spirit as wake_log.
+       */
+      acquireCraftFoldLease(craftSlug, holder, ttlMs = 10 * 6e4, now = Date.now()) {
+        const expires = now + ttlMs;
+        const result = this.withRetry(
+          () => this.db.prepare(
+            `INSERT INTO craft_folds (craft_slug, holder, expires_at) VALUES (?, ?, ?)
+           ON CONFLICT(craft_slug) DO UPDATE SET holder = excluded.holder, expires_at = excluded.expires_at
+           WHERE craft_folds.expires_at < ?`
+          ).run(craftSlug, holder, expires, now)
+        );
+        if (result.changes > 0) return true;
+        const existing = this.db.prepare("SELECT holder FROM craft_folds WHERE craft_slug = ?").get(craftSlug);
+        return existing?.holder === holder;
+      }
+      releaseCraftFoldLease(craftSlug, holder) {
+        this.withRetry(
+          () => this.db.prepare("DELETE FROM craft_folds WHERE craft_slug = ? AND holder = ?").run(craftSlug, holder)
+        );
+      }
       // --- journal replay (remote.ts restore path) ---
       /**
        * Materialize one journal event into the DB. Inserts carry their original
@@ -22598,6 +22747,14 @@ var init_store = __esm({
                 `UPDATE todos SET state = ?, done_signal = COALESCE(?, done_signal), updated_at = ?
                WHERE id = ?`
               ).run(f("state"), f("doneSignal"), at, f("id"))
+            );
+            return true;
+          case "craft.note":
+            this.withRetry(
+              () => this.db.prepare(
+                `INSERT OR IGNORE INTO craft_notes (id, craft_slug, brief_id, source_agent, kind, body, spillover_craft, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+              ).run(f("id"), f("craft"), f("briefId"), f("by"), f("kind"), f("body"), f("spilloverCraft"), at)
             );
             return true;
           default:
@@ -22792,7 +22949,7 @@ var init_priorities = __esm({
 });
 
 // src/digest.ts
-import * as fs10 from "node:fs";
+import * as fs9 from "node:fs";
 import * as path8 from "node:path";
 function dayOf(ts) {
   return new Date(ts).toISOString().slice(0, 10);
@@ -22924,7 +23081,7 @@ function renderIndex(days, opts) {
 function writeIfOwn(file2, content) {
   let existing = null;
   try {
-    existing = fs10.readFileSync(file2, "utf8");
+    existing = fs9.readFileSync(file2, "utf8");
   } catch {
   }
   if (existing !== null) {
@@ -22932,14 +23089,14 @@ function writeIfOwn(file2, content) {
     const stamped = existing.match(STAMP_RE);
     if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
   }
-  fs10.writeFileSync(file2, content);
+  fs9.writeFileSync(file2, content);
   return true;
 }
 function regenerateDigests(journal, dates) {
   const events = readEvents(journal.dir, journal.project, journal.handle);
   if (events.length === 0) return [];
   const handleDir = path8.join(journal.dir, "journal", journal.project, journal.handle);
-  fs10.mkdirSync(handleDir, { recursive: true });
+  fs9.mkdirSync(handleDir, { recursive: true });
   const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
   const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
   const changed = [];
@@ -23216,7 +23373,7 @@ var init_snapshot = __esm({
 
 // src/remote.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs11 from "node:fs";
+import * as fs10 from "node:fs";
 import * as os6 from "node:os";
 import * as path11 from "node:path";
 function git3(cwd, args) {
@@ -23296,8 +23453,8 @@ function localBooksOriginPath(env = process.env, cwd = process.cwd()) {
 function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
   const dir = localBooksOriginPath(env, cwd);
   try {
-    if (!fs11.existsSync(path11.join(dir, "HEAD"))) {
-      fs11.mkdirSync(dir, { recursive: true, mode: 448 });
+    if (!fs10.existsSync(path11.join(dir, "HEAD"))) {
+      fs10.mkdirSync(dir, { recursive: true, mode: 448 });
       git3(dir, ["init", "-q", "--bare", "-b", "main", dir]);
     }
     return dir;
@@ -23307,8 +23464,8 @@ function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
 }
 function ensureRepo(dir, url2) {
   try {
-    fs11.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs11.existsSync(path11.join(dir, ".git"))) {
+    fs10.mkdirSync(dir, { recursive: true, mode: 448 });
+    if (!fs10.existsSync(path11.join(dir, ".git"))) {
       git3(dir, ["init", "-q", "-b", "main"]);
       git3(dir, ["config", "user.name", "hands"]);
       git3(dir, ["config", "user.email", "hands@localhost"]);
@@ -23350,7 +23507,7 @@ function readMarker(dir) {
   const file2 = path11.join(dir, MARKER_FILE);
   let raw;
   try {
-    raw = fs11.readFileSync(file2, "utf8");
+    raw = fs10.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -23384,7 +23541,7 @@ function validateJournal(dir, opts) {
   if (!opts?.write) return { ok: true };
   let entries = [];
   try {
-    entries = fs11.readdirSync(dir).filter((e) => e !== ".git");
+    entries = fs10.readdirSync(dir).filter((e) => e !== ".git");
   } catch {
     return { ok: false, reason: `journal dir unreadable: ${dir}` };
   }
@@ -23396,7 +23553,7 @@ function validateJournal(dir, opts) {
       reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
-  fs11.writeFileSync(path11.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+  fs10.writeFileSync(path11.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
   return { ok: true, bootstrapped: true };
 }
@@ -23408,14 +23565,14 @@ function syncStatusPath(dir) {
 }
 function writeSyncStatus(dir, result, now) {
   try {
-    fs11.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
+    fs10.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
 `);
   } catch {
   }
 }
 function readSyncStatus(dir) {
   try {
-    return JSON.parse(fs11.readFileSync(syncStatusPath(dir), "utf8"));
+    return JSON.parse(fs10.readFileSync(syncStatusPath(dir), "utf8"));
   } catch {
     return null;
   }
@@ -23439,10 +23596,10 @@ function changedLogDates(dir, head0, journal) {
 }
 function writeIfChanged(file2, content) {
   try {
-    if (fs11.readFileSync(file2, "utf8") === content) return false;
+    if (fs10.readFileSync(file2, "utf8") === content) return false;
   } catch {
   }
-  fs11.writeFileSync(file2, content);
+  fs10.writeFileSync(file2, content);
   return true;
 }
 function syncPush(journal, opts) {
@@ -23451,7 +23608,7 @@ function syncPush(journal, opts) {
   const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
     try {
-      if (now - fs11.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
+      if (now - fs10.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
     } catch {
     }
   }
@@ -23462,7 +23619,7 @@ function syncPush(journal, opts) {
   try {
     const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
     const ownPaths = [path11.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs11.existsSync(path11.join(dir, p)));
+    const own = ownPaths.filter((p) => fs10.existsSync(path11.join(dir, p)));
     if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
     let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
@@ -23491,7 +23648,7 @@ function syncPush(journal, opts) {
     }
     if (opts?.store) {
       const handleDir = path11.join(dir, "journal", project, handle);
-      fs11.mkdirSync(handleDir, { recursive: true });
+      fs10.mkdirSync(handleDir, { recursive: true });
       const snapshotFile = path11.join(handleDir, "dashboard.json");
       const pub = buildPublicSnapshot(opts.store, { handle, project, now });
       if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}
@@ -23503,11 +23660,11 @@ function syncPush(journal, opts) {
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
     if (!dirty && ahead === "0") {
-      fs11.writeFileSync(marker, "");
+      fs10.writeFileSync(marker, "");
       return finish({ status: "clean" });
     }
     git3(dir, ["push", "-q", "-u", "origin", "main"]);
-    fs11.writeFileSync(marker, "");
+    fs10.writeFileSync(marker, "");
     return finish({ status: "pushed" });
   } catch (err) {
     return finish({
@@ -23538,7 +23695,7 @@ function openJournal(options) {
     append(type, data) {
       if (type === "cursor") return;
       try {
-        fs11.mkdirSync(logDir, { recursive: true });
+        fs10.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const event = {
           v: JOURNAL_VERSION,
@@ -23547,7 +23704,7 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs11.appendFileSync(path11.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+        fs10.appendFileSync(path11.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
 `, {
           mode: 384
         });
@@ -23559,7 +23716,7 @@ function openJournal(options) {
 function readEventsFromDir(logDir, into, onlyFile) {
   let files = [];
   try {
-    files = fs11.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
+    files = fs10.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
     return;
   }
@@ -23567,7 +23724,7 @@ function readEventsFromDir(logDir, into, onlyFile) {
   for (const file2 of files) {
     let body;
     try {
-      body = fs11.readFileSync(path11.join(logDir, file2), "utf8");
+      body = fs10.readFileSync(path11.join(logDir, file2), "utf8");
     } catch {
       continue;
     }
@@ -23586,23 +23743,28 @@ function readEvents(dir, project, handle) {
   readEventsFromDir(path11.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
+function sharedCraftsDir(config2, cwd = process.cwd()) {
+  const root = repoInfo(cwd)?.repoRoot;
+  if (!root) return null;
+  return path11.join(root, config2.crafts.sharedDir?.trim() || ".hands/crafts");
+}
+function personalCraftsDir(config2, env = process.env, cwd = process.cwd()) {
+  const booksOn = Boolean(config2.remote.url?.trim());
+  return booksOn ? path11.join(journalDir(env, cwd), "journal", resolveProject(config2, cwd), resolveHandle(config2), "crafts") : path11.join(coordinationDir(env, cwd), "crafts");
+}
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
-  const enabled = Boolean(config2.remote.url?.trim());
-  const dir = enabled ? path11.join(
-    journalDir(env, cwd),
-    "journal",
-    resolveProject(config2, cwd),
-    resolveHandle(config2),
-    "crafts"
-  ) : path11.join(coordinationDir(env, cwd), "crafts");
   const slug = sanitizeSegment(craft, "unnamed");
+  const shared = sharedCraftsDir(config2, cwd);
+  const scope = shared && fs10.existsSync(path11.join(shared, `${slug}.md`)) ? "shared" : "personal";
+  const dir = scope === "shared" && shared ? shared : personalCraftsDir(config2, env, cwd);
   return {
     dir,
     slug,
     book: path11.join(dir, `${slug}.md`),
+    mise: path11.join(dir, `${slug}.mise.md`),
     skill: path11.join(dir, `${slug}.skill.md`),
-    durable: enabled
+    scope
   };
 }
 function clip(text, max = 120) {
@@ -23645,7 +23807,7 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
   const limit = opts?.limitPerHandle ?? 15;
   let handles = [];
   try {
-    handles = fs11.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs10.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -23654,7 +23816,7 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
     const logDir = path11.join(dir, "journal", project, handle, "log");
     let files = [];
     try {
-      files = fs11.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
+      files = fs10.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
     } catch {
     }
     const events = [];
@@ -23677,13 +23839,13 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
 function readOtherCrafts(dir, project, ownHandle) {
   let handles = [];
   try {
-    handles = fs11.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs10.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const read = (file2) => {
     try {
-      return fs11.readFileSync(file2, "utf8");
+      return fs10.readFileSync(file2, "utf8");
     } catch {
       return null;
     }
@@ -23693,7 +23855,7 @@ function readOtherCrafts(dir, project, ownHandle) {
     const craftsDir = path11.join(dir, "journal", project, handle, "crafts");
     let files = [];
     try {
-      files = fs11.readdirSync(craftsDir);
+      files = fs10.readdirSync(craftsDir);
     } catch {
       continue;
     }
@@ -23713,7 +23875,7 @@ function readOtherCrafts(dir, project, ownHandle) {
 }
 function listProjects(dir) {
   try {
-    return fs11.readdirSync(path11.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs10.readdirSync(path11.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -23762,35 +23924,35 @@ var init_remote = __esm({
 });
 
 // src/seed-permissions.ts
-import * as fs12 from "node:fs";
-import * as path12 from "node:path";
+import * as fs13 from "node:fs";
+import * as path13 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function unseedStationPermissions(dir) {
-  const file2 = path12.join(dir, SEEDED_RELPATH);
-  if (!fs12.existsSync(file2)) return false;
-  fs12.rmSync(file2, { force: true });
-  const parent = path12.dirname(file2);
+  const file2 = path13.join(dir, SEEDED_RELPATH);
+  if (!fs13.existsSync(file2)) return false;
+  fs13.rmSync(file2, { force: true });
+  const parent = path13.dirname(file2);
   try {
-    if (fs12.readdirSync(parent).length === 0) fs12.rmdirSync(parent);
+    if (fs13.readdirSync(parent).length === 0) fs13.rmdirSync(parent);
   } catch {
   }
   return true;
 }
 function seedStationPermissions(dir) {
-  const file2 = path12.join(dir, ".claude", "settings.local.json");
-  if (fs12.existsSync(file2)) return { path: file2, written: false };
-  fs12.mkdirSync(path12.dirname(file2), { recursive: true });
-  fs12.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+  const file2 = path13.join(dir, ".claude", "settings.local.json");
+  if (fs13.existsSync(file2)) return { path: file2, written: false };
+  fs13.mkdirSync(path13.dirname(file2), { recursive: true });
+  fs13.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
 `);
   return { path: file2, written: true };
 }
 function mergeStationSettings(dir, patch) {
-  const file2 = path12.join(dir, SEEDED_RELPATH);
+  const file2 = path13.join(dir, SEEDED_RELPATH);
   let existing = {};
   try {
-    const raw = fs12.readFileSync(file2, "utf8");
+    const raw = fs13.readFileSync(file2, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") existing = parsed;
   } catch {
@@ -23804,8 +23966,8 @@ function mergeStationSettings(dir, patch) {
     }
   }
   if (!changed) return { path: file2, written: false };
-  fs12.mkdirSync(path12.dirname(file2), { recursive: true });
-  fs12.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
+  fs13.mkdirSync(path13.dirname(file2), { recursive: true });
+  fs13.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -23878,9 +24040,9 @@ __export(provision_exports, {
   stationRoot: () => stationRoot
 });
 import { execFileSync as execFileSync5, spawn } from "node:child_process";
-import * as fs13 from "node:fs";
+import * as fs14 from "node:fs";
 import * as os7 from "node:os";
-import * as path13 from "node:path";
+import * as path14 from "node:path";
 function git4(cwd, args) {
   return execFileSync5("git", args, {
     cwd,
@@ -23897,7 +24059,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path13.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path14.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -23906,7 +24068,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs13.readdirSync(root);
+    names = fs14.readdirSync(root);
   } catch {
     return [];
   }
@@ -23918,7 +24080,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path13.join(root, name),
+      dir: path14.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -24003,14 +24165,14 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs13.mkdirSync(root, { recursive: true });
+  fs14.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path13.join(root, id);
+    const dir = path14.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -24024,13 +24186,13 @@ function addStations(count, opts) {
     let sessionName;
     if (cfg.stations.theming) {
       const assignment = assignStationTheme({
-        repoLabel: path13.basename(info.repoRoot),
+        repoLabel: path14.basename(info.repoRoot),
         repoSlug: info.slug,
         index,
         env: opts?.env
       });
-      fs13.mkdirSync(path13.dirname(assignment.file), { recursive: true });
-      fs13.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+      fs14.mkdirSync(path14.dirname(assignment.file), { recursive: true });
+      fs14.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
 `);
       mergeStationSettings(dir, { theme: assignment.themeId });
       themeColor = assignment.color.hex;
@@ -24060,10 +24222,10 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path13.join(root, `station-${index}`);
+  const dir = path14.join(root, `station-${index}`);
   if (cfg.stations.theming) {
     try {
-      fs13.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+      fs14.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
     } catch {
     }
   }
@@ -24076,7 +24238,7 @@ function removeStation(id, opts) {
   } catch {
   }
   let removed = false;
-  if (fs13.existsSync(dir)) {
+  if (fs14.existsSync(dir)) {
     if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
@@ -24203,9 +24365,9 @@ var init_feedback = __esm({
 });
 
 // src/tokens.ts
-import * as fs14 from "node:fs";
+import * as fs15 from "node:fs";
 import * as os8 from "node:os";
-import * as path14 from "node:path";
+import * as path15 from "node:path";
 function encodeProjectDir(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
@@ -24224,17 +24386,17 @@ var init_tokens = __esm({
       /** agentId → messageId → final usage (last write wins — the dedupe) */
       messages = /* @__PURE__ */ new Map();
       constructor(opts) {
-        this.projectsDir = opts?.projectsDir ?? path14.join(os8.homedir(), ".claude", "projects");
+        this.projectsDir = opts?.projectsDir ?? path15.join(os8.homedir(), ".claude", "projects");
         this.now = opts?.now ?? (() => Date.now());
       }
       sample(agents) {
         const now = this.now();
         for (const agent of agents) {
           if (!agent.cwd) continue;
-          const dir = path14.join(this.projectsDir, encodeProjectDir(agent.cwd));
+          const dir = path15.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
-            names = fs14.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+            names = fs15.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
           } catch {
             continue;
           }
@@ -24244,9 +24406,9 @@ var init_tokens = __esm({
             this.messages.set(agent.id, byMsg);
           }
           for (const name of names) {
-            const file2 = path14.join(dir, name);
+            const file2 = path15.join(dir, name);
             try {
-              const stat = fs14.statSync(file2);
+              const stat = fs15.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
               this.readAppended(file2, stat.size, byMsg);
             } catch {
@@ -24254,21 +24416,21 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs14.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path14.join(dir, e.name, "subagents"));
+            sessionDirs = fs15.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path15.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
           for (const subDir of sessionDirs) {
             let subNames = [];
             try {
-              subNames = fs14.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+              subNames = fs15.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
             } catch {
               continue;
             }
             for (const name of subNames) {
-              const file2 = path14.join(subDir, name);
+              const file2 = path15.join(subDir, name);
               try {
-                const stat = fs14.statSync(file2);
+                const stat = fs15.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
                 this.readAppended(file2, stat.size, byMsg, file2);
               } catch {
@@ -24296,11 +24458,11 @@ var init_tokens = __esm({
         if (size <= state.offset) return;
         const length = size - state.offset;
         const buffer = Buffer.alloc(length);
-        const fd = fs14.openSync(file2, "r");
+        const fd = fs15.openSync(file2, "r");
         try {
-          fs14.readSync(fd, buffer, 0, length, state.offset);
+          fs15.readSync(fd, buffer, 0, length, state.offset);
         } finally {
-          fs14.closeSync(fd);
+          fs15.closeSync(fd);
         }
         state.offset = size;
         let text = state.partial + buffer.toString("utf8");
@@ -24357,10 +24519,10 @@ var init_tokens = __esm({
       callLabel(callFile) {
         const cached2 = this.metaLabels.get(callFile);
         if (cached2) return cached2;
-        let label = path14.basename(callFile, ".jsonl");
+        let label = path15.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
-            fs14.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
+            fs15.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
           );
           if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
           else if (meta3.agentType) label = meta3.agentType;
@@ -24426,9 +24588,9 @@ __export(serve_exports, {
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
-import * as fs15 from "node:fs";
+import * as fs16 from "node:fs";
 import { createServer } from "node:http";
-import * as path15 from "node:path";
+import * as path16 from "node:path";
 import { fileURLToPath } from "node:url";
 function isTrustedOrigin(req) {
   const host = req.headers.host;
@@ -24454,7 +24616,7 @@ function escapeHtml(s) {
   );
 }
 function kitchenName(db) {
-  return path15.basename(path15.dirname(db)) || "kitchen";
+  return path16.basename(path16.dirname(db)) || "kitchen";
 }
 function shellHtml(kitchen) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
@@ -24466,13 +24628,13 @@ function shellHtml(kitchen) {
 `;
 }
 function defaultAssetsDir() {
-  const here = path15.dirname(fileURLToPath(import.meta.url));
+  const here = path16.dirname(fileURLToPath(import.meta.url));
   return [
-    path15.join(here, "assets"),
+    path16.join(here, "assets"),
     // plugin/dist/server-impl.mjs → sibling assets/
-    path15.join(here, "..", "..", "plugin", "dist", "assets")
+    path16.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs15.existsSync(d)) ?? null;
+  ].find((d) => fs16.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -24593,7 +24755,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs15.readFileSync(path15.join(assetsDir, name));
+        const body = fs16.readFileSync(path16.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -24733,7 +24895,7 @@ function serve(opts) {
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
       const pidFile = pidPath(env);
       try {
-        fs15.writeFileSync(pidFile, String(process.pid), { mode: 384 });
+        fs16.writeFileSync(pidFile, String(process.pid), { mode: 384 });
       } catch {
       }
       resolve3({
@@ -24758,7 +24920,7 @@ function serve(opts) {
           server.close();
           store.close();
           try {
-            if (fs15.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs15.unlinkSync(pidFile);
+            if (fs16.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs16.unlinkSync(pidFile);
           } catch {
           }
         }
@@ -24789,16 +24951,16 @@ var init_serve = __esm({
 });
 
 // src/projects.ts
-import * as fs17 from "node:fs";
+import * as fs18 from "node:fs";
 import * as os9 from "node:os";
-import * as path16 from "node:path";
+import * as path17 from "node:path";
 function registryPath(env = process.env) {
   const home = env.HANDS_TEST_HOME?.trim() || os9.homedir();
-  return path16.join(home, ".hands", "projects.json");
+  return path17.join(home, ".hands", "projects.json");
 }
 function readRegistry(env = process.env) {
   try {
-    const raw = fs17.readFileSync(registryPath(env), "utf8");
+    const raw = fs18.readFileSync(registryPath(env), "utf8");
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return { projects: [] };
     const list = parsed.projects;
@@ -24815,8 +24977,8 @@ function isProjectEntry(value) {
 }
 function writeRegistry(registry2, env = process.env) {
   const file2 = registryPath(env);
-  fs17.mkdirSync(path16.dirname(file2), { recursive: true, mode: 448 });
-  fs17.writeFileSync(file2, `${JSON.stringify(registry2, null, 2)}
+  fs18.mkdirSync(path17.dirname(file2), { recursive: true, mode: 448 });
+  fs18.writeFileSync(file2, `${JSON.stringify(registry2, null, 2)}
 `, { mode: 384 });
 }
 function registerProject(cwd = process.cwd(), opts) {
@@ -24824,7 +24986,7 @@ function registerProject(cwd = process.cwd(), opts) {
   if (!info) return null;
   const env = opts?.env ?? process.env;
   const entry = {
-    name: opts?.name?.trim() || path16.basename(info.repoRoot),
+    name: opts?.name?.trim() || path17.basename(info.repoRoot),
     repoRoot: info.repoRoot,
     slug: info.slug,
     registeredAt: opts?.now ?? Date.now()
@@ -24837,7 +24999,7 @@ function registerProject(cwd = process.cwd(), opts) {
 function resolveProject2(name, env = process.env) {
   const match = readRegistry(env).projects.find((p) => p.name === name);
   if (!match) return null;
-  if (!fs17.existsSync(match.repoRoot)) {
+  if (!fs18.existsSync(match.repoRoot)) {
     pruneMissing(env);
     return null;
   }
@@ -24845,7 +25007,7 @@ function resolveProject2(name, env = process.env) {
 }
 function pruneMissing(env = process.env) {
   const registry2 = readRegistry(env);
-  const live = registry2.projects.filter((p) => fs17.existsSync(p.repoRoot));
+  const live = registry2.projects.filter((p) => fs18.existsSync(p.repoRoot));
   const dropped = registry2.projects.length - live.length;
   if (dropped > 0) writeRegistry({ projects: live }, env);
   return dropped;
@@ -28139,7 +28301,7 @@ function convertStandardElicitationSchema(schema) {
 function isAnnotationOnlyJsonSchemaKeyword(key) {
   return ANNOTATION_ONLY_JSON_SCHEMA_KEYWORDS.has(key) || key.startsWith("x-");
 }
-function walkProperty(node, path23, vendor, unsupported) {
+function walkProperty(node, path24, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -28147,8 +28309,8 @@ function walkProperty(node, path23, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path23}.${key}`);
-  } else unsupported.push(`${path23}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path24}.${key}`);
+  } else unsupported.push(`${path24}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -28165,11 +28327,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema2, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path23 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path23}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path24 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path24}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path23 ? `${path23}.${key}` : key;
+    const childPath = path24 ? `${path24}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -28782,9 +28944,9 @@ var init_src_D_zzAWoS = __esm({
         });
         const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
         if (!parsed.success) for (const issue2 of parsed.error.issues) {
-          const path23 = issue2.path.map(String);
-          const key = path23.length > 0 ? path23.join(".") : "_meta";
-          if (path23.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+          const path24 = issue2.path.map(String);
+          const key = path24.length > 0 ? path24.join(".") : "_meta";
+          if (path24.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
           issues.push({
             key,
             problem: issue2.message
@@ -32939,8 +33101,8 @@ var init_ajvProvider_97rDpkRx = __esm({
         for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
         return ind;
       }
-      function removeDotSegments(path23) {
-        let input = path23;
+      function removeDotSegments(path24) {
+        let input = path24;
         const output = [];
         let nextSlash = -1;
         let len = 0;
@@ -33093,8 +33255,8 @@ var init_ajvProvider_97rDpkRx = __esm({
           wsComponent.secure = void 0;
         }
         if (wsComponent.resourceName) {
-          const [path23, query] = wsComponent.resourceName.split("?");
-          wsComponent.path = path23 && path23 !== "/" ? path23 : void 0;
+          const [path24, query] = wsComponent.resourceName.split("?");
+          wsComponent.path = path24 && path24 !== "/" ? path24 : void 0;
           wsComponent.query = query;
           wsComponent.resourceName = void 0;
         }
@@ -37082,11 +37244,11 @@ var init_ajvProvider_97rDpkRx = __esm({
         if (!f) throw new Error(`Unknown format "${name}"`);
         return f;
       };
-      function addFormats2(ajv, list, fs24, exportName) {
+      function addFormats2(ajv, list, fs25, exportName) {
         var _a2;
         var _b;
         (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
-        for (const f of list) ajv.addFormat(f, fs24[f]);
+        for (const f of list) ajv.addFormat(f, fs25[f]);
       }
       module.exports = exports = formatsPlugin;
       Object.defineProperty(exports, "__esModule", { value: true });
@@ -38111,9 +38273,9 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs22 from "node:fs";
+import * as fs23 from "node:fs";
 import * as os13 from "node:os";
-import * as path21 from "node:path";
+import * as path22 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -38147,10 +38309,10 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path21.join(info.repoRoot, CONFIG_BASENAME);
+      const configPath = path22.join(info.repoRoot, CONFIG_BASENAME);
       const entry = registerProject(info.repoRoot);
       if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
-      if (fs22.existsSync(configPath)) {
+      if (fs23.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: hands books <url>)");
       } else {
@@ -38178,7 +38340,7 @@ async function runInit(argv) {
           );
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs22.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs23.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
@@ -38211,7 +38373,7 @@ import { execFileSync as execFileSync9, spawnSync } from "node:child_process";
 import * as os14 from "node:os";
 
 // src/server.ts
-import * as fs16 from "node:fs";
+import * as fs17 from "node:fs";
 import { fileURLToPath as fileURLToPath2, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -38573,8 +38735,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path23, errorMaps, issueData } = params;
-  const fullPath = [...path23, ...issueData.path || []];
+  const { data, path: path24, errorMaps, issueData } = params;
+  const fullPath = [...path24, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -38689,11 +38851,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path23, key) {
+  constructor(parent, value, path24, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path23;
+    this._path = path24;
     this._key = key;
   }
   get path() {
@@ -47917,11 +48079,172 @@ function runPublish(store, opts) {
 }
 
 // src/subagent-stop.ts
-import * as fs9 from "node:fs";
+import * as fs12 from "node:fs";
+
+// src/crafts.ts
+init_remote();
+import * as fs11 from "node:fs";
+import * as path12 from "node:path";
+var COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
+var DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
+function parseCraftHeader(bookContent) {
+  if (!bookContent) return { covers: null, distilled: null };
+  const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
+  return {
+    covers: COVERS_RE.exec(line)?.[1]?.trim() || null,
+    distilled: DISTILLED_RE.exec(line)?.[1] ?? null
+  };
+}
+function readFileSafe(p) {
+  try {
+    const body = fs11.readFileSync(p, "utf8").trim();
+    return body || null;
+  } catch {
+    return null;
+  }
+}
+function listSlugsIn(dir) {
+  if (!dir) return [];
+  let entries;
+  try {
+    entries = fs11.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return entries.filter((f) => f.endsWith(".md") && !f.endsWith(".mise.md") && !f.endsWith(".skill.md")).map((f) => f.slice(0, -".md".length));
+}
+function listCrafts(store, config2, env = process.env, cwd = process.cwd()) {
+  const shared = sharedCraftsDir(config2, cwd);
+  const personal = personalCraftsDir(config2, env, cwd);
+  const seen = /* @__PURE__ */ new Map();
+  for (const [dir, scope] of [
+    [shared, "shared"],
+    [personal, "personal"]
+  ]) {
+    for (const slug of listSlugsIn(dir)) {
+      if (seen.has(slug) || !dir) continue;
+      const { covers, distilled } = parseCraftHeader(readFileSafe(path12.join(dir, `${slug}.md`)));
+      seen.set(slug, { slug, scope, covers, distilled, pendingNotes: store.pendingCraftNotes(slug).length });
+    }
+  }
+  return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+}
+function formatRosterContext(entries) {
+  if (entries.length === 0) {
+    return "\n\nNo crafts founded yet. Crafts are dispatched as sub-agents (hands_brief), not held \u2014 found one via /hands:crafts only for a durable, recurring beat.";
+  }
+  const lines = entries.map((e) => {
+    const staleness = e.distilled ? "" : " (never distilled)";
+    const pending = e.pendingNotes ? ` \xB7 ${e.pendingNotes} pending note(s)` : "";
+    return `- craft-${e.slug} [${e.scope}] \u2014 ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
+  });
+  const cap = 1500;
+  let body = lines.join("\n");
+  const points = Array.from(body);
+  if (points.length > cap) body = `${points.slice(0, cap).join("")}
+\u2026(see hands_crafts for the rest)`;
+  return "\n\n## Crafts available (dispatch as sub-agents \u2014 don't do their work yourself)\n" + body + `
+Dispatch: hands_brief({ craft: "<slug>" }), paste the returned chit into the Agent tool's prompt. Read-only (plan mode) only for now. hands_crafts gives the full roster on demand.`;
+}
+function composeChit(brief, covers) {
+  const lines = [
+    `You are carrying the craft "${brief.craft_slug}" (brief #${brief.id}, mode: ${brief.mode}) for this one turn.`,
+    covers ? `Covers: ${covers}` : null,
+    "",
+    `FIRST ACTION, before anything else: call hands_mise({ briefId: ${brief.id} }).`,
+    "  Fallback if that tool is unavailable: Read these files, in this order \u2014 the craft's mise, then skill, then book (paths from hands_paths' craftsDir/sharedCraftsDir).",
+    "Trust what they tell you before re-deriving it; they are a previous holder's distillation.",
+    "",
+    brief.mode === "execute" ? "EXECUTE: edit only inside your caller's own worktree. Never isolate into a fresh worktree yourself." : "PLAN MODE: read, reason, propose. Do not edit, write, commit, or run mutating commands.",
+    "",
+    "BEFORE YOU RETURN, emit this block verbatim-shaped, last thing in your final message:",
+    "```craft-note",
+    `brief: ${brief.id}`,
+    `craft: ${brief.craft_slug}`,
+    "nothing-new: true|false",
+    "mise: <path/command \u2014 one line, only if it differs from what you were told>",
+    "book: <decision/fact/gotcha \u2014 one line>",
+    "skill: <a procedure or check you settled on \u2014 one line>",
+    "friction: <the craft's book/skill/mise was wrong, or a check was slow \u2014 one line>",
+    "spillover(<other-craft-slug>): <something you learned that belongs to a DIFFERENT craft>",
+    "```",
+    'Zero or more of mise/book/skill/friction/spillover lines, each is one learning. "nothing-new: true" is a correct and welcome answer \u2014 never invent learnings to fill the block.'
+  ];
+  return lines.filter((l) => l !== null).join("\n");
+}
+var NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
+var KV_RE = /^(mise|book|skill|friction):\s*(.+)$/;
+var SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
+function parseCraftNoteBlock(text) {
+  let last = null;
+  const re = new RegExp(NOTE_BLOCK_RE, "g");
+  for (let m = re.exec(text); m; m = re.exec(text)) last = m;
+  if (!last) return null;
+  const body = last[1] ?? "";
+  let briefId = null;
+  let craftSlug = null;
+  let nothingNew = false;
+  const entries = [];
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const brief = /^brief:\s*(\d+)/.exec(line);
+    if (brief) {
+      briefId = Number(brief[1]);
+      continue;
+    }
+    const craft = /^craft:\s*(\S+)/.exec(line);
+    if (craft) {
+      craftSlug = sanitizeSegment(craft[1], "unnamed");
+      continue;
+    }
+    const nn = /^nothing-new:\s*(true|false)/.exec(line);
+    if (nn) {
+      nothingNew = nn[1] === "true";
+      continue;
+    }
+    const kv = KV_RE.exec(line);
+    if (kv) {
+      entries.push({ kind: kv[1], body: kv[2] });
+      continue;
+    }
+    const spill = SPILLOVER_RE.exec(line);
+    if (spill) {
+      entries.push({ kind: "spillover", body: spill[2], spilloverCraft: sanitizeSegment(spill[1]) });
+    }
+  }
+  return { briefId, craftSlug, nothingNew, entries };
+}
+var FOLD_INSTRUCTIONS = "Distill: rewrite the book/mise/skill IN PLACE from the pending notes below plus what's already there \u2014 never append. Placement rule: a path or command is MISE; a sequence of steps is SKILL; a decision, a why, or a fact is BOOK. Discard notes that merely restate what's already written \u2014 that discard step is what keeps a craft from turning into a growing log instead of a distillation. Keep the book \u2264150 lines. Stamp the header when done: `> covers: <domains> \xB7 distilled: <today> from <n> learnings`. Then call hands_fold_done with the same throughNoteId this call returned.";
+function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) {
+  const files = craftFiles(craft, env, cwd);
+  const pending = store.pendingCraftNotes(files.slug);
+  return {
+    craftSlug: files.slug,
+    scope: files.scope,
+    book: readFileSafe(files.book),
+    mise: readFileSafe(files.mise),
+    skill: readFileSafe(files.skill),
+    bookPath: files.book,
+    misePath: files.mise,
+    skillPath: files.skill,
+    pendingNotes: pending.map((n) => ({
+      id: n.id,
+      kind: n.kind,
+      body: n.body,
+      sourceAgent: n.source_agent,
+      spilloverCraft: n.spillover_craft
+    })),
+    throughNoteId: pending.reduce((max, n) => Math.max(max, n.id), 0),
+    instructions: FOLD_INSTRUCTIONS
+  };
+}
+
+// src/subagent-stop.ts
 function totalOutputTokens(transcriptPath) {
   let raw;
   try {
-    raw = fs9.readFileSync(transcriptPath, "utf8");
+    raw = fs12.readFileSync(transcriptPath, "utf8");
   } catch {
     return null;
   }
@@ -47947,18 +48270,74 @@ function totalOutputTokens(transcriptPath) {
 }
 function readMeta(transcriptPath) {
   try {
-    const raw = fs9.readFileSync(transcriptPath.replace(/\.jsonl$/, ".meta.json"), "utf8");
+    const raw = fs12.readFileSync(transcriptPath.replace(/\.jsonl$/, ".meta.json"), "utf8");
     return JSON.parse(raw);
   } catch {
     return {};
   }
 }
+function assistantText(transcriptPath) {
+  let raw;
+  try {
+    raw = fs12.readFileSync(transcriptPath, "utf8");
+  } catch {
+    return "";
+  }
+  const chunks = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line);
+      if (entry.type !== "assistant") continue;
+      const content = entry.message?.content;
+      if (typeof content === "string") chunks.push(content);
+      else if (Array.isArray(content)) {
+        for (const block of content) if (block.type === "text" && block.text) chunks.push(block.text);
+      }
+    } catch {
+      continue;
+    }
+  }
+  return chunks.join("\n");
+}
+function harvestCraftNote(store, transcriptPath, now) {
+  const parsed = parseCraftNoteBlock(assistantText(transcriptPath));
+  if (!parsed) return null;
+  let entriesHarvested = 0;
+  if (parsed.craftSlug) {
+    for (const entry of parsed.entries) {
+      store.insertCraftNote({
+        craftSlug: entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug,
+        briefId: parsed.briefId,
+        sourceAgent: `subagent:${parsed.craftSlug}`,
+        kind: entry.kind,
+        body: entry.body,
+        spilloverCraft: entry.kind === "spillover" ? parsed.craftSlug : null,
+        now
+      });
+      entriesHarvested++;
+    }
+  }
+  if (parsed.briefId !== null) {
+    try {
+      store.markCraftBriefNoted(parsed.briefId, now);
+    } catch {
+    }
+  }
+  return { craftSlug: parsed.craftSlug, briefId: parsed.briefId, entriesHarvested };
+}
 function runSubagentStop(store, opts) {
+  const now = opts.now ?? Date.now();
   const outputTokens = totalOutputTokens(opts.agentTranscriptPath);
   const meta3 = readMeta(opts.agentTranscriptPath);
   const agentType = meta3.agentType ?? opts.agentType ?? null;
+  let craftNote = null;
+  try {
+    craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
+  } catch {
+  }
   if (outputTokens === null) {
-    return { recorded: false, agentType, outputTokens: null };
+    return { recorded: false, agentType, outputTokens: null, craftNote };
   }
   try {
     store.recordSubagentSample({
@@ -47966,12 +48345,12 @@ function runSubagentStop(store, opts) {
       agentType,
       spawnDepth: typeof meta3.spawnDepth === "number" ? meta3.spawnDepth : null,
       outputTokens,
-      now: opts.now
+      now
     });
   } catch {
-    return { recorded: false, agentType, outputTokens };
+    return { recorded: false, agentType, outputTokens, craftNote };
   }
-  return { recorded: true, agentType, outputTokens };
+  return { recorded: true, agentType, outputTokens, craftNote };
 }
 
 // src/server.ts
@@ -47997,41 +48376,8 @@ function presentMessage(row) {
     createdAt: new Date(row.created_at).toISOString()
   };
 }
-function craftContext(agentId, store, env = process.env, cwd = process.cwd()) {
-  if (!isStation(agentId)) return "";
-  const craft = store.getFocus(agentId);
-  if (!craft) {
-    return "\n\nYou hold no craft yet \u2014 the expo assigns one via hands_focus. Until then work tickets generically; once assigned, your craft's book + skill arrive via hands_paths.";
-  }
-  const files = craftFiles(craft, env, cwd);
-  const read = (file2, cap = 6e3) => {
-    try {
-      const body = fs16.readFileSync(file2, "utf8").trim();
-      if (!body) return null;
-      const points = Array.from(body);
-      return points.length <= cap ? body : `${points.slice(0, cap).join("")}
-\u2026(truncated \u2014 trim this file)`;
-    } catch {
-      return null;
-    }
-  };
-  const skill = read(files.skill);
-  const book = read(files.book);
-  const header = `
-
-## Your craft: ${craft}
-The craft is portable \u2014 if the expo reassigns yours mid-session you'll get a waking message; re-read your files via hands_paths (they always resolve from your CURRENT craft). If the book's \`last held\` stamp is not today, READ IN before cooking: what shipped in your covered area since then (your station skill's read-in step).`;
-  if (!skill && !book) {
-    return `${header}
-No book or skill written for this craft yet \u2014 you are founding it.`;
-  }
-  return header + (skill ? `
-
-### Craft skill (self-maintained \u2014 ${files.skill})
-${skill}` : "") + (book ? `
-
-### Prep book (self-maintained \u2014 ${files.book})
-${book}` : "");
+function craftRosterContext(config2, store, env = process.env, cwd = process.cwd()) {
+  return formatRosterContext(listCrafts(store, config2, env, cwd));
 }
 function buildServer(store, agentId, config2) {
   const cfg = config2 ?? loadConfig();
@@ -48056,7 +48402,7 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "hands", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " Keep your CRAFT's files current (paths in hands_paths): its PREP BOOK (distilled knowledge \u2014 rewrite, don't append; \u2264150 lines) and its CRAFT SKILL (its operating manual). Update them on idle wakes and before any /compact \u2014 the craft, not the seat, is how expertise survives reboots, machine moves, and reassignment." : "") + craftContext(agentId, store)
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " You are a generalist: you hold no craft of your own. You own the ticket and your worktree, and you dispatch crafts as sub-agents (hands_brief) for the slices of work they cover \u2014 see the roster below." : "") + craftRosterContext(cfg, store)
     }
   );
   server.registerTool(
@@ -48657,8 +49003,8 @@ function buildServer(store, agentId, config2) {
   server.registerTool(
     "hands_focus",
     {
-      title: "Assign a station's craft (set/swap its focus label)",
-      description: `Assign a station its CRAFT \u2014 the named, portable specialization it holds ("saucier", "ordering API"). The craft, not the seat, owns the prep book + craft skill under crafts/, so reassigning moves the whole skillset and history to that station: an existing name restores its files, a new name founds fresh ones. Shown on the board and in the books, and addressable in hands_send/delegate as a convenience (the station-<n> id stays the durable key). Swapping a RUNNING station's craft: set it here, then send a waking message so it re-reads via hands_paths. Keep one craft on one active seat at a time \u2014 two seats writing one book is the same mistake as two machines on one handle. A station may set its own; the expo may set anyone's. Pass focus: null to clear.`,
+      title: "Set a station's lane label",
+      description: `Set a station's short lane label \u2014 what it's currently on ("auth migration", "ENG-1476"), shown on the board/rail and addressable in hands_send/delegate as a convenience (the station-<n> id stays the durable key). NOT a craft assignment \u2014 crafts are dispatched as sub-agents via hands_brief, never held by a station (hands#81/#96). Setting this to a craft's slug also makes this station the default fold-owner for that craft's pending notes (hands_fold). A station may set its own; the expo may set anyone's. Pass focus: null to clear.`,
       inputSchema: {
         station: external_exports3.string().optional().describe("target station id (default: yourself)"),
         focus: external_exports3.string().min(1).max(80).nullable()
@@ -48682,6 +49028,149 @@ function buildServer(store, agentId, config2) {
       }
       store.setFocus(target, input.focus);
       return asToolResult({ ok: true, station: target, focus: input.focus });
+    }
+  );
+  server.registerTool(
+    "hands_crafts",
+    {
+      title: "List the craft roster",
+      description: "The full craft roster \u2014 scope (personal/shared), covers, when last distilled, pending note count. Use when the roster summary already in your instructions isn't enough (a ticket names a craft you don't see there, or one was just founded this session).",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async () => {
+      store.touch(agentId);
+      return asToolResult({ crafts: listCrafts(store, cfg) });
+    }
+  );
+  server.registerTool(
+    "hands_brief",
+    {
+      title: "Get a chit to dispatch a craft into a sub-agent",
+      description: "Open a dispatch record for a craft and get back a small CHIT (not the craft's content) to paste at the top of the Agent tool's `prompt` \u2014 the sub-agent pulls its own book/mise/skill itself via hands_mise on its first action, so YOUR context cost per dispatch stays constant no matter how fat the book gets. Read-only 'plan' mode (the default) is safe anywhere, any time. 'execute' mode is refused while another execute brief is open for this same craft+cwd \u2014 that's the one guard against two sub-agents writing one worktree at once; fan out plan-mode instead and execute the union of what they found.",
+      inputSchema: {
+        craft: external_exports3.string().min(1).describe("craft name or slug"),
+        mode: external_exports3.enum(["plan", "execute"]).optional().describe("default plan (read-only)"),
+        task: external_exports3.string().optional().describe("one line, recorded on the ledger \u2014 not the chit itself"),
+        cwd: external_exports3.string().optional().describe("execute-lease scope; default your own cwd")
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      const mode = input.mode ?? "plan";
+      const cwd = input.cwd ?? process.cwd();
+      const files = craftFiles(input.craft);
+      if (mode === "execute") {
+        const open = store.openExecuteBrief(files.slug, cwd);
+        if (open) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error: `execute lease held by brief #${open.id} (opened ${new Date(open.created_at).toISOString()}) \u2014 run this plan-mode, or wait`
+            }),
+            isError: true
+          };
+        }
+      }
+      const briefId = store.createCraftBrief({
+        craftSlug: files.slug,
+        mode,
+        cwd,
+        openedBy: agentId,
+        task: input.task ?? null
+      });
+      const brief = store.getCraftBrief(briefId);
+      const bookRaw = fs17.existsSync(files.book) ? fs17.readFileSync(files.book, "utf8") : null;
+      return asToolResult({ briefId, craft: files.slug, chit: composeChit(brief, parseCraftHeader(bookRaw).covers) });
+    }
+  );
+  server.registerTool(
+    "hands_mise",
+    {
+      title: "Pick up a craft's own files for the current brief",
+      description: "A craft sub-agent's first action: pulls the craft's own mise/skill/book, the sibling roster (so you know what you DON'T cover \u2014 route those via spillover, not a guess), and a read-in command if the craft looks stale. Stamps pickup so compliance is measurable separately from whether the return note actually arrives.",
+      inputSchema: { briefId: external_exports3.number().int() },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      const brief = store.getCraftBrief(input.briefId);
+      if (!brief) {
+        return { ...asToolResult({ ok: false, error: `no such brief: #${input.briefId}` }), isError: true };
+      }
+      store.markCraftBriefPickedUp(input.briefId);
+      const files = craftFiles(brief.craft_slug);
+      const read = (p, cap = 6e3) => {
+        try {
+          const body = fs17.readFileSync(p, "utf8").trim();
+          if (!body) return null;
+          const points = Array.from(body);
+          return points.length <= cap ? body : `${points.slice(0, cap).join("")}
+\u2026(truncated \u2014 trim this file)`;
+        } catch {
+          return null;
+        }
+      };
+      const book = read(files.book);
+      const mise = read(files.mise);
+      const skill = read(files.skill);
+      const { covers, distilled } = parseCraftHeader(book);
+      const distilledMs = distilled ? Date.parse(distilled) : NaN;
+      const stale = !book && !mise && !skill ? "cold" : Number.isNaN(distilledMs) || Date.now() - distilledMs > 14 * 24 * 60 * 6e4 ? "stale" : "fresh";
+      const siblings = listCrafts(store, cfg).filter((c) => c.slug !== files.slug).map((c) => ({ slug: c.slug, covers: c.covers }));
+      return asToolResult({
+        craft: files.slug,
+        scope: files.scope,
+        covers,
+        distilled,
+        mise,
+        skill,
+        book,
+        siblings,
+        staleness: stale,
+        readIn: stale !== "fresh" ? `git log --oneline --since "${distilled ?? "30 days ago"}" -- ${covers ?? "."}` : null,
+        returnContract: "Before you return: emit a fenced ```craft-note block (brief, craft, nothing-new, then zero or more mise/book/skill/friction/spillover(<craft>) lines) as the LAST thing in your final message."
+      });
+    }
+  );
+  server.registerTool(
+    "hands_fold",
+    {
+      title: "Acquire the fold lease and get a craft's pending notes to distill",
+      description: "Single-writer distillation (hands#81/#96): acquires an exclusive lease for this craft, then returns its current book/mise/skill plus every pending note since the last fold. Rewrite the files IN PLACE yourself (Edit/Write) \u2014 never append \u2014 then call hands_fold_done with the SAME throughNoteId this call returned. The lease auto-expires; if you're not going to finish, just don't call hands_fold_done and let it lapse.",
+      inputSchema: { craft: external_exports3.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      const files = craftFiles(input.craft);
+      const got = store.acquireCraftFoldLease(files.slug, agentId);
+      if (!got) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error: `fold lease for "${files.slug}" is held by someone else right now \u2014 try again shortly`
+          }),
+          isError: true
+        };
+      }
+      return asToolResult(buildFoldContext(store, input.craft));
+    }
+  );
+  server.registerTool(
+    "hands_fold_done",
+    {
+      title: "Release the fold lease and mark notes folded",
+      description: "Call after you've rewritten the craft's book/mise/skill in place from hands_fold's pending notes. Marks every note up through throughNoteId as folded (so they stop showing as pending) and releases the lease.",
+      inputSchema: { craft: external_exports3.string().min(1), throughNoteId: external_exports3.number().int() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      const files = craftFiles(input.craft);
+      store.markCraftNotesFolded(files.slug, input.throughNoteId);
+      store.releaseCraftFoldLease(files.slug, agentId);
+      return asToolResult({ ok: true, craft: files.slug, foldedThrough: input.throughNoteId });
     }
   );
   if (isExpo(agentId)) {
@@ -48813,8 +49302,6 @@ function pathsReport(agentId, cfg, focus) {
   const info = repoInfo();
   const enabled = Boolean(cfg.remote.url?.trim());
   const journal = enabled ? readSyncStatus(journalDir()) : null;
-  const craft = focus ?? null;
-  const files = craft ? craftFiles(craft) : null;
   return {
     cwd: process.cwd(),
     agentId,
@@ -48824,14 +49311,12 @@ function pathsReport(agentId, cfg, focus) {
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
-    /** the craft roster — every craft's book + skill live here */
-    craftsDir: craftFiles("roster").dir,
-    ...isStation(agentId) ? {
-      craft,
-      craftSlug: files?.slug ?? null,
-      book: files?.book ?? null,
-      skillFile: files?.skill ?? null
-    } : {},
+    /** lane label ("auth migration") — display/addressing/default fold-owner only, no crafts held here */
+    focus: focus ?? null,
+    /** personal-tier crafts (this handle's own) */
+    craftsDir: personalCraftsDir(cfg),
+    /** repo-shared crafts, null outside a git repo */
+    sharedCraftsDir: sharedCraftsDir(cfg),
     journalProject: enabled ? resolveProject(cfg) : null,
     /** the books clone — digest pages under journal/<project>/<handle>/<date>.md (read-in source) */
     booksDir: enabled ? journalDir() : null,
@@ -48858,7 +49343,7 @@ function runCli(subcommand, argv, hookPayload) {
   if (subcommand === "paths") {
     const id = resolveSelf();
     let focus = null;
-    if (fs16.existsSync(dbPath())) {
+    if (fs17.existsSync(dbPath())) {
       const s = new Store();
       try {
         focus = s.getFocus(id);
@@ -48950,8 +49435,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs16.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs16.realpathSync(fileURLToPath2(import.meta.url))).href;
+    const entry = pathToFileURL(fs17.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs17.realpathSync(fileURLToPath2(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;
@@ -48971,25 +49456,25 @@ init_seed_permissions();
 
 // src/station-logs.ts
 init_tokens();
-import * as fs18 from "node:fs";
+import * as fs19 from "node:fs";
 import * as os10 from "node:os";
-import * as path17 from "node:path";
+import * as path18 from "node:path";
 function transcriptDir(cwd, home = os10.homedir()) {
-  return path17.join(home, ".claude", "projects", encodeProjectDir(cwd));
+  return path18.join(home, ".claude", "projects", encodeProjectDir(cwd));
 }
 function latestTranscript(cwd, home = os10.homedir()) {
   const dir = transcriptDir(cwd, home);
   let names;
   try {
-    names = fs18.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+    names = fs19.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
   } catch {
     return null;
   }
   let newest = null;
   for (const name of names) {
-    const file2 = path17.join(dir, name);
+    const file2 = path18.join(dir, name);
     try {
-      const { mtimeMs } = fs18.statSync(file2);
+      const { mtimeMs } = fs19.statSync(file2);
       if (!newest || mtimeMs > newest.mtime) newest = { file: file2, mtime: mtimeMs };
     } catch {
     }
@@ -48998,7 +49483,7 @@ function latestTranscript(cwd, home = os10.homedir()) {
 }
 function latestSessionId(cwd, home = os10.homedir()) {
   const file2 = latestTranscript(cwd, home);
-  return file2 ? path17.basename(file2, ".jsonl") : null;
+  return file2 ? path18.basename(file2, ".jsonl") : null;
 }
 function clip2(s, max = 160) {
   const flat = s.replace(/\s+/g, " ").trim();
@@ -49045,15 +49530,15 @@ function recentActivity(cwd, opts) {
   let text = "";
   try {
     const tailBytes = opts?.tailBytes ?? 512 * 1024;
-    const { size } = fs18.statSync(file2);
+    const { size } = fs19.statSync(file2);
     const start = Math.max(0, size - tailBytes);
-    const fd = fs18.openSync(file2, "r");
+    const fd = fs19.openSync(file2, "r");
     try {
       const buf = Buffer.alloc(Math.min(size, tailBytes));
-      fs18.readSync(fd, buf, 0, buf.length, start);
+      fs19.readSync(fd, buf, 0, buf.length, start);
       text = buf.toString("utf8");
     } finally {
-      fs18.closeSync(fd);
+      fs19.closeSync(fd);
     }
     if (start > 0) text = text.slice(text.indexOf("\n") + 1);
   } catch {
@@ -49077,10 +49562,12 @@ init_config();
 init_paths();
 init_provision();
 init_projects();
+init_remote();
 init_seed_permissions();
 import { execFileSync as execFileSync7 } from "node:child_process";
-import * as fs19 from "node:fs";
-import * as path18 from "node:path";
+import * as fs20 from "node:fs";
+import * as path19 from "node:path";
+init_store();
 var IDLE_WARN_MS = 30 * 6e4;
 var WAL_RATIO_WARN = 10;
 function worstOf(checks) {
@@ -49119,9 +49606,9 @@ function runDoctor(opts) {
     return { checks, worst: "fail" };
   }
   checks.push({ name: "repo", severity: "ok", detail: `${info.repoRoot} (${info.slug})` });
-  const configPath = path18.join(info.repoRoot, CONFIG_BASENAME);
+  const configPath = path19.join(info.repoRoot, CONFIG_BASENAME);
   let cfg = null;
-  if (!fs19.existsSync(configPath)) {
+  if (!fs20.existsSync(configPath)) {
     checks.push({
       name: "config",
       severity: "fail",
@@ -49139,7 +49626,7 @@ function runDoctor(opts) {
       });
     }
   }
-  const name = path18.basename(info.repoRoot);
+  const name = path19.basename(info.repoRoot);
   const registered = resolveProject2(name, env);
   if (registered?.repoRoot === info.repoRoot) {
     checks.push({ name: "registry", severity: "ok", detail: `resolves as "${name}"` });
@@ -49160,17 +49647,17 @@ function runDoctor(opts) {
     });
   }
   const db = dbPath(env, info.repoRoot);
-  if (!fs19.existsSync(db)) {
+  if (!fs20.existsSync(db)) {
     checks.push({
       name: "bus.db",
       severity: "warn",
       detail: "no database yet \u2014 normal before the first session takes a turn"
     });
   } else {
-    const dbSize = fs19.statSync(db).size;
+    const dbSize = fs20.statSync(db).size;
     let walSize = 0;
     try {
-      walSize = fs19.statSync(`${db}-wal`).size;
+      walSize = fs20.statSync(`${db}-wal`).size;
     } catch {
     }
     if (walSize > dbSize * WAL_RATIO_WARN && walSize > 1e6) {
@@ -49185,16 +49672,16 @@ function runDoctor(opts) {
   }
   const coord = coordinationDir(env, info.repoRoot);
   checks.push(
-    fs19.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
+    fs20.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
   );
   const pid = pidPath(env, info.repoRoot);
-  if (fs19.existsSync(pid)) {
-    const raw = fs19.readFileSync(pid, "utf8").trim();
+  if (fs20.existsSync(pid)) {
+    const raw = fs20.readFileSync(pid, "utf8").trim();
     const parsedPid = Number(raw);
     if (Number.isInteger(parsedPid) && parsedPid > 0 && isProcessAlive(parsedPid)) {
       checks.push({ name: "dashboard.serve", severity: "ok", detail: `running (pid ${parsedPid})` });
     } else if (opts?.fix) {
-      fs19.rmSync(pid, { force: true });
+      fs20.rmSync(pid, { force: true });
       checks.push({
         name: "dashboard.serve",
         severity: "ok",
@@ -49214,7 +49701,7 @@ function runDoctor(opts) {
   if (cached2?.[1]) {
     const pluginCommit = cached2[1];
     const head = gitHead(info.repoRoot);
-    const selfHosted = fs19.existsSync(path18.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
+    const selfHosted = fs20.existsSync(path19.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
     if (selfHosted && head && !head.startsWith(pluginCommit) && !pluginCommit.startsWith(head.slice(0, 7))) {
       checks.push({
         name: "build",
@@ -49241,8 +49728,8 @@ function runDoctor(opts) {
         });
         continue;
       }
-      const settings = path18.join(station.dir, ".claude", "settings.local.json");
-      if (fs19.existsSync(settings)) {
+      const settings = path19.join(station.dir, ".claude", "settings.local.json");
+      if (fs20.existsSync(settings)) {
         checks.push({ name: `${station.id}.permissions`, severity: "ok", detail: "seeded" });
       } else if (opts?.fix) {
         seedStationPermissions(station.dir);
@@ -49281,19 +49768,58 @@ function runDoctor(opts) {
       }
     }
   }
+  if (cfg) {
+    const shared = sharedCraftsDir(cfg, info.repoRoot);
+    const personal = personalCraftsDir(cfg, env, info.repoRoot);
+    const slugsIn = (dir) => {
+      if (!dir) return [];
+      try {
+        return fs20.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.endsWith(".mise.md") && !f.endsWith(".skill.md")).map((f) => f.slice(0, -".md".length));
+      } catch {
+        return [];
+      }
+    };
+    const sharedSlugs = new Set(slugsIn(shared));
+    const shadowed = slugsIn(personal).filter((s) => sharedSlugs.has(s));
+    if (shadowed.length > 0) {
+      checks.push({
+        name: "crafts.shadowed",
+        severity: "warn",
+        detail: `${shadowed.join(", ")} \u2014 personal craft${shadowed.length === 1 ? "" : "s"} shadowed by a same-named SHARED craft; the shared copy is what every dispatch actually reads`
+      });
+    }
+    let store = null;
+    try {
+      store = new Store({ env });
+      const stale = store.pendingCraftSlugs().map((slug) => {
+        const pending = store.pendingCraftNotes(slug);
+        return { slug, count: pending.length, ageMs: now - (pending[0]?.created_at ?? now) };
+      }).filter((c) => c.count >= 3 || c.ageMs > 24 * 60 * 6e4);
+      if (stale.length > 0) {
+        checks.push({
+          name: "crafts.notes",
+          severity: "warn",
+          detail: `${stale.map((c) => `${c.slug} (${c.count} pending, oldest ${Math.round(c.ageMs / 6e4)}m)`).join(", ")} \u2014 run \`hands craft distill\` to fold them in`
+        });
+      }
+    } catch {
+    } finally {
+      store?.close();
+    }
+  }
   return { checks, worst: worstOf(checks) };
 }
 
 // src/version.ts
 import { execFileSync as execFileSync8 } from "node:child_process";
-import * as fs20 from "node:fs";
+import * as fs21 from "node:fs";
 import * as os11 from "node:os";
-import * as path19 from "node:path";
+import * as path20 from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 var STAMP_BASENAME = "BUILD.json";
 function classifyInstall(entry, home = os11.homedir()) {
   if (!entry) return "unknown";
-  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path19.join(home, ".hands", "lib"))) {
+  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path20.join(home, ".hands", "lib"))) {
     return "standalone";
   }
   if (/[/\\]plugins[/\\]cache[/\\]/.test(entry)) return "plugin";
@@ -49302,7 +49828,7 @@ function classifyInstall(entry, home = os11.homedir()) {
 }
 function readStamp(dir) {
   try {
-    const raw = fs20.readFileSync(path19.join(dir, STAMP_BASENAME), "utf8");
+    const raw = fs21.readFileSync(path20.join(dir, STAMP_BASENAME), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.version !== "string" || typeof parsed.builtAt !== "string") return null;
     return {
@@ -49329,7 +49855,7 @@ function gitShort(cwd) {
 function buildInfo(opts) {
   const entry = opts?.entry ?? process.argv[1] ?? fileURLToPath3(import.meta.url);
   const kind = classifyInstall(entry, opts?.home ?? os11.homedir());
-  const stamp = readStamp(path19.dirname(entry));
+  const stamp = readStamp(path20.dirname(entry));
   if (stamp) {
     return { version: stamp.version, commit: stamp.commit, builtAt: stamp.builtAt, kind, entry };
   }
@@ -49343,14 +49869,14 @@ function buildInfo(opts) {
 }
 function otherInstall(current, home = os11.homedir()) {
   if (current !== "standalone") {
-    const stamp = readStamp(path19.join(home, ".hands", "lib"));
+    const stamp = readStamp(path20.join(home, ".hands", "lib"));
     if (stamp) return { kind: "standalone", stamp };
   }
   if (current !== "plugin") {
-    const cacheRoot = path19.join(home, ".claude", "plugins", "cache", "hands", "hands");
+    const cacheRoot = path20.join(home, ".claude", "plugins", "cache", "hands", "hands");
     try {
-      for (const dir of fs20.readdirSync(cacheRoot)) {
-        const stamp = readStamp(path19.join(cacheRoot, dir, "dist"));
+      for (const dir of fs21.readdirSync(cacheRoot)) {
+        const stamp = readStamp(path20.join(cacheRoot, dir, "dist"));
         if (stamp) return { kind: "plugin", stamp };
       }
     } catch {
@@ -49374,9 +49900,9 @@ init_remote();
 init_config();
 init_paths();
 init_remote();
-import * as fs21 from "node:fs";
+import * as fs22 from "node:fs";
 import * as os12 from "node:os";
-import * as path20 from "node:path";
+import * as path21 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var NO_BOOKS_REASON = "books are unavailable in this environment \u2014 git isn't working (run: hands doctor)";
 function resolveBooksTarget(opts) {
@@ -49388,7 +49914,7 @@ function resolveBooksTarget(opts) {
   const config2 = loadConfig({ cwd, env });
   const j = openJournal({ cwd, env, config: config2 });
   if (!j) return { ok: false, reason: NO_BOOKS_REASON };
-  if (!fs21.existsSync(path20.join(j.dir, ".git"))) {
+  if (!fs22.existsSync(path21.join(j.dir, ".git"))) {
     return { ok: false, reason: `could not set up the journal clone at ${j.dir}` };
   }
   syncPull(j.dir);
@@ -49396,11 +49922,11 @@ function resolveBooksTarget(opts) {
   if (!shape.ok) return { ok: false, reason: shape.reason ?? "journal repo failed validation" };
   return { ok: true, target: { dir: j.dir, project: j.project, handle: j.handle, url: j.url } };
 }
-function resolveBooksServerEntry(here = path20.dirname(fileURLToPath4(import.meta.url))) {
-  const bundled = path20.join(here, "books-server.mjs");
-  if (fs21.existsSync(bundled)) return bundled;
-  const devFallback = path20.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
-  if (fs21.existsSync(devFallback)) return devFallback;
+function resolveBooksServerEntry(here = path21.dirname(fileURLToPath4(import.meta.url))) {
+  const bundled = path21.join(here, "books-server.mjs");
+  if (fs22.existsSync(bundled)) return bundled;
+  const devFallback = path21.resolve(here, "..", "..", "plugin", "dist", "books-server.mjs");
+  if (fs22.existsSync(devFallback)) return devFallback;
   return null;
 }
 function desktopConfigPath(env = process.env) {
@@ -49408,13 +49934,13 @@ function desktopConfigPath(env = process.env) {
   if (override) return override;
   const home = os12.homedir();
   if (process.platform === "darwin") {
-    return path20.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
+    return path21.join(home, "Library", "Application Support", "Claude", "claude_desktop_config.json");
   }
   if (process.platform === "win32") {
-    const appData = env.APPDATA?.trim() || path20.join(home, "AppData", "Roaming");
-    return path20.join(appData, "Claude", "claude_desktop_config.json");
+    const appData = env.APPDATA?.trim() || path21.join(home, "AppData", "Roaming");
+    return path21.join(appData, "Claude", "claude_desktop_config.json");
   }
-  return path20.join(home, ".config", "Claude", "claude_desktop_config.json");
+  return path21.join(home, ".config", "Claude", "claude_desktop_config.json");
 }
 function serverName(project) {
   return `hands-books-${project}`;
@@ -49429,7 +49955,7 @@ function booksMcpEntry(serverEntryPath, target) {
 function writeDesktopConfig(configPath, name, entry) {
   let parsed = {};
   try {
-    parsed = JSON.parse(fs21.readFileSync(configPath, "utf8"));
+    parsed = JSON.parse(fs22.readFileSync(configPath, "utf8"));
   } catch (err) {
     if (err.code !== "ENOENT") {
       return { ok: false, reason: `${configPath} is not valid JSON \u2014 fix or remove it, then retry (${String(err)})` };
@@ -49438,16 +49964,16 @@ function writeDesktopConfig(configPath, name, entry) {
   const servers = parsed.mcpServers && typeof parsed.mcpServers === "object" ? parsed.mcpServers : {};
   servers[name] = entry;
   parsed.mcpServers = servers;
-  fs21.mkdirSync(path20.dirname(configPath), { recursive: true });
-  fs21.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
+  fs22.mkdirSync(path21.dirname(configPath), { recursive: true });
+  fs22.writeFileSync(configPath, `${JSON.stringify(parsed, null, 2)}
 `);
   return { ok: true };
 }
 
 // src/cli.ts
 init_store();
-import * as fs23 from "node:fs";
-import * as path22 from "node:path";
+import * as fs24 from "node:fs";
+import * as path23 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -49530,11 +50056,11 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path22.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs23.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
+  const configPath = path23.join(info.repoRoot, CONFIG_BASENAME);
+  if (!fs24.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
-    cfg = JSON.parse(fs23.readFileSync(configPath, "utf8"));
+    cfg = JSON.parse(fs24.readFileSync(configPath, "utf8"));
   } catch (err) {
     fail(`${configPath} is not valid JSON: ${String(err)}`);
   }
@@ -49561,18 +50087,109 @@ function cmdBooks(argv) {
     url: url2,
     handle: handleArg ?? remote.handle ?? githubUsername() ?? os14.userInfo().username
   };
-  fs23.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs24.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
   out2("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
   out2("  (restart running Claude Code sessions so the bus picks up the config change)");
+}
+function cmdCraft(argv) {
+  const sub = argv[0];
+  const cfg = loadConfig();
+  const store = new Store();
+  try {
+    if (sub === "ls" || !sub) {
+      const roster = listCrafts(store, cfg);
+      if (roster.length === 0) {
+        out2("no crafts founded yet \u2014 /hands:crafts surveys a repo for the ones worth establishing");
+        return;
+      }
+      for (const c of roster) {
+        const distilled = c.distilled ? `distilled ${c.distilled}` : "never distilled";
+        const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)` : "";
+        out2(`${c.slug}	[${c.scope}]	${c.covers ?? "no covers stated"}	${distilled}${pending}`);
+      }
+      return;
+    }
+    if (sub === "promote" || sub === "localize") {
+      const slug = argv[1];
+      if (!slug) fail(`usage: hands craft ${sub} <slug>`);
+      const files = craftFiles(slug);
+      const wantScope = sub === "promote" ? "shared" : "personal";
+      if (files.scope === wantScope) fail(`"${files.slug}" is already ${wantScope}`);
+      const info = repoInfo(process.cwd());
+      if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
+      const shared = sharedCraftsDir(cfg, info.repoRoot);
+      if (!shared) fail("could not resolve the shared crafts dir");
+      const personal = personalCraftsDir(cfg);
+      const targetDir = sub === "promote" ? shared : personal;
+      const sourceDir = sub === "promote" ? personal : shared;
+      if (sub === "promote" && fs24.existsSync(path23.join(shared, `${files.slug}.md`))) {
+        fail(`a shared craft named "${files.slug}" already exists \u2014 resolve manually, then localize or edit it directly`);
+      }
+      fs24.mkdirSync(targetDir, { recursive: true });
+      const moved = [];
+      for (const name of [`${files.slug}.md`, `${files.slug}.mise.md`, `${files.slug}.skill.md`]) {
+        const from = path23.join(sourceDir, name);
+        if (!fs24.existsSync(from)) continue;
+        fs24.copyFileSync(from, path23.join(targetDir, name));
+        fs24.rmSync(from);
+        moved.push(name);
+      }
+      if (moved.length === 0) fail(`no files found for "${files.slug}" at ${sourceDir}`);
+      if (sub === "promote") {
+        try {
+          execFileSync9("git", ["add", ...moved.map((m) => path23.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
+        } catch {
+        }
+        out2(`\u2714 "${files.slug}" promoted to shared \u2014 staged at ${shared}, not committed`);
+        out2(`  next: git commit -m "craft: promote ${files.slug} to shared" && open a PR`);
+      } else {
+        try {
+          execFileSync9("git", ["rm", "--cached", "-q", ...moved.map((m) => path23.join(shared, m))], {
+            cwd: info.repoRoot,
+            stdio: "ignore"
+          });
+        } catch {
+        }
+        out2(`\u2714 "${files.slug}" localized \u2014 copied to ${personal}, unstaged from the repo`);
+        out2(`  next: git commit -m "craft: localize ${files.slug}" (or git checkout . to keep it shared)`);
+      }
+      return;
+    }
+    if (sub === "distill") {
+      const only = argv[1] && !argv[1].startsWith("--") ? argv[1] : null;
+      const slugs = only ? [only] : store.pendingCraftSlugs();
+      if (slugs.length === 0) {
+        out2("no pending craft notes to distill");
+        return;
+      }
+      for (const slug of slugs) {
+        const pending = store.pendingCraftNotes(slug);
+        if (pending.length === 0) {
+          if (only) out2(`"${slug}": no pending notes`);
+          continue;
+        }
+        out2(`
+${slug} \u2014 ${pending.length} pending note(s):`);
+        for (const n of pending) out2(`  [${n.kind}] ${n.body} (from ${n.source_agent})`);
+      }
+      out2(
+        "\nThis lists the backlog only \u2014 distillation is a judgment call. Read it and edit the book/mise/skill by hand, or ask an agent to run hands_fold on this craft."
+      );
+      return;
+    }
+    fail("usage: hands craft <ls|promote|localize|distill> [<slug>]");
+  } finally {
+    store.close();
+  }
 }
 function requireRemote() {
   const j = openJournal();
   if (!j) {
     fail("books are unavailable in this environment \u2014 git isn't working (run: hands doctor)");
   }
-  if (!fs23.existsSync(path22.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs24.existsSync(path23.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -49694,7 +50311,7 @@ function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
   let focus = null;
-  if (fs23.existsSync(dbPath())) {
+  if (fs24.existsSync(dbPath())) {
     const store = new Store();
     try {
       focus = store.getFocus(agentId);
@@ -49812,7 +50429,7 @@ function cmdLs() {
     return;
   }
   for (const p of projects) {
-    const configured = fs23.existsSync(path22.join(p.repoRoot, CONFIG_BASENAME));
+    const configured = fs24.existsSync(path23.join(p.repoRoot, CONFIG_BASENAME));
     let seats = "";
     try {
       if (configured) {
@@ -49885,7 +50502,7 @@ function launchStationSeat(_repoRoot, id, dir, cfg) {
 function tryLaunch(cmd, rest) {
   if (!cmd) {
     const info = repoInfo(process.cwd());
-    if (!info || !fs23.existsSync(path22.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    if (!info || !fs24.existsSync(path23.join(info.repoRoot, CONFIG_BASENAME))) return false;
     launchAt(info.repoRoot, "expo", "expo");
     return true;
   }
@@ -49930,6 +50547,8 @@ async function main2() {
         return cmdStation(rest);
       case "books":
         return cmdBooks(rest);
+      case "craft":
+        return cmdCraft(rest);
       case "scale":
         return cmdScale(rest);
       case "restore":

@@ -98,12 +98,13 @@ board**, which hands references but never owns). When a dish is finished, call *
 ship step: *"get hands on PR 1234"* → reviewed, merged, deployed.
 
 Manage the line: `hands station ls` · `hands scale <N>` · `hands station rm station-<n>`
-— or let the expo scale it (`stations.allowScaling`). A station holds a **craft** — the named,
-portable specialization (`station-2 · saucier`) assigned via `hands_focus`, addressable by label,
-journaled, shown everywhere; the numeric id stays the routing key. Crafts hot-swap between seats:
-move the saucier to the poissonnier's station and the whole skillset moves too. Not sure what
-crafts your repo warrants? `/hands:crafts` surveys the codebase and proposes a tight roster — or
-tells you honestly that the kitchen is small and doesn't need one.
+— or let the expo scale it (`stations.allowScaling`). Stations are **generalists** — they hold no
+craft of their own; a **craft** (`station-2 · saucier`) is a named, portable specialization
+dispatched as a sub-agent for the ticket-slices it covers (`hands_brief`/`hands_mise`), not held
+for a stretch. A station's `hands_focus` label is just a lane tag now (what it's currently on),
+addressable and shown everywhere same as before. Not sure what crafts your repo warrants?
+`/hands:crafts` surveys the codebase and proposes a tight roster — or tells you honestly that the
+kitchen is small and doesn't need one.
 
 Each provisioned station also gets a distinct **theme colour** and a **session name**, assigned
 deterministically by station index (station-3 is always the same colour, in every repo, across
@@ -143,8 +144,12 @@ journal/<project>/<handle>/<date>.md                    the day's page — the p
 journal/<project>/<handle>/README.md                    per-contributor index
 journal/<project>/<handle>/log/<date>.ndjson             the day's event log
 journal/<project>/<handle>/crafts/<name>.md              a craft's prep book (self-managed)
+journal/<project>/<handle>/crafts/<name>.mise.md         a craft's mise (keyed path/command anchors)
 journal/<project>/<handle>/crafts/<name>.skill.md        a craft's own SKILL (self-managed)
 ```
+
+Personal-tier only — a repo-**shared** craft lives outside the books entirely, as plain committed
+content at `<repoRoot>/.hands/crafts/<name>.{md,mise.md,skill.md}` (`hands craft promote <slug>`).
 
 ```jsonc
 "remote": { "url": "git@github.com:you/hands-books.git", "handle": "michael", "project": null }
@@ -168,13 +173,13 @@ journal/<project>/<handle>/crafts/<name>.skill.md        a craft's own SKILL (se
 - **Shape is validated, never assumed:** empty repos self-initialize; a repo with other content is
   refused until an explicit `hands sync --adopt`; a layout newer or older than this build fails
   loudly.
-- **Crafts mature on their own.** A **craft** is a named, portable specialization — what a chef
-  de partie carries between stations. Each craft self-curates a **prep book** (distilled
-  knowledge) and its own **craft skill** (its operating manual) under the contributor's
-  namespace, keyed by the craft's name, not the seat. The server injects both into whichever
-  station holds the craft, so a rebooted, machine-moved, or newly-assigned station comes up
-  already knowing the craft. Digests never render them: the shared narrative stays the expo's;
-  each kitchen's crafts mature under its own handle.
+- **Crafts mature on their own.** A **craft** is a named, portable specialization — book (distilled
+  knowledge), mise (keyed path/command anchors), and skill (procedures) — dispatched as a sub-agent
+  for the ticket-slices it covers (`hands_brief`/`hands_mise`), not held by a station. A craft
+  sub-agent never writes its own files directly: it returns a small note of what it learned, which
+  a single-writer fold pass (`hands_fold`) later distills into the book/mise/skill in place. Under
+  the contributor's namespace when personal-tier; digests never render crafts either way — the
+  shared narrative stays the expo's.
 - **Open books = multiplayer.** Two people pointing at one books repo each write their own pages
   and read each other's — the whole cross-kitchen story is "every kitchen keeps its book; skim the
   other kitchens' pages." The dashboard's **Other kitchens** panel shows the rest of the books

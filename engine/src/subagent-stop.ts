@@ -1,10 +1,13 @@
 import * as fs from "node:fs";
+import { parseCraftNoteBlock } from "./crafts.js";
 import type { Store } from "./store.js";
 
 export interface SubagentStopResult {
   recorded: boolean;
   agentType: string | null;
   outputTokens: number | null;
+  /** craft-note harvest (hands#81/#96) — null when the transcript carried no fenced block at all */
+  craftNote: { craftSlug: string | null; briefId: number | null; entriesHarvested: number } | null;
 }
 
 interface SubagentMeta {
@@ -64,10 +67,95 @@ function readMeta(transcriptPath: string): SubagentMeta {
 }
 
 /**
- * The SubagentStop-hook workhorse (hands#103) — records one completion
- * sample per subagent finish, the gap that left subagent activity invisible
- * to anything but the dashboard's periodic transcript scan. Best-effort:
- * an unreadable transcript records nothing rather than failing the hook.
+ * Every assistant text block across the transcript, concatenated — the
+ * craft-note contract asks for the fenced block as the LAST thing in the
+ * final message, but concatenating the whole transcript (rather than
+ * guessing which JSONL line is "the final message") is simpler and
+ * parseCraftNoteBlock already picks the LAST fence occurrence, so this is
+ * equivalent and more robust to transcript-shape drift.
+ */
+function assistantText(transcriptPath: string): string {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(transcriptPath, "utf8");
+  } catch {
+    return "";
+  }
+  const chunks: string[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as {
+        type?: string;
+        message?: { content?: Array<{ type?: string; text?: string }> | string };
+      };
+      if (entry.type !== "assistant") continue;
+      const content = entry.message?.content;
+      if (typeof content === "string") chunks.push(content);
+      else if (Array.isArray(content)) {
+        for (const block of content) if (block.type === "text" && block.text) chunks.push(block.text);
+      }
+    } catch {
+      continue; // torn/corrupt line — skip, keep scanning the rest
+    }
+  }
+  return chunks.join("\n");
+}
+
+/**
+ * Harvest a ```craft-note``` block mechanically (hands#81/#96) — this is what
+ * makes the note reach storage whether or not the orchestrator ever reads the
+ * sub-agent's return, the direct fix for hands#56 ("prep notes not reliably
+ * reaching the books"). Best-effort like the rest of this hook: an unreadable
+ * or note-less transcript is not an error, just nothing to harvest.
+ *
+ * Enforcement (blocking a sub-agent's return once to force a missing note) is
+ * DESIGNED but not wired here yet — it needs the SubagentStop hook entry
+ * itself made synchronous (today "async": true in hooks.json) and empirical
+ * verification of this Claude Code build's actual block semantics before
+ * anything relies on it. Flagged, not silently dropped.
+ */
+function harvestCraftNote(
+  store: Store,
+  transcriptPath: string,
+  now: number,
+): SubagentStopResult["craftNote"] {
+  const parsed = parseCraftNoteBlock(assistantText(transcriptPath));
+  if (!parsed) return null;
+  let entriesHarvested = 0;
+  if (parsed.craftSlug) {
+    for (const entry of parsed.entries) {
+      store.insertCraftNote({
+        craftSlug: entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug,
+        briefId: parsed.briefId,
+        sourceAgent: `subagent:${parsed.craftSlug}`,
+        kind: entry.kind,
+        body: entry.body,
+        spilloverCraft: entry.kind === "spillover" ? parsed.craftSlug : null,
+        now,
+      });
+      entriesHarvested++;
+    }
+  }
+  if (parsed.briefId !== null) {
+    try {
+      store.markCraftBriefNoted(parsed.briefId, now);
+    } catch {
+      // best-effort — a stale/unknown brief id must never fail the hook
+    }
+  }
+  return { craftSlug: parsed.craftSlug, briefId: parsed.briefId, entriesHarvested };
+}
+
+/**
+ * The SubagentStop-hook workhorse. Two independent jobs on every subagent
+ * finish: (1) hands#103 — records one token-usage completion sample, the gap
+ * that left subagent activity invisible to anything but the dashboard's
+ * periodic transcript scan; (2) hands#81/#96 — harvests a craft-note block
+ * if the transcript carried one, so a craft sub-agent's learnings reach
+ * storage whether or not its orchestrator ever reads its return. Both are
+ * best-effort: an unreadable transcript, or one with neither usage data nor
+ * a note, records nothing rather than failing the hook.
  */
 export function runSubagentStop(
   store: Store,
@@ -78,11 +166,20 @@ export function runSubagentStop(
     now?: number;
   },
 ): SubagentStopResult {
+  const now = opts.now ?? Date.now();
   const outputTokens = totalOutputTokens(opts.agentTranscriptPath);
   const meta = readMeta(opts.agentTranscriptPath);
   const agentType = meta.agentType ?? opts.agentType ?? null;
+  // Independent of token accounting below — a craft-note harvest must not depend on usage data
+  // being present (hands#56's fix: the note reaches storage regardless of what else worked).
+  let craftNote: SubagentStopResult["craftNote"] = null;
+  try {
+    craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
+  } catch {
+    // best-effort — a harvest failure must never fail the hook
+  }
   if (outputTokens === null) {
-    return { recorded: false, agentType, outputTokens: null };
+    return { recorded: false, agentType, outputTokens: null, craftNote };
   }
   try {
     store.recordSubagentSample({
@@ -90,12 +187,12 @@ export function runSubagentStop(
       agentType,
       spawnDepth: typeof meta.spawnDepth === "number" ? meta.spawnDepth : null,
       outputTokens,
-      now: opts.now,
+      now,
     });
   } catch {
     // best-effort, same contract as the transcript read above — a transient
     // write failure drops one telemetry sample, not the hook itself
-    return { recorded: false, agentType, outputTokens };
+    return { recorded: false, agentType, outputTokens, craftNote };
   }
-  return { recorded: true, agentType, outputTokens };
+  return { recorded: true, agentType, outputTokens, craftNote };
 }

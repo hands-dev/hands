@@ -126,9 +126,9 @@ find "$m" -mmin +1440 | grep -q . && echo DUE || echo skip
    - "`/hands:rail` prints the same rail the dashboard shows, right here in chat."
    - "`/hands:hands` surfaces everything waiting on you — to-dos and unanswered escalations, one command."
    - "`hands attach <station>` reattaches to a station's own session if its pane ever closes."
-   - "Stations hold **crafts** — hot-swap one onto an idle seat instead of starting cold."
+   - "Crafts dispatch as sub-agents now, not seats — `hands_brief` gets one working on any ticket."
    - "`hands doctor --fix` catches the quiet failures: unseeded worktrees, a stale build, a stuck WAL."
-   - "The books (`hands.config.json`'s `remote.url`) turn every action into a browsable daily digest — opt-in, worth it past one machine."
+   - "The books are always on, local by default — `hands.config.json`'s `remote.url` upgrades to a shared repo."
 
 ## 0. Arm your wake signal (event-driven inbox)
 
@@ -206,11 +206,13 @@ via SendMessage) and **stations** (persistent isolated instances on this bus).
 station" out of habit (hands#53):**
 1. **Sub-agent or station?** The cost asymmetry paragraph right below decides it — most work that
    isn't ongoing/independently-owned is a sub-agent, not a station turn.
-2. **If it's a station, which craft?** The casting ladder (under "The station path" below) — a
-   dormant craft that already covers this beat outranks any idle-but-uncast seat, even if casting
-   costs a swap.
-Skipping either check is how idle capacity sits uncast while a craft-covered ticket goes to a
-colder seat than it needed to.
+2. **Does the dish span one or more crafts?** Crafts are dispatched as sub-agents by whichever
+   station owns the ticket (hands#81/#96) — you don't cast them onto seats anymore. Name the
+   craft(s) that cover this dish in the ticket body so the receiving station doesn't have to
+   re-derive it; a dish spanning several crafts is still ONE ticket to ONE station, which fans out
+   one brief per craft-slice and converges them in its own worktree — never split a cross-cutting
+   dish into per-craft tickets just because it touches several domains.
+Skipping either check is how work lands on a station blind to the craft that already covers it.
 
 **The cost asymmetry decides.** A station turn is a full model turn over that station's *entire
 accumulated context*, plus a wake each way for every exchange — its cost grows with the station's
@@ -240,37 +242,13 @@ switch a pane's model yourself.
 
 **The station path:**
 
-1. **Cast the craft, then pick the seat.** Stations are furniture; the **craft** — the named,
-   portable specialization holding the prep book + craft skill — is what you actually deploy (a
-   craft is what a chef de partie carries: the saucier brings their craft to whatever station
-   needs them). You are the caster: for station-bound work, first ask *which craft covers this?*
-
-   **Read the roster before deciding** — one cheap Bash call over `craftsDir` (from
-   `hands_paths`): `head -n 12 <craftsDir>/*.md` — books open with their identity, so twelve
-   lines per craft tells you what each one knows. The bundled read tells you which seat holds
-   which craft. Re-read the roster when a NEW beat appears or a special changes; from memory
-   otherwise (it changes slowly). An **empty roster** in a kitchen with real station-pattern
-   demand → suggest the principal run `/hands:crafts` (the brigade-design survey) once; until
-   then stations work generically, which is fine for small kitchens.
-
-   **The casting ladder** for a ticket:
-   - A craft covers it and is **seated + idle** → fire the ticket there. Done.
-   - Covers it, seated, **busy** → queue the ticket to that seat (crafts hold seats for
-     stretches) — unless the busy work is lower-priority, then re-prioritize, don't re-cast.
-   - Covers it, **unseated** (dormant on the roster) → assign it to an idle seat with
-     `hands_focus({ station, focus })` — the seat comes up with the craft's whole book, which
-     usually pays for the swap on the first ticket.
-   - **No craft covers it** → found a new craft ONLY for a durable beat that will recur; a
-     one-off ticket rides the nearest adjacent craft without renaming it. Keep the roster tight —
-     "ordering API" and "orders backend" should be one craft, not two half-books.
-
-   **Hot-swap:** need fish instead of sauce? `hands_focus` the new craft onto the seat, then send
-   a waking message ("you're the poissonnier now — swap crafts") — the station distills its
-   outgoing book first, then adopts the new one via `hands_paths`. Swapping two stations is two
-   focus sets + two wakes. A swap costs a wake plus distill+adopt (~a turn) — worth it when the
-   ticket sits squarely in a dormant craft's book, waste if you churn crafts per ticket.
-   Guardrail: **one craft on one active seat at a time** — two seats writing one book is the
-   two-machines-one-handle mistake.
+1. **Pick an idle seat.** Stations are generalists now — no craft to cast, so any idle station can
+   take the ticket; it dispatches the craft(s) you named (or discovers itself via `hands_crafts`)
+   as sub-agents once it's working the ticket. Prefer a station that's already warm on the same
+   dish/worktree over a cold one, same as any other locality preference — but there's no "wrong"
+   seat for a craft anymore. An **empty craft roster** in a kitchen with real recurring-specialty
+   demand → suggest the principal run `/hands:crafts` (the brigade-design survey) once; until then
+   stations work generically, which is fine for small kitchens.
 2. **Fire the ticket:** `hands_delegate({ to, title, body, priority, dish })` — always cite the
    special it serves, and the **dish** (the external deliverable — Linear/PR ref) when one
    exists. For a fresh special the first ticket is almost always **a plan**: *"Plan: get <X>
@@ -290,7 +268,7 @@ Pull straight from the bundled read; group `activeTasks` by `dish` in the read's
 re-sorting — same input, same output), one ticket per line:
 
 ```
-Rail: <dish>: #<id> <title> — <station>[·<craft>] (<state>)[; #<id> <title> — <station> (<state>)]
+Rail: <dish>: #<id> <title> — <station>[·<focus>] (<state>)[; #<id> <title> — <station> (<state>)]
 Rail: unattached: #<id> <title> — <station-or-"queue"> (<state>)
 Specials coverage: P1×<n>, P2×<n>, P3×<n>[, P<k> unstaffed]
 Needs you: <n> open[, <n> needs_human] — #<id> <one-line>[, #<id> <one-line>][ | none]
@@ -323,11 +301,12 @@ find "$m" -mmin +15 | grep -q . && echo DUE || echo skip
 
 **skip** → move on. **DUE** → `touch "$m"`, then compare the bundled read's `stateHash` against
 `$C/expo.last-util-hash`: **UNCHANGED** → say `Utilization: unchanged`, move on. **CHANGED** →
-store the new hash and judge: idle capacity while a higher special is starved → before firing
-generic work, check the roster for a **dormant craft** that covers the starved special and cast
-it onto the idle seat (restored expertise beats a cold start). A station off-specials while #1 is
+store the new hash and judge: idle capacity while a higher special is starved → fire it — idle
+capacity is just idle capacity now, no craft to cast first. A station off-specials while #1 is
 thin → `wake:false` heads-up + escalate with a recommendation. `collisions` (two stations in the
-same files) → stagger or refocus one before they trample each other.
+same files) → stagger or refocus one before they trample each other. Also worth a glance:
+`hands_crafts`' pending-note counts — a craft backing up unfolded (no station's `focus` set to it)
+is worth a nudge to whichever station is best-placed to become its default fold-owner.
 
 **A `stateHash` diff won't catch "quiet mid-ticket" (hands#99)** — it only changes on presence/
 branch/focus/task-assignment shifts, not on a station simply grinding away normally OR silently

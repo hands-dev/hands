@@ -32,11 +32,14 @@ import {
   craftFiles,
   journalDir,
   openJournal,
+  personalCraftsDir,
   readSyncStatus,
   resolveProject,
+  sharedCraftsDir,
   syncPush,
 } from "./remote.js";
-import { type MessageRow, Store } from "./store.js";
+import { buildFoldContext, composeChit, formatRosterContext, listCrafts, parseCraftHeader } from "./crafts.js";
+import { type CraftBriefRow, type MessageRow, Store } from "./store.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
 
@@ -64,55 +67,22 @@ function presentMessage(row: MessageRow) {
 }
 
 /**
- * The CRAFT a station holds (its focus label), injected into its MCP
- * instructions at connect — this is what makes a rebooted (or machine-moved,
- * when the books carry the files) station come up already knowing its craft.
- * The seat is furniture; the craft is portable. Capped per file so a
- * neglected book can't blow up the context. Instructions are static per
- * connection, so mid-session swaps are delivered by the expo as a waking
- * message + a hands_paths re-read (which resolves from CURRENT focus).
+ * The craft ROSTER — not one held craft's full content — injected into every
+ * station's AND the expo's MCP instructions at connect (hands#81/#96): a
+ * generalist knows what crafts exist and how to dispatch them, it doesn't
+ * hold one. Small and constant-cost regardless of how fat any one book gets;
+ * hands_crafts gives the full roster (and hands_mise a craft's own files) on
+ * demand when this summary isn't enough. Instructions are static per
+ * connection, so a craft founded mid-session needs a reconnect (or
+ * hands_crafts) to become visible.
  */
-export function craftContext(
-  agentId: string,
+export function craftRosterContext(
+  config: HandsConfig,
   store: Store,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): string {
-  if (!isStation(agentId)) return "";
-  const craft = store.getFocus(agentId);
-  if (!craft) {
-    return (
-      "\n\nYou hold no craft yet — the expo assigns one via hands_focus. Until then work " +
-      "tickets generically; once assigned, your craft's book + skill arrive via hands_paths."
-    );
-  }
-  const files = craftFiles(craft, env, cwd);
-  const read = (file: string, cap = 6000): string | null => {
-    try {
-      const body = fs.readFileSync(file, "utf8").trim();
-      if (!body) return null;
-      const points = Array.from(body);
-      return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
-    } catch {
-      return null;
-    }
-  };
-  const skill = read(files.skill);
-  const book = read(files.book);
-  const header =
-    `\n\n## Your craft: ${craft}\n` +
-    "The craft is portable — if the expo reassigns yours mid-session you'll get a waking " +
-    "message; re-read your files via hands_paths (they always resolve from your CURRENT craft). " +
-    "If the book's `last held` stamp is not today, READ IN before cooking: what shipped in your " +
-    "covered area since then (your station skill's read-in step).";
-  if (!skill && !book) {
-    return `${header}\nNo book or skill written for this craft yet — you are founding it.`;
-  }
-  return (
-    header +
-    (skill ? `\n\n### Craft skill (self-maintained — ${files.skill})\n${skill}` : "") +
-    (book ? `\n\n### Prep book (self-maintained — ${files.book})\n${book}` : "")
-  );
+  return formatRosterContext(listCrafts(store, config, env, cwd));
 }
 
 export function buildServer(store: Store, agentId: string, config?: HandsConfig): McpServer {
@@ -164,12 +134,11 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
             "commit, memory write, answered escalation) shows they finished one."
           : "") +
         (isStation(agentId)
-          ? " Keep your CRAFT's files current (paths in hands_paths): its PREP BOOK (distilled " +
-            "knowledge — rewrite, don't append; ≤150 lines) and its CRAFT SKILL (its operating " +
-            "manual). Update them on idle wakes and before any /compact — the craft, not the " +
-            "seat, is how expertise survives reboots, machine moves, and reassignment."
+          ? " You are a generalist: you hold no craft of your own. You own the ticket and your " +
+            "worktree, and you dispatch crafts as sub-agents (hands_brief) for the slices of work " +
+            "they cover — see the roster below."
           : "") +
-        craftContext(agentId, store),
+        craftRosterContext(cfg, store),
     },
   );
 
@@ -897,17 +866,15 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
   server.registerTool(
     "hands_focus",
     {
-      title: "Assign a station's craft (set/swap its focus label)",
+      title: "Set a station's lane label",
       description:
-        'Assign a station its CRAFT — the named, portable specialization it holds ("saucier", ' +
-        '"ordering API"). The craft, not the seat, owns the prep book + craft skill under crafts/, ' +
-        "so reassigning moves the whole skillset and history to that station: an existing name " +
-        "restores its files, a new name founds fresh ones. Shown on the board and in the books, " +
-        "and addressable in hands_send/delegate as a convenience (the station-<n> id stays the " +
-        "durable key). Swapping a RUNNING station's craft: set it here, then send a waking message " +
-        "so it re-reads via hands_paths. Keep one craft on one active seat at a time — two seats " +
-        "writing one book is the same mistake as two machines on one handle. A station may set " +
-        "its own; the expo may set anyone's. Pass focus: null to clear.",
+        "Set a station's short lane label — what it's currently on (\"auth migration\", " +
+        '"ENG-1476"), shown on the board/rail and addressable in hands_send/delegate as a ' +
+        "convenience (the station-<n> id stays the durable key). NOT a craft assignment — crafts " +
+        "are dispatched as sub-agents via hands_brief, never held by a station (hands#81/#96). " +
+        "Setting this to a craft's slug also makes this station the default fold-owner for that " +
+        "craft's pending notes (hands_fold). A station may set its own; the expo may set anyone's. " +
+        "Pass focus: null to clear.",
       inputSchema: {
         station: z.string().optional().describe("target station id (default: yourself)"),
         focus: z.string().min(1).max(80).nullable(),
@@ -931,6 +898,184 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       }
       store.setFocus(target, input.focus);
       return asToolResult({ ok: true, station: target, focus: input.focus });
+    },
+  );
+
+  // --- crafts: dispatched as sub-agents, never held (hands#81/#96/#49) ---
+
+  server.registerTool(
+    "hands_crafts",
+    {
+      title: "List the craft roster",
+      description:
+        "The full craft roster — scope (personal/shared), covers, when last distilled, pending " +
+        "note count. Use when the roster summary already in your instructions isn't enough (a " +
+        "ticket names a craft you don't see there, or one was just founded this session).",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async () => {
+      store.touch(agentId);
+      return asToolResult({ crafts: listCrafts(store, cfg) });
+    },
+  );
+
+  server.registerTool(
+    "hands_brief",
+    {
+      title: "Get a chit to dispatch a craft into a sub-agent",
+      description:
+        "Open a dispatch record for a craft and get back a small CHIT (not the craft's content) " +
+        "to paste at the top of the Agent tool's `prompt` — the sub-agent pulls its own book/" +
+        "mise/skill itself via hands_mise on its first action, so YOUR context cost per dispatch " +
+        "stays constant no matter how fat the book gets. Read-only 'plan' mode (the default) is " +
+        "safe anywhere, any time. 'execute' mode is refused while another execute brief is open " +
+        "for this same craft+cwd — that's the one guard against two sub-agents writing one " +
+        "worktree at once; fan out plan-mode instead and execute the union of what they found.",
+      inputSchema: {
+        craft: z.string().min(1).describe("craft name or slug"),
+        mode: z.enum(["plan", "execute"]).optional().describe("default plan (read-only)"),
+        task: z.string().optional().describe("one line, recorded on the ledger — not the chit itself"),
+        cwd: z.string().optional().describe("execute-lease scope; default your own cwd"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      store.touch(agentId);
+      const mode = input.mode ?? "plan";
+      const cwd = input.cwd ?? process.cwd();
+      const files = craftFiles(input.craft);
+      if (mode === "execute") {
+        const open = store.openExecuteBrief(files.slug, cwd);
+        if (open) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error:
+                `execute lease held by brief #${open.id} (opened ${new Date(open.created_at).toISOString()}) ` +
+                "— run this plan-mode, or wait",
+            }),
+            isError: true,
+          };
+        }
+      }
+      const briefId = store.createCraftBrief({
+        craftSlug: files.slug,
+        mode,
+        cwd,
+        openedBy: agentId,
+        task: input.task ?? null,
+      });
+      const brief = store.getCraftBrief(briefId) as CraftBriefRow;
+      const bookRaw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
+      return asToolResult({ briefId, craft: files.slug, chit: composeChit(brief, parseCraftHeader(bookRaw).covers) });
+    },
+  );
+
+  server.registerTool(
+    "hands_mise",
+    {
+      title: "Pick up a craft's own files for the current brief",
+      description:
+        "A craft sub-agent's first action: pulls the craft's own mise/skill/book, the sibling " +
+        "roster (so you know what you DON'T cover — route those via spillover, not a guess), and " +
+        "a read-in command if the craft looks stale. Stamps pickup so compliance is measurable " +
+        "separately from whether the return note actually arrives.",
+      inputSchema: { briefId: z.number().int() },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      const brief = store.getCraftBrief(input.briefId);
+      if (!brief) {
+        return { ...asToolResult({ ok: false, error: `no such brief: #${input.briefId}` }), isError: true };
+      }
+      store.markCraftBriefPickedUp(input.briefId);
+      const files = craftFiles(brief.craft_slug);
+      const read = (p: string, cap = 6000): string | null => {
+        try {
+          const body = fs.readFileSync(p, "utf8").trim();
+          if (!body) return null;
+          const points = Array.from(body);
+          return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
+        } catch {
+          return null;
+        }
+      };
+      const book = read(files.book);
+      const mise = read(files.mise);
+      const skill = read(files.skill);
+      const { covers, distilled } = parseCraftHeader(book);
+      const distilledMs = distilled ? Date.parse(distilled) : NaN;
+      const stale = !book && !mise && !skill ? "cold" : Number.isNaN(distilledMs) || Date.now() - distilledMs > 14 * 24 * 60 * 60_000 ? "stale" : "fresh";
+      const siblings = listCrafts(store, cfg)
+        .filter((c) => c.slug !== files.slug)
+        .map((c) => ({ slug: c.slug, covers: c.covers }));
+      return asToolResult({
+        craft: files.slug,
+        scope: files.scope,
+        covers,
+        distilled,
+        mise,
+        skill,
+        book,
+        siblings,
+        staleness: stale,
+        readIn: stale !== "fresh" ? `git log --oneline --since "${distilled ?? "30 days ago"}" -- ${covers ?? "."}` : null,
+        returnContract:
+          "Before you return: emit a fenced ```craft-note block (brief, craft, nothing-new, then " +
+          "zero or more mise/book/skill/friction/spillover(<craft>) lines) as the LAST thing in " +
+          "your final message.",
+      });
+    },
+  );
+
+  server.registerTool(
+    "hands_fold",
+    {
+      title: "Acquire the fold lease and get a craft's pending notes to distill",
+      description:
+        "Single-writer distillation (hands#81/#96): acquires an exclusive lease for this craft, " +
+        "then returns its current book/mise/skill plus every pending note since the last fold. " +
+        "Rewrite the files IN PLACE yourself (Edit/Write) — never append — then call " +
+        "hands_fold_done with the SAME throughNoteId this call returned. The lease auto-expires; " +
+        "if you're not going to finish, just don't call hands_fold_done and let it lapse.",
+      inputSchema: { craft: z.string().min(1) },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      store.touch(agentId);
+      const files = craftFiles(input.craft);
+      const got = store.acquireCraftFoldLease(files.slug, agentId);
+      if (!got) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error: `fold lease for "${files.slug}" is held by someone else right now — try again shortly`,
+          }),
+          isError: true,
+        };
+      }
+      return asToolResult(buildFoldContext(store, input.craft));
+    },
+  );
+
+  server.registerTool(
+    "hands_fold_done",
+    {
+      title: "Release the fold lease and mark notes folded",
+      description:
+        "Call after you've rewritten the craft's book/mise/skill in place from hands_fold's " +
+        "pending notes. Marks every note up through throughNoteId as folded (so they stop " +
+        "showing as pending) and releases the lease.",
+      inputSchema: { craft: z.string().min(1), throughNoteId: z.number().int() },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      store.touch(agentId);
+      const files = craftFiles(input.craft);
+      store.markCraftNotesFolded(files.slug, input.throughNoteId);
+      store.releaseCraftFoldLease(files.slug, agentId);
+      return asToolResult({ ok: true, craft: files.slug, foldedThrough: input.throughNoteId });
     },
   );
 
@@ -1100,10 +1245,6 @@ export function pathsReport(agentId: string, cfg: HandsConfig, focus?: string | 
   const info = repoInfo();
   const enabled = Boolean(cfg.remote.url?.trim());
   const journal = enabled ? readSyncStatus(journalDir()) : null;
-  // Resolved from CURRENT focus on every call — this is what makes mid-session
-  // craft swaps observable without a reconnect.
-  const craft = focus ?? null;
-  const files = craft ? craftFiles(craft) : null;
   return {
     cwd: process.cwd(),
     agentId,
@@ -1113,16 +1254,12 @@ export function pathsReport(agentId: string, cfg: HandsConfig, focus?: string | 
     coordinationDir: coordinationDir(),
     db: dbPath(),
     notify: notifyPath(agentId),
-    /** the craft roster — every craft's book + skill live here */
-    craftsDir: craftFiles("roster").dir,
-    ...(isStation(agentId)
-      ? {
-          craft,
-          craftSlug: files?.slug ?? null,
-          book: files?.book ?? null,
-          skillFile: files?.skill ?? null,
-        }
-      : {}),
+    /** lane label ("auth migration") — display/addressing/default fold-owner only, no crafts held here */
+    focus: focus ?? null,
+    /** personal-tier crafts (this handle's own) */
+    craftsDir: personalCraftsDir(cfg),
+    /** repo-shared crafts, null outside a git repo */
+    sharedCraftsDir: sharedCraftsDir(cfg),
     journalProject: enabled ? resolveProject(cfg) : null,
     /** the books clone — digest pages under journal/<project>/<handle>/<date>.md (read-in source) */
     booksDir: enabled ? journalDir() : null,
