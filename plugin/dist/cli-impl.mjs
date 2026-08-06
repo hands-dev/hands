@@ -24137,6 +24137,23 @@ import * as fs13 from "node:fs";
 import { createServer } from "node:http";
 import * as path14 from "node:path";
 import { fileURLToPath } from "node:url";
+function isTrustedOrigin(req) {
+  const host = req.headers.host;
+  if (!host) return false;
+  const matchesHost = (value) => {
+    if (!value) return null;
+    try {
+      return new URL(value).host === host;
+    } catch {
+      return false;
+    }
+  };
+  const origin = matchesHost(req.headers.origin);
+  if (origin !== null) return origin;
+  const referer = matchesHost(req.headers.referer);
+  if (referer !== null) return referer;
+  return true;
+}
 function escapeHtml(s) {
   return s.replace(
     /[&<>"']/g,
@@ -24175,7 +24192,8 @@ function serve(opts) {
   const tickMs = opts?.tickMs ?? 1e3;
   const booksTickMs = opts?.booksTickMs ?? 6e4;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
-  const fileFeedbackFn = opts?.fileFeedback ?? fileFeedback;
+  const fileFeedbackFn = opts?.fileFeedback ?? ((args) => fileFeedback({ ...args, gh: opts?.feedbackGh }));
+  let feedbackRequestTimes = [];
   const store = new Store({ env });
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
@@ -24349,6 +24367,19 @@ function serve(opts) {
       return;
     }
     if (req.method === "POST" && url2.startsWith("/api/feedback")) {
+      if (!isTrustedOrigin(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "cross-origin request rejected" }));
+        return;
+      }
+      const now = Date.now();
+      feedbackRequestTimes = feedbackRequestTimes.filter((t) => now - t < FEEDBACK_RATE_LIMIT_WINDOW_MS);
+      if (feedbackRequestTimes.length >= FEEDBACK_RATE_LIMIT_MAX) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "too many feedback submissions \u2014 try again in a minute" }));
+        return;
+      }
+      feedbackRequestTimes.push(now);
       const chunks = [];
       let tooLarge = false;
       req.on("data", (chunk) => {
@@ -24374,6 +24405,11 @@ function serve(opts) {
         if (typeof parsed.body !== "string" || !parsed.body.trim()) {
           res.writeHead(400, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: "body is required" }));
+          return;
+        }
+        if (typeof parsed.title === "string" && Buffer.byteLength(parsed.title, "utf8") > MAX_FEEDBACK_TITLE_BYTES) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: `title exceeds the ${MAX_FEEDBACK_TITLE_BYTES}-byte size bound` }));
           return;
         }
         const title = typeof parsed.title === "string" ? parsed.title : void 0;
@@ -24428,7 +24464,7 @@ function serve(opts) {
     });
   });
 }
-var ASSETS, MAX_FEEDBACK_BODY_BYTES;
+var ASSETS, MAX_FEEDBACK_BODY_BYTES, MAX_FEEDBACK_TITLE_BYTES, FEEDBACK_RATE_LIMIT_MAX, FEEDBACK_RATE_LIMIT_WINDOW_MS;
 var init_serve = __esm({
   "src/serve.ts"() {
     "use strict";
@@ -24444,6 +24480,9 @@ var init_serve = __esm({
       "dashboard.css": "text/css; charset=utf-8"
     };
     MAX_FEEDBACK_BODY_BYTES = 1e5;
+    MAX_FEEDBACK_TITLE_BYTES = 300;
+    FEEDBACK_RATE_LIMIT_MAX = 5;
+    FEEDBACK_RATE_LIMIT_WINDOW_MS = 6e4;
   }
 });
 
