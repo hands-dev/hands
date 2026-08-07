@@ -109,10 +109,19 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
 
   // Deliver a real wake: append .notify lines AND log them (wake accounting).
   // Every actual wake goes through here so wakesLastHour on the board stays true.
-  const deliverWake = (recipients: readonly string[], meta: { from: string; subject?: string | null }) => {
-    notify(recipients, meta);
-    store.recordWakes(recipients);
-    store.markWakePending(recipients);
+  // Only recipients whose .notify write actually succeeded get counted as
+  // woken or marked pending (hands#173) — a write that threw must not be
+  // reported as delivered, nor silently suppress the NEXT send to that agent.
+  const deliverWake = (
+    recipients: readonly string[],
+    meta: { from: string; subject?: string | null },
+  ): { notified: string[]; failed: string[] } => {
+    const result = notify(recipients, meta);
+    if (result.notified.length > 0) {
+      store.recordWakes(result.notified);
+      store.markWakePending(result.notified);
+    }
+    return result;
   };
   const server = new McpServer(
     { name: "hands", version: "0.1.0" },
@@ -216,8 +225,12 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       //  - pending-wake suppression → recipient is already behind, so a wake is
       //    already outstanding and one drain returns everything anyway.
       const wake = input.wake ?? true;
-      const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
-      if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
+      const candidates = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
+      const coalesced = wake ? recipients.filter((r) => store.hasPendingWake(r)) : [];
+      const { notified: woken, failed: notifyFailed } =
+        candidates.length > 0
+          ? deliverWake(candidates, { from: agentId, subject: input.subject ?? null })
+          : { notified: [] as string[], failed: [] as string[] };
       // Wake-outcome samples (hands#106) — a pure record of the decision already
       // made above, no new send-path logic. Best-effort: the send itself
       // already happened, so a transient write failure here must not turn a
@@ -225,19 +238,40 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       // risk a duplicate insertMessage — there's no idempotency key).
       try {
         const wokenSet = new Set(woken);
+        const failedSet = new Set(notifyFailed);
         for (const recipient of recipients) {
-          const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
+          const outcome = !wake
+            ? "suppressed"
+            : wokenSet.has(recipient)
+              ? "fired"
+              : failedSet.has(recipient)
+                ? "failed"
+                : "coalesced";
           store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
         }
       } catch {
         // telemetry only — the send already succeeded above
       }
+      // hands#183 tie-in: a resolved recipient with a confirmed-dead process
+      // gets a loud warning rather than a bare `ok:true` that reads as success
+      // into the void — this is exactly the discrepancy #173 asked to surface.
+      const peerById = new Map(store.listPeers().map((p) => [p.id, p]));
+      const deadRecipients = recipients.filter((r) => peerById.get(r)?.alive === false);
       return asToolResult({
         ok: true,
         id,
         to: broadcast ? "*" : to,
         delivered: recipients,
         woken,
+        coalesced,
+        notifyFailed,
+        ...(deadRecipients.length > 0
+          ? {
+              warning:
+                `${deadRecipients.join(", ")} process not found (pid check failed) — ` +
+                "message recorded but may never be seen",
+            }
+          : {}),
       });
     },
   );
@@ -294,8 +328,11 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     {
       title: "List registered worktree agents",
       description:
-        "List every agent registered on this machine's bus and whether it is online (heartbeat " +
-        "within the last 60s).",
+        "List every agent registered on this machine's bus. `online` means a heartbeat landed " +
+        "within the last 15 minutes (turns are infrequent, so this means \"recently active\", not " +
+        "\"this instant\"). `alive` is a hard pid-liveness check (hands#183) — false only when the " +
+        "recorded process is confirmed gone; check this, not `online`, before treating a station as " +
+        "safe to dispatch to.",
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -306,6 +343,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         focus: p.focus ?? undefined,
         sessionName: p.session_name ?? undefined,
         online: p.online,
+        alive: p.alive,
         cwd: p.cwd,
         pid: p.pid,
         lastSeenAt: new Date(p.last_seen_at).toISOString(),
@@ -375,6 +413,10 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           focus: p.focus ?? undefined,
           isSelf: p.id === agentId,
           online: p.online,
+          // hands#183: pid-liveness, independent of the 15-minute online window —
+          // false only when the recorded process is confirmed gone. This is what
+          // "safe to dispatch to" should check, not `online` alone.
+          alive: p.alive,
           branch: p.branch ?? undefined,
           state: activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle",
           lastActive: p.last_active ? new Date(p.last_active).toISOString() : undefined,
@@ -725,7 +767,15 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         dish: input.dish ?? null,
       });
       if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
-      return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue" });
+      // hands#183 — a ticket delivered to a confirmed-dead process should say
+      // so loudly rather than proceed as clean success (the expo dispatching
+      // into the void is exactly the failure this ticket is fixing).
+      const assigneePeer = assignee ? store.listPeers().find((p) => p.id === assignee) : undefined;
+      const warning =
+        assigneePeer && !assigneePeer.alive
+          ? `${assignee} process not found (pid ${assigneePeer.pid} not running) — ticket created but may sit unclaimed`
+          : undefined;
+      return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue", ...(warning ? { warning } : {}) });
     },
   );
 

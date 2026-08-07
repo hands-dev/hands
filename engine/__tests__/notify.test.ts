@@ -41,4 +41,21 @@ describe("notify", () => {
     expect(lines[1]).not.toContain("\n");
     expect(lines[1]).toContain("line break");
   });
+
+  it("returns the recipients actually notified", () => {
+    const result = notify(["wt2", "wt3"], { from: "wt1", subject: "ping", now: 0 }, env);
+    expect(result).toEqual({ notified: ["wt2", "wt3"], failed: [] });
+  });
+
+  it("reports a write failure in `failed` instead of swallowing it silently (hands#173)", () => {
+    // Make the target path unwritable as a plain file: a directory at that
+    // exact path forces appendFileSync to throw EISDIR, deterministically
+    // reproducing "the write attempt itself failed" without relying on
+    // filesystem permissions (which root/CI can bypass).
+    fs.mkdirSync(path.join(home, "wt2.notify"));
+    const result = notify(["wt2", "wt3"], { from: "wt1", subject: "ping", now: 0 }, env);
+    expect(result).toEqual({ notified: ["wt3"], failed: ["wt2"] });
+    // wt3's line still landed — one recipient's failure must not affect another.
+    expect(fs.readFileSync(path.join(home, "wt3.notify"), "utf8")).toContain("ping");
+  });
 });

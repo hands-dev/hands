@@ -21541,6 +21541,15 @@ var require_dist = __commonJS({
 // src/store.ts
 import * as fs4 from "node:fs";
 import { DatabaseSync } from "node:sqlite";
+function isPidAlive(pid) {
+  if (!pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code !== "ESRCH";
+  }
+}
 function sleepSync(ms) {
   const shared = new Int32Array(new SharedArrayBuffer(4));
   Atomics.wait(shared, 0, 0, ms);
@@ -21734,7 +21743,7 @@ var init_store = __esm({
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         agent_id   TEXT NOT NULL,      -- the intended recipient
         message_id INTEGER,
-        outcome    TEXT NOT NULL,      -- fired | suppressed | coalesced
+        outcome    TEXT NOT NULL,      -- fired | suppressed | coalesced | failed
         created_at INTEGER NOT NULL
       );
 
@@ -22066,7 +22075,8 @@ var init_store = __esm({
         const rows = this.db.prepare("SELECT * FROM agents ORDER BY id ASC").all();
         return rows.map((row) => ({
           ...row,
-          online: now - row.last_seen_at < ONLINE_WINDOW_MS
+          online: now - row.last_seen_at < ONLINE_WINDOW_MS,
+          alive: isPidAlive(row.pid)
         }));
       }
       history(options) {
@@ -22251,12 +22261,13 @@ var init_store = __esm({
       }
       /**
        * One row per hands_send delivery decision (hands#106) — "fired" (a real
-       * `.notify` append, same event `recordWakes` counts), "coalesced" (the
-       * recipient already had a pending wake, so this one rides along on the
-       * next drain instead of double-waking), or "suppressed" (`wake:false`, an
-       * intentional FYI). No new send-path logic: this just records the outcome
-       * the existing hasPendingWake/wake:false branches already compute. Trims
-       * past 24h on insert, same window as wake_log.
+       * `.notify` append that succeeded, same event `recordWakes` counts),
+       * "coalesced" (the recipient already had a pending wake, so this one rides
+       * along on the next drain instead of double-waking), "suppressed"
+       * (`wake:false`, an intentional FYI), or "failed" (hands#173 — a wake was
+       * attempted but the `.notify` write itself threw, so the recipient was
+       * never actually nudged despite the DB row existing). Trims past 24h on
+       * insert, same window as wake_log.
        */
       recordWakeOutcome(input) {
         const now = input.now ?? Date.now();
@@ -22268,9 +22279,9 @@ var init_store = __esm({
       /** Per-agent wake-outcome counts since `sinceMs` — the "success rate, lapse count" hands#106 asks for. */
       wakeOutcomeCounts(agentId, sinceMs) {
         const rows = this.db.prepare("SELECT outcome, COUNT(*) AS n FROM wake_outcomes WHERE agent_id = ? AND created_at > ? GROUP BY outcome").all(agentId, sinceMs);
-        const counts = { fired: 0, suppressed: 0, coalesced: 0 };
+        const counts = { fired: 0, suppressed: 0, coalesced: 0, failed: 0 };
         for (const r of rows) {
-          if (r.outcome === "fired" || r.outcome === "suppressed" || r.outcome === "coalesced") {
+          if (r.outcome === "fired" || r.outcome === "suppressed" || r.outcome === "coalesced" || r.outcome === "failed") {
             counts[r.outcome] = Number(r.n);
           }
         }
@@ -49420,13 +49431,18 @@ function notify(recipients, meta3, env = process.env) {
   const subject = (meta3.subject ?? "").replace(/[\t\n\r]/g, " ");
   const line = `${iso}	${meta3.from}	${subject}
 `;
+  const notified = [];
+  const failed = [];
   for (const recipient of recipients) {
     try {
       fs5.appendFileSync(notifyPath(recipient, env), line, { mode: 384 });
       fs5.chmodSync(notifyPath(recipient, env), 384);
+      notified.push(recipient);
     } catch {
+      failed.push(recipient);
     }
   }
+  return { notified, failed };
 }
 
 // src/server.ts
@@ -49891,9 +49907,12 @@ function buildServer(store, agentId, config2) {
     return { id };
   };
   const deliverWake = (recipients, meta3) => {
-    notify(recipients, meta3);
-    store.recordWakes(recipients);
-    store.markWakePending(recipients);
+    const result = notify(recipients, meta3);
+    if (result.notified.length > 0) {
+      store.recordWakes(result.notified);
+      store.markWakePending(result.notified);
+    }
+    return result;
   };
   const server = new McpServer(
     { name: "hands", version: "0.1.0" },
@@ -49952,22 +49971,31 @@ function buildServer(store, agentId, config2) {
       });
       const recipients = broadcast ? store.listPeers().map((p) => p.id).filter((peerId) => peerId !== agentId) : [to];
       const wake = input.wake ?? true;
-      const woken = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
-      if (woken.length > 0) deliverWake(woken, { from: agentId, subject: input.subject ?? null });
+      const candidates = wake ? recipients.filter((r) => !store.hasPendingWake(r)) : [];
+      const coalesced = wake ? recipients.filter((r) => store.hasPendingWake(r)) : [];
+      const { notified: woken, failed: notifyFailed } = candidates.length > 0 ? deliverWake(candidates, { from: agentId, subject: input.subject ?? null }) : { notified: [], failed: [] };
       try {
         const wokenSet = new Set(woken);
+        const failedSet = new Set(notifyFailed);
         for (const recipient of recipients) {
-          const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : "coalesced";
+          const outcome = !wake ? "suppressed" : wokenSet.has(recipient) ? "fired" : failedSet.has(recipient) ? "failed" : "coalesced";
           store.recordWakeOutcome({ agentId: recipient, messageId: id, outcome });
         }
       } catch {
       }
+      const peerById = new Map(store.listPeers().map((p) => [p.id, p]));
+      const deadRecipients = recipients.filter((r) => peerById.get(r)?.alive === false);
       return asToolResult({
         ok: true,
         id,
         to: broadcast ? "*" : to,
         delivered: recipients,
-        woken
+        woken,
+        coalesced,
+        notifyFailed,
+        ...deadRecipients.length > 0 ? {
+          warning: `${deadRecipients.join(", ")} process not found (pid check failed) \u2014 message recorded but may never be seen`
+        } : {}
       });
     }
   );
@@ -50011,7 +50039,7 @@ function buildServer(store, agentId, config2) {
     "hands_peers",
     {
       title: "List registered worktree agents",
-      description: "List every agent registered on this machine's bus and whether it is online (heartbeat within the last 60s).",
+      description: 'List every agent registered on this machine\'s bus. `online` means a heartbeat landed within the last 15 minutes (turns are infrequent, so this means "recently active", not "this instant"). `alive` is a hard pid-liveness check (hands#183) \u2014 false only when the recorded process is confirmed gone; check this, not `online`, before treating a station as safe to dispatch to.',
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     },
@@ -50022,6 +50050,7 @@ function buildServer(store, agentId, config2) {
         focus: p.focus ?? void 0,
         sessionName: p.session_name ?? void 0,
         online: p.online,
+        alive: p.alive,
         cwd: p.cwd,
         pid: p.pid,
         lastSeenAt: new Date(p.last_seen_at).toISOString(),
@@ -50074,6 +50103,10 @@ function buildServer(store, agentId, config2) {
           focus: p2.focus ?? void 0,
           isSelf: p2.id === agentId,
           online: p2.online,
+          // hands#183: pid-liveness, independent of the 15-minute online window —
+          // false only when the recorded process is confirmed gone. This is what
+          // "safe to dispatch to" should check, not `online` alone.
+          alive: p2.alive,
           branch: p2.branch ?? void 0,
           state: activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle",
           lastActive: p2.last_active ? new Date(p2.last_active).toISOString() : void 0,
@@ -50363,7 +50396,9 @@ function buildServer(store, agentId, config2) {
         dish: input.dish ?? null
       });
       if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
-      return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue" });
+      const assigneePeer = assignee ? store.listPeers().find((p) => p.id === assignee) : void 0;
+      const warning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
+      return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue", ...warning ? { warning } : {} });
     }
   );
   server.registerTool(
