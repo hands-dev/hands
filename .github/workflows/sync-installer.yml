@@ -60,13 +60,18 @@ jobs:
       - name: Smoke-test the installer end to end
         # Install from THIS checkout's bundles into a scratch prefix and run the
         # result. Catches a payload rename or a broken shim before it reaches
-        # the website — the installer is the one artifact with no other CI.
+        # the website — the installer is the one artifact with no other CI
+        # (ci.yml's installer-smoke job covers PRs; this covers the actual
+        # vendored payload on the push that triggered this workflow).
         working-directory: hands
         run: |
           set -eux
           HANDS_BASE="file://$PWD/plugin/dist" HANDS_PREFIX="$RUNNER_TEMP/hands-smoke" sh install.sh
           "$RUNNER_TEMP/hands-smoke/bin/hands" version
           "$RUNNER_TEMP/hands-smoke/bin/hands" --help >/dev/null
+          # hands#151: dashboard assets must ship alongside lib/, or `hands serve` refuses to start.
+          test -f "$RUNNER_TEMP/hands-smoke/lib/assets/dashboard.js"
+          test -f "$RUNNER_TEMP/hands-smoke/lib/assets/dashboard.css"
 
       - name: Upload installer (dry run)
         if: env.DRY_RUN == 'true'

@@ -11,7 +11,7 @@ import type { FeedbackResult, GhRunner } from "../src/feedback.js";
 import { pidPath } from "../src/paths.js";
 import { openJournal, syncPush } from "../src/remote.js";
 import { buildSnapshot } from "../src/snapshot.js";
-import { kitchenName, serve, type ServeHandle, snapshotKey } from "../src/serve.js";
+import { kitchenName, serve, ServeError, type ServeHandle, snapshotKey } from "../src/serve.js";
 import { Store } from "../src/store.js";
 
 let home: string;
@@ -150,6 +150,20 @@ function postSSE(
 }
 
 describe("serve", () => {
+  it("refuses to start when the asset directory is missing, naming the path it looked for (hands#151)", async () => {
+    const missing = path.join(home, "nonexistent-assets");
+    let caught: unknown;
+    try {
+      await serve({ port: 0, env, assetsDir: missing });
+    } catch (err) {
+      caught = err;
+    }
+    expect(caught).toBeInstanceOf(ServeError);
+    expect((caught as Error).message).toContain(missing);
+    // never comes up half-broken: no pidfile from a run that never actually served anything
+    expect(fs.existsSync(pidPath(env))).toBe(false);
+  });
+
   it("serves the SPA shell and guards the asset allowlist", async () => {
     const assets = path.join(home, "assets");
     fs.mkdirSync(path.join(assets, "fonts"), { recursive: true });

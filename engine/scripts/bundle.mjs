@@ -158,6 +158,24 @@ export async function buildBundles(outDir = defaultOut) {
     fs.copyFileSync(path.join(brandDir, name), path.join(outDir, "assets", name));
   }
 
+  // MANIFEST.txt: every relative path just written under assets/, sorted —
+  // install.sh (POSIX sh, no directory listing over HTTP) reads this to know
+  // what to fetch. A hardcoded duplicate list in install.sh silently drifts
+  // the moment an asset is added or renamed here (hands#151: that's exactly
+  // how the standalone installer ended up shipping no assets/ at all).
+  const assetsRoot = path.join(outDir, "assets");
+  const manifest = [];
+  const walk = (rel) => {
+    for (const entry of fs.readdirSync(path.join(assetsRoot, rel), { withFileTypes: true })) {
+      const entryRel = rel ? `${rel}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) walk(entryRel);
+      else if (entryRel !== "MANIFEST.txt") manifest.push(entryRel);
+    }
+  };
+  walk("");
+  manifest.sort();
+  fs.writeFileSync(path.join(assetsRoot, "MANIFEST.txt"), `${manifest.join("\n")}\n`);
+
   return outDir;
 }
 
