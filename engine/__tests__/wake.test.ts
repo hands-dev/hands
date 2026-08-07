@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -123,6 +124,84 @@ describe("redundant-wake suppression", () => {
     expect(bc.body.woken).toEqual(["station-2"]);
     expect(notifyLines("station-1")).toHaveLength(1);
     expect(notifyLines("station-2")).toHaveLength(1);
+  });
+});
+
+/** A pid guaranteed dead: spawnSync blocks until the child exits, so by the time it returns the pid is reaped. */
+function deadPid(): number {
+  return spawnSync(process.execPath, ["-e", "process.exit(0)"]).pid!;
+}
+
+describe("silent-failure surfacing (hands#173, hands#183)", () => {
+  it("distinguishes woken from coalesced in the response, instead of both reading as empty `woken`", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(expo, "hands_send", { to: "station-1", body: "first" });
+    const second = await call(expo, "hands_send", { to: "station-1", body: "second" });
+    expect(second.body.woken).toEqual([]);
+    expect(second.body.coalesced).toEqual(["station-1"]); // NOT a failure — legitimately behind
+  });
+
+  it("reports a real .notify write failure in notifyFailed, and does not permanently wedge the recipient", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    // A directory at the exact notify path forces the write to throw (EISDIR) —
+    // deterministic reproduction of "the append attempt itself failed".
+    fs.mkdirSync(path.join(home, "station-1.notify"));
+
+    const first = await call(expo, "hands_send", { to: "station-1", body: "hello" });
+    expect(first.isError).toBe(false); // the DB row still lands — only the nudge failed
+    expect(first.body.woken).toEqual([]);
+    expect(first.body.notifyFailed).toEqual(["station-1"]);
+
+    // Unlike the old behavior (a swallowed failure still set wake_pending),
+    // a failed write must not coalesce the next attempt — that would wedge
+    // this recipient's wakes forever with no way to self-heal.
+    fs.rmSync(path.join(home, "station-1.notify"), { recursive: true });
+    const retry = await call(expo, "hands_send", { to: "station-1", body: "hello again" });
+    expect(retry.body.woken).toEqual(["station-1"]);
+    expect(retry.body.notifyFailed).toEqual([]);
+  });
+
+  it("warns on hands_send when the resolved recipient's pid is confirmed dead (hands#183)", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: deadPid() });
+    const res = await call(expo, "hands_send", { to: "station-1", body: "hello" });
+    expect(res.isError).toBe(false); // still delivered — reversible, not blocked
+    expect(res.body.warning).toContain("station-1");
+  });
+
+  it("warns on hands_delegate when the assignee's pid is confirmed dead, but still creates the ticket", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: deadPid() });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    expect(res.body.ok).toBe(true);
+    expect(res.body.assignedTo).toBe("station-1");
+    expect(res.body.warning).toContain("station-1");
+  });
+
+  it("a healthy assignee (real pid) gets no warning", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    expect(res.body.warning).toBeUndefined();
+  });
+
+  it("hands_peers and hands_board surface `alive` distinctly from `online` for a dead-pid peer", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: deadPid() });
+
+    const peers = await call(expo, "hands_peers", {});
+    const p = (peers.body.peers as Array<{ id: string; online: boolean; alive: boolean }>).find(
+      (x) => x.id === "station-1",
+    );
+    // Still within the 15-minute heartbeat window (just registered) — online
+    // alone would say "fine". alive is what actually caught the dead process.
+    expect(p).toMatchObject({ online: true, alive: false });
+
+    const board = await call(expo, "hands_board", {});
+    const b = (board.body.peers as Array<{ id: string; alive: boolean }>).find((x) => x.id === "station-1");
+    expect(b?.alive).toBe(false);
   });
 });
 

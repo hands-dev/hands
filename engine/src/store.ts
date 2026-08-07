@@ -15,6 +15,27 @@ const SQLITE_LOCKED = 6;
  */
 export const ONLINE_WINDOW_MS = 15 * 60_000;
 
+/**
+ * Whether `pid` names a currently-running OS process (hands#183). A dead pid
+ * is proof a station's session ended (crash, eviction, closed pane)
+ * independent of heartbeat timing — `ONLINE_WINDOW_MS` alone can't tell "no
+ * turn in a while" from "no longer exists" for up to 15 minutes, and the
+ * expo dispatches into that blind spot. `pid === 0` is the stub value
+ * `setFocus`/`setSessionName` write for an agent that has never actually
+ * registered — nothing to check yet, so it reads alive (unknown, not
+ * disprovable) rather than penalized. `EPERM` (pid exists, owned by someone
+ * else) also reads alive — only a confirmed `ESRCH` proves death.
+ */
+function isPidAlive(pid: number): boolean {
+  if (!pid) return true;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code !== "ESRCH";
+  }
+}
+
 export interface AgentRow {
   id: string;
   cwd: string;
@@ -209,6 +230,14 @@ export interface MessageRow {
 
 export interface Peer extends AgentRow {
   online: boolean;
+  /**
+   * pid-liveness (hands#183) — false ONLY when the recorded pid is confirmed
+   * dead (ESRCH). Independent of `online`: a dead pid means offline right
+   * now, not after waiting out the heartbeat window. This is the signal a
+   * caller deciding "can I dispatch to this station" wants; `online` alone
+   * cannot tell a dead session from one that simply hasn't taken a turn yet.
+   */
+  alive: boolean;
 }
 
 export interface SendInput {
@@ -428,7 +457,7 @@ export class Store {
         id         INTEGER PRIMARY KEY AUTOINCREMENT,
         agent_id   TEXT NOT NULL,      -- the intended recipient
         message_id INTEGER,
-        outcome    TEXT NOT NULL,      -- fired | suppressed | coalesced
+        outcome    TEXT NOT NULL,      -- fired | suppressed | coalesced | failed
         created_at INTEGER NOT NULL
       );
 
@@ -847,6 +876,7 @@ export class Store {
     return rows.map((row) => ({
       ...row,
       online: now - row.last_seen_at < ONLINE_WINDOW_MS,
+      alive: isPidAlive(row.pid),
     }));
   }
 
@@ -1115,17 +1145,18 @@ export class Store {
 
   /**
    * One row per hands_send delivery decision (hands#106) — "fired" (a real
-   * `.notify` append, same event `recordWakes` counts), "coalesced" (the
-   * recipient already had a pending wake, so this one rides along on the
-   * next drain instead of double-waking), or "suppressed" (`wake:false`, an
-   * intentional FYI). No new send-path logic: this just records the outcome
-   * the existing hasPendingWake/wake:false branches already compute. Trims
-   * past 24h on insert, same window as wake_log.
+   * `.notify` append that succeeded, same event `recordWakes` counts),
+   * "coalesced" (the recipient already had a pending wake, so this one rides
+   * along on the next drain instead of double-waking), "suppressed"
+   * (`wake:false`, an intentional FYI), or "failed" (hands#173 — a wake was
+   * attempted but the `.notify` write itself threw, so the recipient was
+   * never actually nudged despite the DB row existing). Trims past 24h on
+   * insert, same window as wake_log.
    */
   recordWakeOutcome(input: {
     agentId: string;
     messageId: number | null;
-    outcome: "fired" | "suppressed" | "coalesced";
+    outcome: "fired" | "suppressed" | "coalesced" | "failed";
     now?: number;
   }): void {
     const now = input.now ?? Date.now();
@@ -1141,13 +1172,13 @@ export class Store {
   wakeOutcomeCounts(
     agentId: string,
     sinceMs: number,
-  ): { fired: number; suppressed: number; coalesced: number } {
+  ): { fired: number; suppressed: number; coalesced: number; failed: number } {
     const rows = this.db
       .prepare("SELECT outcome, COUNT(*) AS n FROM wake_outcomes WHERE agent_id = ? AND created_at > ? GROUP BY outcome")
       .all(agentId, sinceMs) as unknown as Array<{ outcome: string; n: number }>;
-    const counts = { fired: 0, suppressed: 0, coalesced: 0 };
+    const counts = { fired: 0, suppressed: 0, coalesced: 0, failed: 0 };
     for (const r of rows) {
-      if (r.outcome === "fired" || r.outcome === "suppressed" || r.outcome === "coalesced") {
+      if (r.outcome === "fired" || r.outcome === "suppressed" || r.outcome === "coalesced" || r.outcome === "failed") {
         counts[r.outcome] = Number(r.n);
       }
     }

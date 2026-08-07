@@ -1,8 +1,14 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ONLINE_WINDOW_MS, Store } from "../src/store.js";
+
+/** A pid guaranteed dead: spawnSync blocks until the child exits, so by the time it returns the pid is reaped. */
+function deadPid(): number {
+  return spawnSync(process.execPath, ["-e", "process.exit(0)"]).pid!;
+}
 
 let home: string;
 let env: NodeJS.ProcessEnv;
@@ -74,6 +80,30 @@ describe("Store peers", () => {
     expect(store.listPeers(t0).find((p) => p.id === "wt1")?.online).toBe(false);
     store.touch("wt1", t0);
     expect(store.listPeers(t0).find((p) => p.id === "wt1")?.online).toBe(true);
+    store.close();
+  });
+
+  it("alive reflects pid liveness, independent of the heartbeat window (hands#183)", () => {
+    const store = open();
+    const now = 1_000_000_000_000;
+    // Both fresh (well inside ONLINE_WINDOW_MS) — online alone can't tell them apart.
+    store.registerAgent({ id: "here", cwd: "/a", pid: process.pid, now });
+    store.registerAgent({ id: "gone", cwd: "/b", pid: deadPid(), now });
+
+    const peers = store.listPeers(now);
+    expect(peers.find((p) => p.id === "here")).toMatchObject({ online: true, alive: true });
+    expect(peers.find((p) => p.id === "gone")).toMatchObject({ online: true, alive: false });
+    store.close();
+  });
+
+  it("pid 0 (a setFocus stub row for an agent that never registered) reads alive — unknown, not disprovable", () => {
+    const store = open();
+    const now = 1_000_000_000_000;
+    store.setFocus("not-yet-registered", "some craft", now);
+    expect(store.listPeers(now).find((p) => p.id === "not-yet-registered")).toMatchObject({
+      pid: 0,
+      alive: true,
+    });
     store.close();
   });
 });
@@ -212,7 +242,7 @@ describe("Store observability samples (hands#103, #106)", () => {
     // Before the cutoff — excluded.
     store.recordWakeOutcome({ agentId: "station-1", messageId: 0, outcome: "fired", now: 500 });
 
-    expect(store.wakeOutcomeCounts("station-1", 999)).toEqual({ fired: 2, suppressed: 1, coalesced: 1 });
+    expect(store.wakeOutcomeCounts("station-1", 999)).toEqual({ fired: 2, suppressed: 1, coalesced: 1, failed: 0 });
     store.close();
   });
 
@@ -221,7 +251,7 @@ describe("Store observability samples (hands#103, #106)", () => {
     const hour = 60 * 60_000;
     store.recordWakeOutcome({ agentId: "station-1", messageId: 1, outcome: "fired", now: 0 });
     store.recordWakeOutcome({ agentId: "station-1", messageId: 2, outcome: "fired", now: 25 * hour });
-    expect(store.wakeOutcomeCounts("station-1", -1)).toEqual({ fired: 1, suppressed: 0, coalesced: 0 });
+    expect(store.wakeOutcomeCounts("station-1", -1)).toEqual({ fired: 1, suppressed: 0, coalesced: 0, failed: 0 });
     store.close();
   });
 });
