@@ -17,17 +17,20 @@ import * as path from "node:path";
  * heuristics (`simple_expansion`, expansion obfuscation) and `git add` /
  * `git commit` still prompt. Bypass reduces the treadmill; it doesn't end it.
  *
- * hands#86: a station SHIPS its own branch now — `git push` is granted, not
- * denied. The guardrail that remains is history-rewrite and merge/restructure:
- * `git reset --hard`, `gh pr merge`, and the scaling/removal tools stay
- * denied, because those are the operations a station can't cleanly undo or
- * that touch shared state directly. Before this, EVERY denied push meant a
- * finished piece of work only reached GitHub if a human (in practice, the
- * expo) cherry-picked the station's local commit onto main and pushed it
- * themselves — a serial bottleneck on shipping, and each cherry-pick was its
- * own opportunity to hand-merge a conflict (`plugin/dist/BUILD.json`, most
- * often) that the station never saw. A station proposes on its own branch and
- * ships it; a human still merges.
+ * hands#86: a station SHIPS its own branch now — `git push` and `gh pr
+ * create` are granted, not denied. The guardrail that remains is
+ * history-rewrite and merge/restructure: `git reset --hard`, `gh pr merge`,
+ * and the scaling/removal tools stay denied, because those are the
+ * operations a station can't cleanly undo or that touch shared state
+ * directly. Opening a PR is as reversible as pushing a branch — it can be
+ * closed, and nothing lands without a merge, which is still not a station's
+ * to run. Before this, EVERY denied push meant a finished piece of work only
+ * reached GitHub if a human (in practice, the expo) cherry-picked the
+ * station's local commit onto main and pushed it themselves — a serial
+ * bottleneck on shipping, and each cherry-pick was its own opportunity to
+ * hand-merge a conflict (`plugin/dist/BUILD.json`, most often) that the
+ * station never saw. A station proposes on its own branch, pushes it, and
+ * opens its own PR; a human still merges.
  */
 export interface SeedResult {
   path: string;
@@ -35,10 +38,13 @@ export interface SeedResult {
   written: boolean;
 }
 
-/** hands#86: the one rule this module moved from DENY to ALLOW — a station ships its own branch. */
+/** hands#86: the rules this module grants a station to ship its own work — push the branch, open the PR. */
 export const PUSH_RULE = "Bash(git push *)";
+export const PR_CREATE_RULE = "Bash(gh pr create *)";
+/** Both hands#86 ship rules, grouped for staleness-checking and reconciliation (below). */
+export const SHIP_RULES: readonly string[] = [PUSH_RULE, PR_CREATE_RULE];
 
-/** Read-only shell, plus shipping its own branch. Enumerated per-subcommand rather than `git *` so `reset`/`push --force` variants can't ride along undetected. */
+/** Read-only shell, plus shipping its own branch and PR. Enumerated per-subcommand rather than `git *`/`gh *` so `reset`/`push --force`/`pr merge` variants can't ride along undetected. */
 const ALLOW: readonly string[] = [
   "Read",
   "Glob",
@@ -78,10 +84,10 @@ const ALLOW: readonly string[] = [
   "mcp__plugin_hands_hands__hands_priorities",
   "mcp__plugin_hands_hands__hands_questions",
   "mcp__plugin_hands_hands__hands_todos",
-  PUSH_RULE,
+  ...SHIP_RULES,
 ];
 
-/** A station ships its own branch now (PUSH_RULE, above); it never rewrites history or restructures the line itself. */
+/** A station ships its own branch and PR now (SHIP_RULES, above); it never rewrites history or restructures the line itself. */
 const DENY: readonly string[] = [
   "Bash(git reset --hard *)",
   "Bash(gh pr merge *)",
@@ -158,39 +164,42 @@ function readSettingsPermissions(file: string): { allow: unknown[]; deny: unknow
 }
 
 /**
- * Whether an EXISTING `settings.local.json` still reflects the pre-hands#86 policy: `PUSH_RULE`
- * present in `deny`, or simply absent from `allow` (a station provisioned before this file
- * existed at all had no push rule anywhere — same practical effect, still denied by default).
- * Returns false — nothing to reconcile — when there's no settings file yet; that's
- * `seedStationPermissions`'s job, and it already writes the current policy.
+ * Whether an EXISTING `settings.local.json` still reflects the pre-hands#86 policy: any
+ * `SHIP_RULES` entry present in `deny`, or simply absent from `allow` (a station provisioned
+ * before this file existed at all had no ship rules anywhere — same practical effect, still
+ * denied by default). Returns false — nothing to reconcile — when there's no settings file yet;
+ * that's `seedStationPermissions`'s job, and it already writes the current policy.
  */
-export function pushPermissionStale(dir: string): boolean {
+export function shipPermissionsStale(dir: string): boolean {
   const permissions = readSettingsPermissions(path.join(dir, SEEDED_RELPATH));
   if (!permissions) return false;
-  return permissions.deny.includes(PUSH_RULE) || !permissions.allow.includes(PUSH_RULE);
+  return SHIP_RULES.some((rule) => permissions.deny.includes(rule) || !permissions.allow.includes(rule));
 }
 
 /**
  * hands#86: `seedStationPermissions` deliberately never overwrites an existing settings file, so
- * a station provisioned before `git push` moved to ALLOW would otherwise carry the old policy
- * forever. This reconciles JUST that one rule — remove it from `deny`, add it to `allow` — in an
- * EXISTING file, leaving every other hand-tuned entry untouched. A no-op (changed: false) when
- * there's no settings file yet (nothing to reconcile) or the rule is already current. Called from
- * the same sites that already call `seedStationPermissions` (`launchStationSeat` in cli.ts, and
- * `hands doctor --fix`) so an existing seat catches up the next time it's opened/restarted or
- * diagnosed — no separate one-off migration needed, and no seat is silently left behind.
+ * a station provisioned before `git push`/`gh pr create` moved to ALLOW would otherwise carry the
+ * old policy forever. This reconciles JUST the `SHIP_RULES` entries — remove each from `deny`,
+ * add each to `allow` — in an EXISTING file, leaving every other hand-tuned entry untouched. A
+ * no-op (changed: false) when there's no settings file yet (nothing to reconcile) or every rule is
+ * already current. Called from the same sites that already call `seedStationPermissions`
+ * (`launchStationSeat` in cli.ts, and `hands doctor --fix`) so an existing seat catches up the
+ * next time it's opened/restarted or diagnosed — no separate one-off migration needed, and no seat
+ * is silently left behind.
  */
-export function reconcileStationPushPermission(dir: string): { path: string; changed: boolean } {
+export function reconcileStationShipPermissions(dir: string): { path: string; changed: boolean } {
   const file = path.join(dir, SEEDED_RELPATH);
   const permissions = readSettingsPermissions(file);
   if (!permissions) return { path: file, changed: false };
   const allow = [...permissions.allow];
-  const deny = permissions.deny.filter((rule) => rule !== PUSH_RULE);
+  const deny = permissions.deny.filter((rule) => !SHIP_RULES.includes(rule as string));
   const denyChanged = deny.length !== permissions.deny.length;
   let allowChanged = false;
-  if (!allow.includes(PUSH_RULE)) {
-    allow.push(PUSH_RULE);
-    allowChanged = true;
+  for (const rule of SHIP_RULES) {
+    if (!allow.includes(rule)) {
+      allow.push(rule);
+      allowChanged = true;
+    }
   }
   if (!denyChanged && !allowChanged) return { path: file, changed: false };
   const settings = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;

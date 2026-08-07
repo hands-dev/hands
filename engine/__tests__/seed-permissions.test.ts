@@ -4,10 +4,11 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   mergeStationSettings,
-  pushPermissionStale,
+  PR_CREATE_RULE,
   PUSH_RULE,
-  reconcileStationPushPermission,
+  reconcileStationShipPermissions,
   seedStationPermissions,
+  shipPermissionsStale,
   stationSettings,
 } from "../src/seed-permissions.js";
 
@@ -120,7 +121,14 @@ describe("the grant itself", () => {
     expect(allow.deny).toContain("Bash(git reset --hard *)");
   });
 
-  it("leaves Edit and Write prompting — a station ships its own branch, a human still merges", () => {
+  it("grants opening a PR but not merging one (hands#86)", () => {
+    expect(allow.allow).not.toContain("Bash(gh *)");
+    expect(allow.allow).toContain("Bash(gh pr create *)");
+    expect(allow.deny).not.toContain("Bash(gh pr create *)");
+    expect(allow.deny).toContain("Bash(gh pr merge *)");
+  });
+
+  it("leaves Edit and Write prompting — a station ships its own branch and PR, a human still merges", () => {
     expect(allow.allow).not.toContain("Edit");
     expect(allow.allow).not.toContain("Write");
     expect(allow.deny).toContain("Bash(gh pr merge *)");
@@ -132,15 +140,15 @@ describe("the grant itself", () => {
   });
 });
 
-describe("pushPermissionStale / reconcileStationPushPermission — hands#86 catch-up for already-provisioned seats", () => {
+describe("shipPermissionsStale / reconcileStationShipPermissions — hands#86 catch-up for already-provisioned seats", () => {
   it("a freshly seeded station is never stale", () => {
     seedStationPermissions(dir);
-    expect(pushPermissionStale(dir)).toBe(false);
+    expect(shipPermissionsStale(dir)).toBe(false);
   });
 
   it("a station with no settings file at all is not 'stale' — that's seedStationPermissions' job", () => {
-    expect(pushPermissionStale(dir)).toBe(false);
-    expect(reconcileStationPushPermission(dir)).toEqual({ path: settingsFile(), changed: false });
+    expect(shipPermissionsStale(dir)).toBe(false);
+    expect(reconcileStationShipPermissions(dir)).toEqual({ path: settingsFile(), changed: false });
     expect(fs.existsSync(settingsFile())).toBe(false); // reconcile never creates the file
   });
 
@@ -150,10 +158,19 @@ describe("pushPermissionStale / reconcileStationPushPermission — hands#86 catc
       settingsFile(),
       JSON.stringify({ permissions: { allow: ["Read", "HandTuned"], deny: [PUSH_RULE, "Bash(git reset --hard *)"] } }),
     );
-    expect(pushPermissionStale(dir)).toBe(true);
+    expect(shipPermissionsStale(dir)).toBe(true);
   });
 
-  it("reconciles: drops push from deny, adds it to allow, leaves everything else untouched", () => {
+  it("also flags a station that has push but predates the PR-create grant", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsFile(),
+      JSON.stringify({ permissions: { allow: ["Read", PUSH_RULE], deny: ["Bash(git reset --hard *)"] } }),
+    );
+    expect(shipPermissionsStale(dir)).toBe(true);
+  });
+
+  it("reconciles: drops both ship rules from deny, adds both to allow, leaves everything else untouched", () => {
     fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
     fs.writeFileSync(
       settingsFile(),
@@ -163,28 +180,29 @@ describe("pushPermissionStale / reconcileStationPushPermission — hands#86 catc
       }),
     );
 
-    const res = reconcileStationPushPermission(dir);
+    const res = reconcileStationShipPermissions(dir);
     expect(res.changed).toBe(true);
 
     const after = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
-    expect(after.permissions.allow).toEqual(["Read", "HandTuned", PUSH_RULE]);
+    expect(after.permissions.allow).toEqual(["Read", "HandTuned", PUSH_RULE, PR_CREATE_RULE]);
     expect(after.permissions.deny).toEqual(["Bash(git reset --hard *)"]);
     expect(after.theme).toBe("custom:hand-rolled"); // untouched top-level key
-    expect(pushPermissionStale(dir)).toBe(false);
+    expect(shipPermissionsStale(dir)).toBe(false);
   });
 
   it("is a no-op (changed:false) once already reconciled", () => {
-    seedStationPermissions(dir); // current policy already has push in allow, not deny
-    const res = reconcileStationPushPermission(dir);
+    seedStationPermissions(dir); // current policy already has both ship rules in allow, not deny
+    const res = reconcileStationShipPermissions(dir);
     expect(res.changed).toBe(false);
   });
 
-  it("still adds push to allow even if it was simply absent from both lists (no deny entry at all)", () => {
+  it("still adds both rules to allow even if simply absent from both lists (no deny entry at all)", () => {
     fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
     fs.writeFileSync(settingsFile(), JSON.stringify({ permissions: { allow: ["Read"], deny: [] } }));
-    expect(pushPermissionStale(dir)).toBe(true);
-    reconcileStationPushPermission(dir);
+    expect(shipPermissionsStale(dir)).toBe(true);
+    reconcileStationShipPermissions(dir);
     const after = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
     expect(after.permissions.allow).toContain(PUSH_RULE);
+    expect(after.permissions.allow).toContain(PR_CREATE_RULE);
   });
 });

@@ -182,13 +182,14 @@ describe("the station permission check — the fourteen-hour regression", () => 
     if (!plan) throw new Error("provisioner returned no station");
     const settings = path.join(plan.dir, ".claude", "settings.local.json");
     const current = JSON.parse(fs.readFileSync(settings, "utf8"));
-    current.permissions.allow = current.permissions.allow.filter((r: string) => r !== "Bash(git push *)");
-    current.permissions.deny = [...current.permissions.deny, "Bash(git push *)"];
+    const shipRules = ["Bash(git push *)", "Bash(gh pr create *)"];
+    current.permissions.allow = current.permissions.allow.filter((r: string) => !shipRules.includes(r));
+    current.permissions.deny = [...current.permissions.deny, ...shipRules];
     fs.writeFileSync(settings, JSON.stringify(current, null, 2));
     return plan.dir;
   }
 
-  it("hands#86: FAILS a station whose settings predate the push-permission grant", () => {
+  it("hands#86: FAILS a station whose settings predate the push/PR-create grant", () => {
     staleStation();
     const report = runDoctor({ cwd: repo, env });
     const perms = report.checks.find((c) => c.name === "station-1.permissions");
@@ -197,17 +198,20 @@ describe("the station permission check — the fourteen-hour regression", () => 
     expect(report.worst).toBe("fail");
   });
 
-  it("hands#86: --fix reconciles a stale station's push permission without re-seeding the rest", () => {
+  it("hands#86: --fix reconciles a stale station's ship permissions without re-seeding the rest", () => {
     const dir = staleStation();
     const settings = path.join(dir, ".claude", "settings.local.json");
     const before = JSON.parse(fs.readFileSync(settings, "utf8"));
+    const shipRules = ["Bash(git push *)", "Bash(gh pr create *)"];
 
     const report = runDoctor({ cwd: repo, env, fix: true });
 
     const after = JSON.parse(fs.readFileSync(settings, "utf8"));
     expect(after.permissions.allow).toContain("Bash(git push *)");
+    expect(after.permissions.allow).toContain("Bash(gh pr create *)");
     expect(after.permissions.deny).not.toContain("Bash(git push *)");
-    expect(after.permissions.allow.filter((r: string) => r !== "Bash(git push *)")).toEqual(before.permissions.allow);
+    expect(after.permissions.deny).not.toContain("Bash(gh pr create *)");
+    expect(after.permissions.allow.filter((r: string) => !shipRules.includes(r))).toEqual(before.permissions.allow);
     expect(report.checks.find((c) => c.name === "station-1.permissions")?.severity).toBe("ok");
   });
 });

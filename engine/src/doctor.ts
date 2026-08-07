@@ -6,7 +6,7 @@ import { coordinationDir, dbPath, pidPath, repoInfo } from "./paths.js";
 import { listStations } from "./provision.js";
 import { pruneMissing, resolveProject } from "./projects.js";
 import { personalCraftsDir, sharedCraftsDir } from "./remote.js";
-import { pushPermissionStale, reconcileStationPushPermission, seedStationPermissions } from "./seed-permissions.js";
+import { reconcileStationShipPermissions, seedStationPermissions, shipPermissionsStale } from "./seed-permissions.js";
 import {
   contestedIds,
   describeSession,
@@ -330,22 +330,22 @@ export function runDoctor(opts?: {
       // The check that would have caught today's fourteen-hour stall.
       const settings = path.join(station.dir, ".claude", "settings.local.json");
       if (fs.existsSync(settings)) {
-        if (pushPermissionStale(station.dir)) {
-          // hands#86: seeded before `git push` moved to ALLOW — seedStationPermissions is a
+        if (shipPermissionsStale(station.dir)) {
+          // hands#86: seeded before push/PR-create moved to ALLOW — seedStationPermissions is a
           // no-op on an existing file, so this station is stuck on the old deny until reconciled.
           if (opts?.fix) {
-            reconcileStationPushPermission(station.dir);
+            reconcileStationShipPermissions(station.dir);
             checks.push({
               name: `${station.id}.permissions`,
               severity: "ok",
-              detail: "push permission predated hands#86 — reconciled now",
+              detail: "ship permissions (push/PR) predated hands#86 — reconciled now",
             });
           } else {
             checks.push({
               name: `${station.id}.permissions`,
               severity: "fail",
-              detail: "settings predate hands#86 — git push is still denied, this station can't ship its own branch",
-              fixable: "reconcile the push permission",
+              detail: "settings predate hands#86 — git push/gh pr create still denied, this station can't ship its own branch or PR",
+              fixable: "reconcile the ship permissions",
             });
           }
         } else {

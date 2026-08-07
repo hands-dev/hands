@@ -23816,22 +23816,24 @@ function readSettingsPermissions(file2) {
     deny: Array.isArray(permissions?.deny) ? permissions.deny : []
   };
 }
-function pushPermissionStale(dir) {
+function shipPermissionsStale(dir) {
   const permissions = readSettingsPermissions(path11.join(dir, SEEDED_RELPATH));
   if (!permissions) return false;
-  return permissions.deny.includes(PUSH_RULE) || !permissions.allow.includes(PUSH_RULE);
+  return SHIP_RULES.some((rule) => permissions.deny.includes(rule) || !permissions.allow.includes(rule));
 }
-function reconcileStationPushPermission(dir) {
+function reconcileStationShipPermissions(dir) {
   const file2 = path11.join(dir, SEEDED_RELPATH);
   const permissions = readSettingsPermissions(file2);
   if (!permissions) return { path: file2, changed: false };
   const allow = [...permissions.allow];
-  const deny = permissions.deny.filter((rule) => rule !== PUSH_RULE);
+  const deny = permissions.deny.filter((rule) => !SHIP_RULES.includes(rule));
   const denyChanged = deny.length !== permissions.deny.length;
   let allowChanged = false;
-  if (!allow.includes(PUSH_RULE)) {
-    allow.push(PUSH_RULE);
-    allowChanged = true;
+  for (const rule of SHIP_RULES) {
+    if (!allow.includes(rule)) {
+      allow.push(rule);
+      allowChanged = true;
+    }
   }
   if (!denyChanged && !allowChanged) return { path: file2, changed: false };
   const settings = JSON.parse(fs12.readFileSync(file2, "utf8"));
@@ -23863,11 +23865,13 @@ function mergeStationSettings(dir, patch) {
 `);
   return { path: file2, written: true };
 }
-var PUSH_RULE, ALLOW, DENY, SEEDED_RELPATH;
+var PUSH_RULE, PR_CREATE_RULE, SHIP_RULES, ALLOW, DENY, SEEDED_RELPATH;
 var init_seed_permissions = __esm({
   "src/seed-permissions.ts"() {
     "use strict";
     PUSH_RULE = "Bash(git push *)";
+    PR_CREATE_RULE = "Bash(gh pr create *)";
+    SHIP_RULES = [PUSH_RULE, PR_CREATE_RULE];
     ALLOW = [
       "Read",
       "Glob",
@@ -23907,7 +23911,7 @@ var init_seed_permissions = __esm({
       "mcp__plugin_hands_hands__hands_priorities",
       "mcp__plugin_hands_hands__hands_questions",
       "mcp__plugin_hands_hands__hands_todos",
-      PUSH_RULE
+      ...SHIP_RULES
     ];
     DENY = [
       "Bash(git reset --hard *)",
@@ -51459,20 +51463,20 @@ function runDoctor(opts) {
       }
       const settings = path24.join(station.dir, ".claude", "settings.local.json");
       if (fs25.existsSync(settings)) {
-        if (pushPermissionStale(station.dir)) {
+        if (shipPermissionsStale(station.dir)) {
           if (opts?.fix) {
-            reconcileStationPushPermission(station.dir);
+            reconcileStationShipPermissions(station.dir);
             checks.push({
               name: `${station.id}.permissions`,
               severity: "ok",
-              detail: "push permission predated hands#86 \u2014 reconciled now"
+              detail: "ship permissions (push/PR) predated hands#86 \u2014 reconciled now"
             });
           } else {
             checks.push({
               name: `${station.id}.permissions`,
               severity: "fail",
-              detail: "settings predate hands#86 \u2014 git push is still denied, this station can't ship its own branch",
-              fixable: "reconcile the push permission"
+              detail: "settings predate hands#86 \u2014 git push/gh pr create still denied, this station can't ship its own branch or PR",
+              fixable: "reconcile the ship permissions"
             });
           }
         } else {
@@ -52517,7 +52521,7 @@ function launchStation(repoRoot, stationId, opts) {
 }
 function launchStationSeat(_repoRoot, id, dir, cfg, opts) {
   seedStationPermissions(dir);
-  reconcileStationPushPermission(dir);
+  reconcileStationShipPermissions(dir);
   launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model, opts);
 }
 function tryLaunch(cmd, rest) {
