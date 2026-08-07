@@ -57,6 +57,7 @@ import { listRegisteredProjects, registerProject, resolveProject } from "./proje
 import { seedStationPermissions } from "./seed-permissions.js";
 import { idleMs, latestSessionId, recentActivity, transcriptDir } from "./station-logs.js";
 import { runDoctor } from "./doctor.js";
+import { claimWorktree, releaseWorktree } from "./worktree-lock.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
@@ -901,6 +902,47 @@ function cmdVersion(argv: string[] = []): void {
 }
 
 /** `hands doctor [--fix]` — see doctor.ts; every check maps to a real failure. */
+/**
+ * `hands claim [--evict] [--release]` — take exclusive ownership of the station
+ * worktree this session is running in (hands#153).
+ *
+ * Run by a station on startup, before it does any work. Two sessions in one
+ * worktree will eventually clobber each other mid-edit and the losing write
+ * leaves no trace; refusing to start is strictly better than coexisting.
+ */
+function cmdClaim(argv: string[]): void {
+  const info = repoInfo(process.cwd());
+  if (!info) fail("not inside a git repo");
+  const worktree = process.cwd();
+  const agentId = resolveAgentId({ cwd: worktree });
+
+  if (argv.includes("--release")) {
+    out(releaseWorktree(worktree) ? `✔ released ${worktree}` : "not held by this process — nothing to release");
+    return;
+  }
+
+  const result = claimWorktree({ worktree, agentId, evict: argv.includes("--evict") });
+  if (result.ok) {
+    const note =
+      result.previous === "stale"
+        ? " (took over a stale claim)"
+        : result.previous === "evicted"
+          ? " (evicted the previous holder)"
+          : result.previous === "self"
+            ? " (already held)"
+            : "";
+    out(`✔ ${agentId} holds ${worktree}${note}`);
+    return;
+  }
+  const held = result.heldBy;
+  const age = Math.round((Date.now() - held.claimedAt) / 60_000);
+  fail(
+    `worktree already held by pid ${held.pid} (${held.agentId}, claimed ${age}m ago on ${held.hostname}) — ` +
+      "do NOT start a second session here; they will commit over each other. " +
+      "Use `hands claim --evict` to take it deliberately.",
+  );
+}
+
 function cmdDoctor(argv: string[]): void {
   const report = runDoctor({ fix: argv.includes("--fix") });
   for (const c of report.checks) {
@@ -1075,6 +1117,8 @@ async function main(): Promise<void> {
         return cmdAttach(rest);
       case "doctor":
         return cmdDoctor(rest);
+      case "claim":
+        return cmdClaim(rest);
       case "version":
       case "--version":
       case "-v":
@@ -1101,6 +1145,7 @@ async function main(): Promise<void> {
         out("  hands doctor [--fix]      health check (--fix repairs what's safe to repair)");
         out("  hands logs <station-N>    what a station is actually doing (its own transcript)");
         out("  hands restart <station-N>  recycle a wedged station");
+        out("  hands claim [--evict]     take exclusive ownership of this station worktree");
         out("  hands version             which build is running (and whether two installs disagree)");
         out("");
         out(`  hands init                scaffold ${CONFIG_BASENAME}`);
