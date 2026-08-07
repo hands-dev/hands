@@ -5,6 +5,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { IDLE_THRESHOLD_MS } from "../src/board.js";
+import type { ChatEvent } from "../src/chat.js";
 import { DEFAULT_CONFIG, resetConfigCache } from "../src/config.js";
 import type { FeedbackResult, GhRunner } from "../src/feedback.js";
 import { pidPath } from "../src/paths.js";
@@ -108,6 +109,44 @@ function sse(url: string): {
     },
     close: () => req.destroy(),
   };
+}
+
+/** POST a request whose response is an SSE body, and collect every parsed `data:` frame until the response ends — POST /api/chat is one-shot per turn, not a live subscription, so waiting for `end` is simpler than the incremental `sse()` reader above. */
+function postSSE(
+  url: string,
+  body: string,
+  headers?: Record<string, string>,
+): Promise<{ status: number; events: ChatEvent[] }> {
+  return new Promise((resolve, reject) => {
+    const req = http.request(
+      url,
+      { method: "POST", headers: { "content-type": "application/json", ...headers } },
+      (res) => {
+        let buffer = "";
+        const events: ChatEvent[] = [];
+        res.on("data", (chunk: Buffer) => {
+          buffer += chunk.toString();
+          let idx: number;
+          while ((idx = buffer.indexOf("\n\n")) !== -1) {
+            const frame = buffer.slice(0, idx);
+            buffer = buffer.slice(idx + 2);
+            for (const line of frame.split("\n")) {
+              if (line.startsWith("data: ")) {
+                try {
+                  events.push(JSON.parse(line.slice("data: ".length)) as ChatEvent);
+                } catch {
+                  // malformed frame — skip
+                }
+              }
+            }
+          }
+        });
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, events }));
+      },
+    );
+    req.on("error", reject);
+    req.end(body);
+  });
 }
 
 describe("serve", () => {
@@ -243,6 +282,17 @@ describe("serve", () => {
     handle.close();
     handle = null;
     stream.close();
+  });
+
+  it("includes chatAvailable in /api/state, reflecting the injected availability check", async () => {
+    handle = await serve({ port: 0, env, chatAvailable: () => true });
+    const on = JSON.parse((await get(`${handle.url}api/state`)).body) as { chatAvailable: boolean };
+    expect(on.chatAvailable).toBe(true);
+    handle.close();
+
+    handle = await serve({ port: 0, env, chatAvailable: () => false });
+    const off = JSON.parse((await get(`${handle.url}api/state`)).body) as { chatAvailable: boolean };
+    expect(off.chatAvailable).toBe(false);
   });
 });
 
@@ -674,6 +724,189 @@ describe("POST /api/feedback", () => {
       const valid = await post(`${handle.url}api/feedback`, JSON.stringify({ body: "real feedback" }));
       expect(valid.status).toBe(200);
       expect(calls).toBe(1);
+    });
+  });
+});
+
+describe("POST /api/chat", () => {
+  async function* fixedChatTurn(events: ChatEvent[]): AsyncGenerator<ChatEvent> {
+    for (const e of events) yield e;
+  }
+
+  it("streams the injected chat turn's events as SSE frames", async () => {
+    handle = await serve({
+      port: 0,
+      env,
+      chatAvailable: () => true,
+      chatTurn: () =>
+        fixedChatTurn([
+          { type: "tool", name: "mcp__hands__hands_board" },
+          { type: "text", text: "3 tickets are open" },
+          { type: "done", sessionId: "sess-1" },
+        ]),
+    });
+    const res = await postSSE(`${handle.url}api/chat`, JSON.stringify({ prompt: "what's open?" }));
+    expect(res.status).toBe(200);
+    expect(res.events).toEqual([
+      { type: "tool", name: "mcp__hands__hands_board" },
+      { type: "text", text: "3 tickets are open" },
+      { type: "done", sessionId: "sess-1" },
+    ]);
+  });
+
+  it("passes prompt, resume, and this process's own cwd through to the chat-turn function", async () => {
+    let received: { prompt: string; resume?: string; cwd: string } | null = null;
+    handle = await serve({
+      port: 0,
+      env,
+      chatAvailable: () => true,
+      chatTurn: (params) => {
+        received = params;
+        return fixedChatTurn([{ type: "done", sessionId: "sess-2" }]);
+      },
+    });
+    await postSSE(`${handle.url}api/chat`, JSON.stringify({ prompt: "hello", sessionId: "sess-1" }));
+    expect(received).toEqual({ prompt: "hello", resume: "sess-1", cwd: process.cwd() });
+  });
+
+  it("returns 503 without buffering a body when the Agent SDK isn't available in this install", async () => {
+    let called = false;
+    handle = await serve({
+      port: 0,
+      env,
+      chatAvailable: () => false,
+      chatTurn: () => {
+        called = true;
+        return fixedChatTurn([]);
+      },
+    });
+    const res = await post(`${handle.url}api/chat`, JSON.stringify({ prompt: "hi" }));
+    expect(res.status).toBe(503);
+    expect(called).toBe(false);
+  });
+
+  it("returns 400 for a missing/empty prompt without calling the chat turn", async () => {
+    let called = false;
+    handle = await serve({
+      port: 0,
+      env,
+      chatAvailable: () => true,
+      chatTurn: () => {
+        called = true;
+        return fixedChatTurn([]);
+      },
+    });
+    const missing = await post(`${handle.url}api/chat`, JSON.stringify({}));
+    expect(missing.status).toBe(400);
+    const blank = await post(`${handle.url}api/chat`, JSON.stringify({ prompt: "   " }));
+    expect(blank.status).toBe(400);
+    expect(called).toBe(false);
+  });
+
+  it("returns 400 for a non-string sessionId", async () => {
+    handle = await serve({ port: 0, env, chatAvailable: () => true });
+    const res = await post(`${handle.url}api/chat`, JSON.stringify({ prompt: "hi", sessionId: 5 }));
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for malformed JSON", async () => {
+    handle = await serve({ port: 0, env, chatAvailable: () => true });
+    const res = await post(`${handle.url}api/chat`, "not json");
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects an oversized prompt without ever reaching the chat turn", async () => {
+    let called = false;
+    handle = await serve({
+      port: 0,
+      env,
+      chatAvailable: () => true,
+      chatTurn: () => {
+        called = true;
+        return fixedChatTurn([]);
+      },
+    });
+    const huge = JSON.stringify({ prompt: "x".repeat(200_000) });
+    const res = await post(`${handle.url}api/chat`, huge);
+    expect(res.status).toBe(413);
+    expect(called).toBe(false);
+  });
+
+  it("a GET to the same path is not treated as the chat route (falls through to 404)", async () => {
+    handle = await serve({ port: 0, env });
+    const res = await get(`${handle.url}api/chat`);
+    expect(res.status).toBe(404);
+  });
+
+  it("surfaces an unexpected throw from the chat turn as a terminal done-with-error event rather than hanging the stream", async () => {
+    handle = await serve({
+      port: 0,
+      env,
+      chatAvailable: () => true,
+      chatTurn: async function* (): AsyncGenerator<ChatEvent> {
+        yield { type: "text", text: "partial…" };
+        throw new Error("subprocess died");
+      },
+    });
+    const res = await postSSE(`${handle.url}api/chat`, JSON.stringify({ prompt: "hi" }));
+    expect(res.events[0]).toEqual({ type: "text", text: "partial…" });
+    const last = res.events[res.events.length - 1] as { type: string; error?: string };
+    expect(last.type).toBe("done");
+    expect(last.error).toContain("subprocess died");
+  });
+
+  describe("CSRF (same-origin) protection", () => {
+    it("rejects a cross-origin POST", async () => {
+      let called = false;
+      handle = await serve({
+        port: 0,
+        env,
+        chatAvailable: () => true,
+        chatTurn: () => {
+          called = true;
+          return fixedChatTurn([]);
+        },
+      });
+      const res = await post(`${handle.url}api/chat`, JSON.stringify({ prompt: "hi" }), {
+        origin: "https://evil.example",
+      });
+      expect(res.status).toBe(403);
+      expect(called).toBe(false);
+    });
+
+    it("accepts a same-origin POST", async () => {
+      handle = await serve({
+        port: 0,
+        env,
+        chatAvailable: () => true,
+        chatTurn: () => fixedChatTurn([{ type: "done", sessionId: "s" }]),
+      });
+      const origin = new URL(handle.url).origin;
+      const res = await post(`${handle.url}api/chat`, JSON.stringify({ prompt: "hi" }), { origin });
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe("rate limiting", () => {
+    it("allows up to the limit, then 429s, without reaching the chat turn on the throttled request", async () => {
+      let calls = 0;
+      handle = await serve({
+        port: 0,
+        env,
+        chatAvailable: () => true,
+        chatTurn: () => {
+          calls++;
+          return fixedChatTurn([{ type: "done", sessionId: "s" }]);
+        },
+      });
+      const body = JSON.stringify({ prompt: "hi" });
+      for (let i = 0; i < 20; i++) {
+        const res = await post(`${handle.url}api/chat`, body);
+        expect(res.status).toBe(200);
+      }
+      const twentyFirst = await post(`${handle.url}api/chat`, body);
+      expect(twentyFirst.status).toBe(429);
+      expect(calls).toBe(20);
     });
   });
 });

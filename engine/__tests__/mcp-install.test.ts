@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CONFIG_BASENAME, resetConfigCache } from "../src/config.js";
 import { resetRepoInfoCache } from "../src/paths.js";
@@ -9,8 +10,10 @@ import { localBooksOriginPath, resetProjectCache } from "../src/remote.js";
 import {
   booksMcpEntry,
   desktopConfigPath,
+  resolveAgentSdkEntry,
   resolveBooksServerEntry,
   resolveBooksTarget,
+  resolveHandsServerEntry,
   serverName,
   writeDesktopConfig,
 } from "../src/mcp-install.js";
@@ -97,6 +100,51 @@ describe("resolveBooksServerEntry", () => {
   it("returns null when neither the bundled nor the dev-fallback copy exists", () => {
     const here = fs.mkdtempSync(path.join(root, "empty-"));
     expect(resolveBooksServerEntry(here)).toBeNull();
+  });
+});
+
+describe("resolveHandsServerEntry", () => {
+  it("finds a bundled server.mjs next to the running module", () => {
+    const here = fs.mkdtempSync(path.join(root, "dist-"));
+    fs.writeFileSync(path.join(here, "server.mjs"), "// stub");
+    expect(resolveHandsServerEntry(here)).toBe(path.join(here, "server.mjs"));
+  });
+
+  it("returns null when neither the bundled nor the dev-fallback copy exists", () => {
+    const here = fs.mkdtempSync(path.join(root, "empty-"));
+    expect(resolveHandsServerEntry(here)).toBeNull();
+  });
+
+  it("resolves the real committed plugin/dist/server.mjs from this repo's own engine/src", () => {
+    // Same "here" mcp-install.ts itself resolves from in dev (tsx src/*.ts).
+    const testDir = path.dirname(fileURLToPath(import.meta.url));
+    expect(resolveHandsServerEntry(path.join(testDir, "..", "src"))).toBe(
+      path.resolve(testDir, "..", "..", "plugin", "dist", "server.mjs"),
+    );
+  });
+});
+
+describe("resolveAgentSdkEntry", () => {
+  it("finds the Agent SDK entry two directories below a fake repo root's engine/node_modules", () => {
+    const fakeRepoRoot = fs.mkdtempSync(path.join(root, "repo-"));
+    const here = path.join(fakeRepoRoot, "engine", "src");
+    fs.mkdirSync(here, { recursive: true });
+    const sdkDir = path.join(fakeRepoRoot, "engine", "node_modules", "@anthropic-ai", "claude-agent-sdk");
+    fs.mkdirSync(sdkDir, { recursive: true });
+    fs.writeFileSync(path.join(sdkDir, "sdk.mjs"), "// stub");
+    expect(resolveAgentSdkEntry(here)).toBe(path.join(sdkDir, "sdk.mjs"));
+  });
+
+  it("returns null when engine/node_modules has no Agent SDK install (a plugin-cache install)", () => {
+    const here = fs.mkdtempSync(path.join(root, "empty-"));
+    expect(resolveAgentSdkEntry(here)).toBeNull();
+  });
+
+  it("resolves the real dev-installed Agent SDK from this repo's own engine/src", () => {
+    const testDir = path.dirname(fileURLToPath(import.meta.url));
+    expect(resolveAgentSdkEntry(path.join(testDir, "..", "src"))).toBe(
+      path.resolve(testDir, "..", "node_modules", "@anthropic-ai", "claude-agent-sdk", "sdk.mjs"),
+    );
   });
 });
 
