@@ -2,12 +2,17 @@ import * as path from "node:path";
 import { repoInfo } from "./paths.js";
 
 /**
- * Agent identity — two canonical roles (kitchen-brigade vocabulary), no
- * persona layer:
+ * Agent identity — kitchen-brigade vocabulary, no persona layer:
  *   `expo`          the repo's main checkout — the expeditor at the pass:
  *                   all the context, none of the cooking
  *   `station-<n>`   a provisioned station (hosted in a managed worktree — a
  *                   hidden isolation detail, never surfaced in addressing)
+ *   `sous`          the sous chef (hands#87/#171) — composes tickets, is the
+ *                   expo's escalation hop, signs off completeness, and
+ *                   stewards crafts. No cwd-based autodetection like expo/
+ *                   station (there's no "sous worktree" convention) — a sous
+ *                   session is always explicit: `HANDS_ID=sous` or
+ *                   `--agent-id sous`, same mechanism any custom id uses.
  *
  * The canonical id is the routing key everywhere: DB `from_id`/`to_id`, read
  * cursors, notify targets. Anything else (the principal's name, a stray dir
@@ -23,6 +28,10 @@ export function isStation(id: string): boolean {
 
 export function isExpo(id: string): boolean {
   return id === "expo";
+}
+
+export function isSous(id: string): boolean {
+  return id === "sous";
 }
 
 /**

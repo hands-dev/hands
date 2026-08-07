@@ -634,7 +634,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           .array(z.string())
           .optional()
           .describe("which option label(s) were picked, for a structured question"),
-        by: z.enum(["expo", "human"]).optional(),
+        by: z.enum(["expo", "human", "sous"]).optional(),
         answeredVia: z
           .enum(["dashboard", "tui", "cli", "expo"])
           .optional()
@@ -682,12 +682,18 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     {
       title: "Bubble a question up to the principal",
       description:
-        `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane, ` +
-        "and to /hands:questions). Include your recommendation and the priority it touches — pass " +
-        "options if the decision decomposes into 2-4 concrete choices, so every surface (dashboard, " +
-        "the AskUserQuestion dialog) can render real buttons instead of a paragraph. Then present it " +
-        `via the AskUserQuestion tool in this same turn (recommended option first, labelled), not just ` +
-        "prose. Once he decides, call hands_answer with by='human'.",
+        `Mark a question as needing a decision (shows in the dashboard 'Needs you' lane, and to ` +
+        "/hands:questions). Include your recommendation and the priority it touches — pass options " +
+        "if the decision decomposes into 2-4 concrete choices, so every surface (dashboard, the " +
+        "AskUserQuestion dialog) can render real buttons instead of a paragraph." +
+        (cfg.sous.enabled
+          ? " This wakes the sous (hands#87/#171) — the sous is your first escalation hop and may " +
+            "resolve recipe/product judgment itself (hands_answer with by='sous'), or present it to " +
+            `${principal} in turn via AskUserQuestion (recommended option first, labelled). Once ` +
+            "decided, call hands_answer."
+          : " Then present it via the AskUserQuestion tool in this same turn (recommended option " +
+            `first, labelled), not just prose. Once ${principal} decides, call hands_answer with ` +
+            "by='human'."),
       inputSchema: {
         id: z.number().int(),
         recommendation: z.string().optional(),
@@ -708,7 +714,18 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         multiSelect: input.multiSelect,
         priorityRef: input.priority ?? null,
       });
-      return asToolResult({ ok: true, id: input.id });
+      // hands#87/#171 phase b: when a sous is configured, it's the expo's
+      // first escalation hop — a real bus wake, same cost as today's
+      // expo→principal desktop ping, not an added one. Best-effort: this
+      // wake must never turn an already-recorded escalation into an error.
+      if (cfg.sous.enabled) {
+        try {
+          deliverWake(["sous"], { from: agentId, subject: "escalation" });
+        } catch {
+          // the escalation itself is already recorded above
+        }
+      }
+      return asToolResult({ ok: true, id: input.id, wokeSous: cfg.sous.enabled });
     },
   );
 
