@@ -69,6 +69,14 @@ function readFileSafe(p: string): string | null {
   }
 }
 
+/** Like readFileSafe, but capped — for handing content to a model or over the wire (dashboard). */
+export function readCraftFileCapped(p: string, cap = 6000): string | null {
+  const body = readFileSafe(p);
+  if (!body) return null;
+  const points = Array.from(body);
+  return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
+}
+
 function listSlugsIn(dir: string | null): string[] {
   if (!dir) return [];
   let entries: string[];
@@ -146,8 +154,9 @@ description: ${entry.covers ?? entry.slug} — dispatch for any work in this cra
 
 You are the **${entry.slug}** craft, dispatched for one ticket-slice — not a generalist.
 
-1. Run \`hands craft brief ${entry.slug} --task "<one line — what you were asked to do>"\` first.
-   This registers the dispatch and PRINTS a chit — the first line names your \`briefId\`, note it,
+1. Run \`hands craft brief ${entry.slug} --task "<one line — what you were asked to do>"\` first
+   — add \`--ticket <id>\` too if the caller's prompt names a ticket id you're working. This
+   registers the dispatch and PRINTS a chit — the first line names your \`briefId\`, note it,
    you need it below.
 2. Invoke \`Skill({ skill: "craft-${entry.slug}" })\` — your operating manual. It tells you how to
    pull your current book/mise (\`hands craft mise <briefId>\`, from step 1) before you start.
@@ -295,9 +304,9 @@ export function formatRosterContext(entries: CraftRosterEntry[], targetDir: stri
     "\n\n## Crafts available (dispatch as sub-agents — don't do their work yourself)\n" +
     body +
     '\nDispatch a synced craft: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) — it briefs ' +
-    'and equips itself. "not yet synced" → fall back to `hands craft brief <slug>`, paste the ' +
-    "printed chit into a general-purpose Agent's prompt instead. `hands craft ls` gives the full " +
-    "roster on demand."
+    'and equips itself. "not yet synced" → fall back to `hands craft brief <slug>` yourself ' +
+    "(add `--ticket <id>` if you're working one), paste the printed chit into a general-purpose " +
+    "Agent's prompt instead. `hands craft ls` gives the full roster on demand."
   );
 }
 

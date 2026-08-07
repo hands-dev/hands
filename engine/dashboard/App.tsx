@@ -1,3 +1,4 @@
+import { CraftRoster } from "@/components/craft-roster";
 import { OtherCrafts } from "@/components/crafts";
 import { FeedbackWidget } from "@/components/feedback-form";
 import { JournalFeed } from "@/components/journal-feed";
@@ -27,6 +28,7 @@ const NAV = [
   { href: "#line", label: "The line" },
   { href: "#tokens", label: "Token burn" },
   { href: "#rail", label: "The rail" },
+  { href: "#craft-roster", label: "Crafts" },
   { href: "#pass", label: "At the pass" },
   { href: "#book", label: "The book" },
   { href: "#messages", label: "MCP messages" },
@@ -215,6 +217,9 @@ export function App() {
                   taskCosts={snapshot.taskCosts}
                   now={snapshot.now}
                 />
+              </div>
+              <div id="craft-roster">
+                <CraftRoster crafts={snapshot.craftRoster} now={snapshot.now} />
               </div>
             </div>
             <div className="min-w-0 space-y-4">

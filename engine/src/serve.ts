@@ -3,9 +3,12 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type HandsConfig, loadConfig } from "./config.js";
+import { listCrafts, readCraftFileCapped } from "./crafts.js";
 import { fileFeedback, type FeedbackResult, type GhRunner } from "./feedback.js";
 import { dbPath, pidPath } from "./paths.js";
 import {
+  craftFiles,
+  type CraftScope,
   openJournal,
   type OtherCraft,
   type OtherKitchen,
@@ -14,7 +17,7 @@ import {
   syncPull,
 } from "./remote.js";
 import { buildSnapshot, type Snapshot } from "./snapshot.js";
-import { Store } from "./store.js";
+import { type CraftNoteRow, Store } from "./store.js";
 import { TokenSampler, type TokenSeries } from "./tokens.js";
 
 /**
@@ -32,6 +35,36 @@ export interface BooksSyncStatus {
   reason: "offline" | "conflict" | "error" | null;
 }
 
+/**
+ * THIS repo's own craft roster, for the dashboard's Crafts panel — distinct from
+ * `DashboardPayload.crafts` (OtherCraft[]), which is other handles' craft books pulled from the
+ * shared remote. history/usage/tokens are all best-effort approximations, not exact accounting —
+ * see the doc comments on Store.craftUsageStats/craftTokenUsage for exactly what's undercounted
+ * and why; the panel is expected to surface those caveats, not hide them.
+ */
+export interface DashboardCraft {
+  slug: string;
+  scope: CraftScope;
+  covers: string | null;
+  distilled: string | null;
+  pendingNotes: number;
+  book: string | null;
+  mise: string | null;
+  skill: string | null;
+  /** newest first, pending AND folded — the one durable timeline (survives folding) */
+  history: CraftNoteRow[];
+  usage: {
+    dispatchCount: number;
+    lastDispatchedAt: number | null;
+    stations: string[];
+    /** of dispatchCount, how many stamped noted_at — the denominator for avgDurationMs */
+    completedCount: number;
+    avgDurationMs: number | null;
+  };
+  /** null when no subagent_samples exist yet for this craft (synced-dispatch-path only, last 7d) */
+  tokens: { totalOutputTokens: number; calls: number } | null;
+}
+
 /** The one wire shape — served by /api/state and pushed on /api/events. */
 export type DashboardPayload = Snapshot & {
   /** discriminates against HostedDashboardPayload (dashboard/use-snapshot.ts) */
@@ -42,6 +75,8 @@ export type DashboardPayload = Snapshot & {
   kitchens: OtherKitchen[];
   /** other handles' craft books/skills in this project's books (empty when the books are off) */
   crafts: OtherCraft[];
+  /** THIS repo's own craft roster — book/mise/skill, note history, usage/token stats */
+  craftRoster: DashboardCraft[];
   /** null when the books aren't configured at all; otherwise the pull tick's liveness */
   booksSync: BooksSyncStatus | null;
   /** per-pane token burn from Claude Code transcripts (null until first sample) */
@@ -263,8 +298,41 @@ export function serve(opts?: {
     }
   };
 
+  // Cheap local reads (a handful of small files + a few indexed SQLite queries) — computed fresh
+  // every payload() call, same as buildSnapshot() itself, unlike the network/disk-scan-heavy
+  // kitchens/tokens ticks above which genuinely need timers.
+  const buildCraftRoster = (): DashboardCraft[] => {
+    const roster = listCrafts(store, config, env);
+    const usage = store.craftUsageStats();
+    const tokenUsage = store.craftTokenUsage();
+    return roster.map((c): DashboardCraft => {
+      const files = craftFiles(c.slug, env);
+      const u = usage.get(c.slug);
+      return {
+        slug: c.slug,
+        scope: c.scope,
+        covers: c.covers,
+        distilled: c.distilled,
+        pendingNotes: c.pendingNotes,
+        book: readCraftFileCapped(files.book),
+        mise: readCraftFileCapped(files.mise),
+        skill: readCraftFileCapped(files.skill),
+        history: store.craftNoteHistory(c.slug),
+        usage: {
+          dispatchCount: u?.dispatchCount ?? 0,
+          lastDispatchedAt: u?.lastDispatchedAt ?? null,
+          stations: u?.stations ?? [],
+          completedCount: u?.completedCount ?? 0,
+          avgDurationMs: u?.avgDurationMs ?? null,
+        },
+        tokens: tokenUsage.get(c.slug) ?? null,
+      };
+    });
+  };
+
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
+    const craftRoster = buildCraftRoster();
     return {
       json: JSON.stringify({
         ...snapshot,
@@ -273,6 +341,7 @@ export function serve(opts?: {
         principal,
         kitchens,
         crafts,
+        craftRoster,
         booksSync,
         tokens,
         taskCosts,
@@ -281,6 +350,7 @@ export function serve(opts?: {
         snapshotKey(snapshot) +
         JSON.stringify(kitchens) +
         JSON.stringify(crafts) +
+        JSON.stringify(craftRoster) +
         JSON.stringify(booksSync) +
         JSON.stringify(tokens?.totals24h ?? null) +
         JSON.stringify(taskCosts),
