@@ -1,7 +1,7 @@
 import * as path from "node:path";
 import { IDLE_THRESHOLD_MS } from "./board.js";
 import { readPriorities } from "./priorities.js";
-import { Store } from "./store.js";
+import { type MessageRow, Store } from "./store.js";
 import { themeColorForIndex } from "./theming.js";
 
 export type AgentState = "active" | "idle" | "offline";
@@ -59,6 +59,11 @@ export interface SnapshotMessage {
   subject: string | null;
   body: string;
   at: number;
+}
+
+/** Shared MessageRow → SnapshotMessage mapping — the global feed and any per-agent view use the same shape. */
+export function toSnapshotMessage(m: MessageRow): SnapshotMessage {
+  return { id: m.id, from: m.from_id, to: m.to_id ?? "*", subject: m.subject, body: m.body, at: m.created_at };
 }
 
 export interface SnapshotJournal {
@@ -226,17 +231,7 @@ export function buildSnapshot(
     .reverse()
     .map((j) => ({ id: j.id, by: j.agent_id, kind: j.kind, text: j.text, ref: j.ref, at: j.created_at }));
 
-  const messages: SnapshotMessage[] = store
-    .history({ limit: 40 })
-    .reverse()
-    .map((m) => ({
-      id: m.id,
-      from: m.from_id,
-      to: m.to_id ?? "*",
-      subject: m.subject,
-      body: m.body,
-      at: m.created_at,
-    }));
+  const messages: SnapshotMessage[] = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
 
   const priorities = readPriorities(env).items;
   const questions: SnapshotQuestion[] = store.listQuestions({ limit: 30 }).map((q) => ({

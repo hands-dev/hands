@@ -170,6 +170,27 @@ describe("Store observability samples (hands#103, #106)", () => {
     store.close();
   });
 
+  it("contextSamplesForAgents fetches every requested agent in one call, empty array for one with no samples", () => {
+    const store = open();
+    store.recordContextSample({ agentId: "station-1", inputTokens: 100, cacheReadTokens: 10, cacheCreationTokens: 0, now: 1000 });
+    store.recordContextSample({ agentId: "expo", inputTokens: 999, cacheReadTokens: 0, cacheCreationTokens: 0, now: 1500 });
+
+    const result = store.contextSamplesForAgents(["expo", "station-1", "station-2"]);
+    expect(result["expo"]).toEqual([{ inputTokens: 999, cacheReadTokens: 0, cacheCreationTokens: 0, at: 1500 }]);
+    expect(result["station-1"]).toEqual([{ inputTokens: 100, cacheReadTokens: 10, cacheCreationTokens: 0, at: 1000 }]);
+    expect(result["station-2"]).toEqual([]);
+    store.close();
+  });
+
+  it("contextSamplesForAgents respects the limit per agent", () => {
+    const store = open();
+    for (let i = 0; i < 5; i++) {
+      store.recordContextSample({ agentId: "station-1", inputTokens: i, cacheReadTokens: 0, cacheCreationTokens: 0, now: i });
+    }
+    expect(store.contextSamplesForAgents(["station-1"], 2)["station-1"]).toHaveLength(2);
+    store.close();
+  });
+
   it("records and reads back subagent samples, newest first", () => {
     const store = open();
     store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "Explore", spawnDepth: 1, outputTokens: 500, now: 1000 });

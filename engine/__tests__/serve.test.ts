@@ -143,6 +143,27 @@ describe("serve", () => {
     expect(payload.db).toContain(home);
   });
 
+  it("includes per-agent contextUsage and agentMessages for the live roster (hands: dashboard tabs)", async () => {
+    const store = new Store({ env });
+    store.setStatus({ id: "station-1", cwd: "/w1", pid: 1, branch: "b1", now: Date.now() });
+    store.recordContextSample({ agentId: "station-1", inputTokens: 100, cacheReadTokens: 10, cacheCreationTokens: 0 });
+    store.insertMessage({ from: "expo", to: "station-1", body: "go" });
+    store.insertMessage({ from: "station-1", to: "expo", body: "done" });
+    store.close();
+
+    handle = await serve({ port: 0, env });
+    const res = await get(`${handle.url}api/state`);
+    const payload = JSON.parse(res.body) as {
+      contextUsage: Record<string, Array<{ inputTokens: number }>>;
+      agentMessages: Record<string, Array<{ from: string; to: string; body: string }>>;
+    };
+
+    expect(payload.contextUsage["station-1"]).toEqual([{ inputTokens: 100, cacheReadTokens: 10, cacheCreationTokens: 0, at: expect.any(Number) }]);
+    const station1Messages = payload.agentMessages["station-1"] ?? [];
+    expect(station1Messages).toHaveLength(2);
+    expect(station1Messages.map((m) => m.body).sort()).toEqual(["done", "go"]);
+  });
+
   it("SSE: initial frame on connect, a frame per store change, none from time alone", async () => {
     const store = new Store({ env });
     store.setStatus({ id: "station-1", cwd: "/w1", pid: 1, branch: "b1", now: Date.now() });

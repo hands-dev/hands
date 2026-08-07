@@ -16,7 +16,7 @@ import {
   readOtherKitchens,
   syncPull,
 } from "./remote.js";
-import { buildSnapshot, type Snapshot } from "./snapshot.js";
+import { buildSnapshot, type Snapshot, type SnapshotMessage, toSnapshotMessage } from "./snapshot.js";
 import { type CraftNoteRow, Store } from "./store.js";
 import { TokenSampler, type TokenSeries } from "./tokens.js";
 
@@ -83,6 +83,13 @@ export type DashboardPayload = Snapshot & {
   tokens: TokenSeries | null;
   /** approximate output-token cost per rail ticket (assignee's spend over the working interval) */
   taskCosts: Record<number, number>;
+  /** recent context-window samples per agent, newest first — the dashboard's Token usage tab */
+  contextUsage: Record<
+    string,
+    Array<{ inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; at: number }>
+  >;
+  /** this agent's own message history (peer-filtered), keyed by agent id — the Roles pages */
+  agentMessages: Record<string, SnapshotMessage[]>;
 };
 
 export interface ServeHandle {
@@ -330,9 +337,26 @@ export function serve(opts?: {
     });
   };
 
+  // Both keyed off the live agent roster — expo + whatever stations are currently provisioned,
+  // same cheap-local-reads reasoning as buildCraftRoster (a handful of small indexed queries,
+  // computed fresh every payload() call).
+  const buildContextUsage = (agentIds: string[]): DashboardPayload["contextUsage"] =>
+    store.contextSamplesForAgents(agentIds);
+
+  const buildAgentMessages = (agentIds: string[]): Record<string, SnapshotMessage[]> => {
+    const result: Record<string, SnapshotMessage[]> = {};
+    for (const id of agentIds) {
+      result[id] = store.history({ peer: id, limit: 50 }).reverse().map(toSnapshotMessage);
+    }
+    return result;
+  };
+
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     const craftRoster = buildCraftRoster();
+    const agentIds = snapshot.agents.map((a) => a.id);
+    const contextUsage = buildContextUsage(agentIds);
+    const agentMessages = buildAgentMessages(agentIds);
     return {
       json: JSON.stringify({
         ...snapshot,
@@ -345,6 +369,8 @@ export function serve(opts?: {
         booksSync,
         tokens,
         taskCosts,
+        contextUsage,
+        agentMessages,
       }),
       key:
         snapshotKey(snapshot) +
@@ -353,7 +379,9 @@ export function serve(opts?: {
         JSON.stringify(craftRoster) +
         JSON.stringify(booksSync) +
         JSON.stringify(tokens?.totals24h ?? null) +
-        JSON.stringify(taskCosts),
+        JSON.stringify(taskCosts) +
+        JSON.stringify(contextUsage) +
+        JSON.stringify(agentMessages),
     };
   };
 
