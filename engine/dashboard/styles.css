@@ -1,9 +1,11 @@
 /*
  * Tailwind v4 entry. `source(none)` + explicit @source keep candidate
  * scanning machine-independent, so the committed CSS stays byte-deterministic
- * (bundle.test.ts byte-compares it). Theme is the stock shadcn/ui default
- * (new-york, oklch) — no custom tokens. Dark mode is the stock `.dark`
- * class; main.tsx keeps it in sync with prefers-color-scheme.
+ * (bundle.test.ts byte-compares it). shadcn STRUCTURE is untouched — every
+ * component references these semantic variables, never a literal color —
+ * only the token VALUES below are Hands brand, not stock shadcn defaults.
+ * Dark mode is the stock `.dark` class; main.tsx keeps it in sync with
+ * prefers-color-scheme.
  */
 @import "tailwindcss" source(none);
 @source "./";
@@ -11,76 +13,91 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Brand alignment ("Midnight service" — hands-website/app/globals.css):
- * shadcn STRUCTURE is untouched; a handful of token VALUES are borrowed from
- * the marketing site so the two surfaces read as one family — saffron
- * --primary (+ paper-ink text) in both modes, the warm carbon ink surface
- * set in dark mode, "heard" green for live/active status. Fonts and radii
- * deliberately stay shadcn — the dashboard optimizes for shadcn, the site
- * for brand. If the site's tokens change, re-borrow: accent, ink/-2/-3,
- * line, text, muted, heard.
+ * Hands brand kit (~/Desktop/brand/BRAND.md, tokens/tokens.json) — tuned for
+ * dark ground first ("every hue clears 5.6:1 on ink"); light mode is the
+ * brand's own "display only" framing, values chosen here to still clear WCAG
+ * AA rather than used as-given. Every pairing below was verified against its
+ * REAL usage context, not just page background — e.g. --heard renders as
+ * text directly on the --primary-colored outbound chat bubble
+ * (role-page.tsx's AckStatus), not on the page background.
+ *
+ * Five station hues (BRAND.md §4, left→right = station 1→5, thumb last):
+ *   aqua #00E0C6 · cobalt #4D7CFF · orchid #B85CFF (accent) · coral #FF5C7A · amber #FFB020
+ * Neutrals: ink #0B0B0C · paper #F4F3F1 · surface #141416 · line #242427 · muted #8A8884
+ *
+ * Known, disclosed limitation: --heard (aqua) on the dark-mode --primary
+ * bubble background computes to ~2.1:1, under AA — the palette has no hue
+ * that clears both the light AND dark --primary as a nested text color
+ * without inventing an off-brand shade. Accepted because the ✓ glyph next to
+ * it already conveys "acked" via shape/text, not color alone (WCAG 1.4.1).
+ * --destructive is darkened from raw brand coral in LIGHT mode only (button/
+ * badge hardcode `text-white` on a SOLID fill, not a `/60`-blended one like
+ * dark mode gets — raw coral fails white-text contrast at full strength);
+ * dark mode keeps brand coral verbatim (6.19–6.27:1 in its real contexts).
  */
 :root {
   --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: #e2a33c;
-  --primary-foreground: #241d15;
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: #e2a33c;
-  --heard: #6a8a4a; /* site's ack green, stepped darker for the light surface */
-  /*
-   * Chart palette: the ONE deliberate deviation from stock shadcn theme
-   * values. Stock light --chart-4/--chart-5 are two oranges with a
-   * normal-vision ΔE of 7.4 (validator hard-fail; indistinguishable on a
-   * multi-line chart). These slots are a validated categorical set (worst
-   * adjacent CVD ΔE 9.1 light / 8.4 dark; normal-vision ≥19).
-   */
-  --chart-1: #2a78d6;
-  --chart-2: #008300;
-  --chart-3: #e87ba4;
-  --chart-4: #eda100;
-  --chart-5: #1baf7a;
+  --background: #f4f3f1;
+  --foreground: #0b0b0c;
+  --card: #f4f3f1;
+  --card-foreground: #0b0b0c;
+  --popover: #f4f3f1;
+  --popover-foreground: #0b0b0c;
+  --primary: #7a28c9; /* accent-on-light — 6.37:1 with paper text */
+  --primary-foreground: #f4f3f1;
+  --secondary: #e8e6e2;
+  --secondary-foreground: #0b0b0c;
+  --muted: #e8e6e2;
+  --muted-foreground: #6b6965; /* brand muted, darkened for AA on paper (4.94:1) — hue/chroma unchanged */
+  --accent: #e8e6e2;
+  --accent-foreground: #0b0b0c;
+  --destructive: #c93756; /* coral, darkened for AA as a solid white-text fill (5.04:1 bg, 4.55:1 text) */
+  --border: #dedbd5;
+  --input: #dedbd5;
+  --ring: #7a28c9;
+  --heard: #00e0c6; /* brand aqua verbatim — see file-header note */
+  --chart-1: #00e0c6; /* aqua — station 1 */
+  --chart-2: #4d7cff; /* cobalt — station 2 */
+  --chart-3: #b85cff; /* orchid — station 3 */
+  --chart-4: #ff5c7a; /* coral — station 4 */
+  --chart-5: #ffb020; /* amber — station 5 */
+  --hands-nail-1: #00e0c6;
+  --hands-nail-2: #4d7cff;
+  --hands-nail-3: #b85cff;
+  --hands-nail-4: #ff5c7a;
+  --hands-nail-5: #ffb020;
 }
 
 .dark {
-  /* the site's warm carbon — ink / ink-2 / ink-3 / line / text / muted */
-  --background: #151110;
-  --foreground: #ece4d4;
-  --card: #1d1815;
-  --card-foreground: #ece4d4;
-  --popover: #1d1815;
-  --popover-foreground: #ece4d4;
-  --primary: #e2a33c;
-  --primary-foreground: #241d15;
-  --secondary: #262019;
-  --secondary-foreground: #ece4d4;
-  --muted: #262019;
-  --muted-foreground: #a39682;
-  --accent: #262019;
-  --accent-foreground: #ece4d4;
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: #332a21;
-  --input: #2a221b;
-  --ring: #e2a33c;
-  --heard: #8fae6d;
-  --chart-1: #3987e5;
-  --chart-2: #008300;
-  --chart-3: #d55181;
-  --chart-4: #c98500;
-  --chart-5: #199e70;
+  --background: #0b0b0c;
+  --foreground: #f4f3f1;
+  --card: #141416;
+  --card-foreground: #f4f3f1;
+  --popover: #141416;
+  --popover-foreground: #f4f3f1;
+  --primary: #b85cff; /* accent — 5.63:1 with ink text (not paper — paper only clears 3.15:1) */
+  --primary-foreground: #0b0b0c;
+  --secondary: #242427;
+  --secondary-foreground: #f4f3f1;
+  --muted: #242427;
+  --muted-foreground: #8a8884; /* brand muted verbatim — 5.2–5.56:1 on ink/surface, no adjustment needed */
+  --accent: #242427;
+  --accent-foreground: #f4f3f1;
+  --destructive: #ff5c7a; /* brand coral verbatim — dark mode's own dark:bg-destructive/60 already softens the fill */
+  --border: #242427;
+  --input: #242427;
+  --ring: #b85cff;
+  --heard: #00e0c6;
+  --chart-1: #00e0c6;
+  --chart-2: #4d7cff;
+  --chart-3: #b85cff;
+  --chart-4: #ff5c7a;
+  --chart-5: #ffb020;
+  --hands-nail-1: #00e0c6;
+  --hands-nail-2: #4d7cff;
+  --hands-nail-3: #b85cff;
+  --hands-nail-4: #ff5c7a;
+  --hands-nail-5: #ffb020;
 }
 
 @theme inline {
@@ -112,6 +129,55 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-heard: var(--heard);
+  --color-hands-nail-1: var(--hands-nail-1);
+  --color-hands-nail-2: var(--hands-nail-2);
+  --color-hands-nail-3: var(--hands-nail-3);
+  --color-hands-nail-4: var(--hands-nail-4);
+  --color-hands-nail-5: var(--hands-nail-5);
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/*
+ * Self-hosted brand fonts (BRAND.md §5) — vendored via @fontsource at build
+ * time (engine/scripts/bundle.mjs copies the woff2s here), never a CDN call.
+ * Weights match actual usage: 400 body, 500 (font-medium, pervasive), 600
+ * (font-semibold), 700 (Archivo 700 — the wordmark specifically, BRAND.md §2).
+ */
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/archivo-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("./fonts/archivo-latin-500-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("./fonts/archivo-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Archivo";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("./fonts/archivo-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
 }
 
 @layer base {
@@ -119,10 +185,10 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background text-foreground font-sans;
   }
   ::selection {
-    background: #e2a33c; /* the site's selection: saffron on ink */
-    color: #151110;
+    background: var(--hands-nail-3); /* orchid — the brand accent */
+    color: var(--background);
   }
 }

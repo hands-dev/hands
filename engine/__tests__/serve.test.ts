@@ -152,9 +152,12 @@ function postSSE(
 describe("serve", () => {
   it("serves the SPA shell and guards the asset allowlist", async () => {
     const assets = path.join(home, "assets");
-    fs.mkdirSync(assets, { recursive: true });
+    fs.mkdirSync(path.join(assets, "fonts"), { recursive: true });
     fs.writeFileSync(path.join(assets, "dashboard.js"), "// js");
     fs.writeFileSync(path.join(assets, "dashboard.css"), "/* css */");
+    fs.writeFileSync(path.join(assets, "favicon.ico"), "fake-ico");
+    fs.writeFileSync(path.join(assets, "site.webmanifest"), "{}");
+    fs.writeFileSync(path.join(assets, "fonts", "archivo-latin-400-normal.woff2"), "fake-woff2");
     handle = await serve({ port: 0, env, assetsDir: assets });
 
     const shell = await get(handle.url);
@@ -162,11 +165,18 @@ describe("serve", () => {
     expect(shell.body).toContain('<div id="root">');
     expect(shell.body).toContain("/assets/dashboard.js");
     expect(shell.body).toContain("/assets/dashboard.css");
+    // the brand favicon/manifest tags — real icons, not the old empty data-URI placeholder
+    expect(shell.body).toContain("/assets/favicon.ico");
+    expect(shell.body).toContain("/assets/site.webmanifest");
+    expect(shell.body).not.toContain('href="data:,"');
     // the tab title is namespaced to the kitchen (#40)
     expect(shell.body).toMatch(/<title>hands · [^<]+<\/title>/);
 
     expect((await get(`${handle.url}assets/dashboard.js`)).type).toContain("text/javascript");
     expect((await get(`${handle.url}assets/dashboard.css`)).type).toContain("text/css");
+    expect((await get(`${handle.url}assets/favicon.ico`)).type).toContain("image/x-icon");
+    expect((await get(`${handle.url}assets/site.webmanifest`)).type).toContain("application/manifest+json");
+    expect((await get(`${handle.url}assets/fonts/archivo-latin-400-normal.woff2`)).type).toContain("font/woff2");
     expect((await get(`${handle.url}assets/nope.js`)).status).toBe(404);
     expect((await get(`${handle.url}assets/../server.mjs`)).status).toBe(404);
     expect((await get(`${handle.url}assets/%2e%2e%2fdashboard.js`)).status).toBe(404);

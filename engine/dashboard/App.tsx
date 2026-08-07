@@ -5,6 +5,7 @@ import { ChitsLog } from "@/components/chits-log";
 import { ContextUsage } from "@/components/context-usage";
 import { CraftRoster } from "@/components/craft-roster";
 import { FeedbackWidget } from "@/components/feedback-form";
+import { HandsWordmark } from "@/components/hands-mark";
 import { JournalFeed } from "@/components/journal-feed";
 import { NeedsYou, OpenQuestions } from "@/components/questions-lane";
 import { RolePage } from "@/components/role-page";
@@ -140,7 +141,7 @@ export function App() {
       <div className="flex min-h-dvh">
         <aside className="sticky top-0 hidden h-dvh w-52 shrink-0 flex-col gap-6 border-r bg-card px-4 py-5 lg:flex">
           <div>
-            <div className="text-base font-semibold tracking-tight">Hands</div>
+            <HandsWordmark />
             <div className="truncate text-xs text-muted-foreground" title={snapshot.project}>
               {snapshot.handle}
             </div>
@@ -171,7 +172,7 @@ export function App() {
 
         <div className="min-w-0 flex-1">
           <header className="sticky top-0 z-10 flex items-center gap-3 border-b bg-background/95 px-6 py-3 backdrop-blur">
-            <span className="text-sm font-semibold lg:hidden">Hands</span>
+            <HandsWordmark className="lg:hidden" />
             <span className="text-sm text-muted-foreground">
               The pass · {snapshot.handle} · last pushed {ago(now, snapshot.pushedAt)}
             </span>
@@ -224,7 +225,7 @@ export function App() {
       {/* Sidebar — the admin shell's fixed rail (plain layout markup, lg+) */}
       <aside className="sticky top-0 hidden h-dvh w-52 shrink-0 flex-col gap-6 border-r bg-card px-4 py-5 lg:flex">
         <div>
-          <div className="text-base font-semibold tracking-tight">Hands</div>
+          <HandsWordmark />
           <div className="truncate text-xs text-muted-foreground" title={snapshot.db}>
             {kitchen}
           </div>
@@ -259,7 +260,7 @@ export function App() {
         {/* Topbar */}
         <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
           <div className="flex items-center gap-3 px-6 py-3">
-            <span className="text-sm font-semibold lg:hidden">Hands</span>
+            <HandsWordmark className="lg:hidden" />
             <span className="text-sm text-muted-foreground">
               The pass · chef: {snapshot.principal}
             </span>

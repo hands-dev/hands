@@ -1,7 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { renderBlock } from "@/lib/markdown";
 import { cn } from "@/lib/utils";
 import type { ChatEvent } from "../../src/chat.js";
 
@@ -60,6 +61,22 @@ function ChatUnavailable() {
   );
 }
 
+/**
+ * Assistant markdown — same renderBlock()/dangerouslySetInnerHTML pattern
+ * craft-roster.tsx's CraftDoc already uses (marked, with escapeHtml() ahead
+ * of parsing — see lib/markdown.ts). Inline code/pre use `bg-background`
+ * rather than CraftDoc's `bg-muted`, since this renders INSIDE an
+ * already-`bg-muted` bubble — same color would make code blocks invisible.
+ */
+function AssistantText({ text }: { text: string }) {
+  return (
+    <div
+      className="max-w-none break-words [&_h1]:mt-2 [&_h1]:text-base [&_h1]:font-semibold [&_h2]:mt-2 [&_h2]:text-sm [&_h2]:font-semibold [&_h3]:mt-2 [&_h3]:text-sm [&_h3]:font-semibold [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-2 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mb-0.5 [&_a]:underline [&_code]:rounded [&_code]:bg-background [&_code]:px-1 [&_code]:py-0.5 [&_code]:font-mono [&_code]:text-xs [&_pre]:mb-2 [&_pre]:overflow-auto [&_pre]:rounded [&_pre]:bg-background [&_pre]:p-2 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-2 [&_blockquote]:text-muted-foreground"
+      dangerouslySetInnerHTML={{ __html: renderBlock(text) }}
+    />
+  );
+}
+
 function Bubble({ message }: { message: ChatMessage }) {
   const outbound = message.role === "user";
   return (
@@ -70,7 +87,15 @@ function Bubble({ message }: { message: ChatMessage }) {
           outbound ? "bg-primary text-primary-foreground" : "bg-muted",
         )}
       >
-        {message.text || (message.error ? null : "…")}
+        {message.text ? (
+          outbound ? (
+            message.text
+          ) : (
+            <AssistantText text={message.text} />
+          )
+        ) : message.error ? null : (
+          "…"
+        )}
         {message.error ? <div className="text-destructive">{message.error}</div> : null}
       </div>
     </div>
@@ -85,6 +110,14 @@ export function ChatPanel({ chatAvailable }: { chatAvailable: boolean }) {
   const [sending, setSending] = useState(false);
   const [tool, setTool] = useState<string | null>(null);
   const sessionId = useRef<string | undefined>(undefined);
+  const threadRef = useRef<HTMLDivElement>(null);
+
+  // Anchor to the bottom as the thread grows — including mid-stream, since each
+  // streamed token replaces `messages` wholesale (see the "text" event handler below).
+  useEffect(() => {
+    const el = threadRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, tool]);
 
   if (!chatAvailable) return <ChatUnavailable />;
 
@@ -146,7 +179,7 @@ export function ChatPanel({ chatAvailable }: { chatAvailable: boolean }) {
         <CardDescription>Read-only — hands_board, hands_tasks, hands_peers, and friends</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
-        <div className="flex max-h-[28rem] min-h-[8rem] flex-col gap-2 overflow-auto">
+        <div ref={threadRef} className="flex max-h-[28rem] min-h-[8rem] flex-col gap-2 overflow-auto">
           {messages.length === 0 ? (
             <p className="text-sm text-muted-foreground">Ask about what the kitchen's working on.</p>
           ) : (

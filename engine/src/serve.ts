@@ -114,6 +114,20 @@ export interface ServeHandle {
 const ASSETS: Record<string, string> = {
   "dashboard.js": "text/javascript; charset=utf-8",
   "dashboard.css": "text/css; charset=utf-8",
+  "favicon.ico": "image/x-icon",
+  "favicon-16x16.png": "image/png",
+  "favicon-32x32.png": "image/png",
+  "apple-touch-icon.png": "image/png",
+  "icon-192.png": "image/png",
+  "icon-512.png": "image/png",
+  "icon-512-maskable.png": "image/png",
+  "safari-pinned-tab.svg": "image/svg+xml",
+  "site.webmanifest": "application/manifest+json",
+  "fonts/archivo-latin-400-normal.woff2": "font/woff2",
+  "fonts/archivo-latin-500-normal.woff2": "font/woff2",
+  "fonts/archivo-latin-600-normal.woff2": "font/woff2",
+  "fonts/archivo-latin-700-normal.woff2": "font/woff2",
+  "fonts/jetbrains-mono-latin-400-normal.woff2": "font/woff2",
 };
 
 /** Feedback is a short note, not a file upload — generous enough for anything a human would type, small enough that a runaway client can't build up memory on this server. */
@@ -186,7 +200,14 @@ export function kitchenName(db: string): string {
 function shellHtml(kitchen: string): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<link rel="icon" href="data:,"/><title>hands · ${escapeHtml(kitchen)}</title>
+<link rel="icon" href="/assets/favicon.ico" sizes="any"/>
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32x32.png"/>
+<link rel="icon" type="image/png" sizes="16x16" href="/assets/favicon-16x16.png"/>
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png"/>
+<link rel="mask-icon" href="/assets/safari-pinned-tab.svg" color="#0B0B0C"/>
+<link rel="manifest" href="/assets/site.webmanifest"/>
+<meta name="theme-color" content="#0B0B0C"/>
+<title>hands · ${escapeHtml(kitchen)}</title>
 <link rel="stylesheet" href="/assets/dashboard.css"/>
 </head><body><div id="root"></div>
 <script type="module" src="/assets/dashboard.js"></script></body></html>
