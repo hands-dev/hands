@@ -361,6 +361,12 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     async (input) => {
       store.touch(agentId);
       const now = Date.now();
+      // Ambient: a ticket cannot be "in progress" while its station is offline
+      // (hands#157). /hands:last-call ASKS the expo to park these; doing it here
+      // makes it true, so the rail never shows work in flight that nothing is
+      // advancing — and the expo never routes around a station it only believes
+      // is busy.
+      store.parkStrandedTickets(now);
       const wakes = store.wakeCounts(now);
       const peers = store.listPeers(now).map((p) => {
         const activeAge = p.last_active ? now - p.last_active : null;

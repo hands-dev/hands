@@ -22499,6 +22499,49 @@ var init_store = __esm({
        * window stays anchored to the OLD close time instead of the new work (hands#97).
        */
       static ACTIVE_STATES = /* @__PURE__ */ new Set(["assigned", "in_progress", "returned"]);
+      /**
+       * Park tickets that claim to be in progress while nobody is working them.
+       *
+       * `in_progress` means someone is cooking this RIGHT NOW. When a station goes
+       * offline — stood down at /hands:last-call, or a pane closed — its tickets
+       * keep saying otherwise, and that produces the same lie the board tells about
+       * idle-versus-deaf: the expo routes around a station it believes is busy, and
+       * the rail shows work in flight that nothing is advancing.
+       *
+       * /hands:last-call ASKS the expo to park these. This makes it true — the same
+       * reason strict-hub topology is enforced before any write rather than
+       * requested in a skill. Prose asks a model to comply; the server decides.
+       *
+       * Parks to `assigned`, not `open`: it stays that station's work, waiting where
+       * it looks on its next wake. An order waiting is the menu.
+       */
+      parkStrandedTickets(now = Date.now()) {
+        const cutoff = now - ONLINE_WINDOW_MS;
+        const rows = this.db.prepare(
+          `SELECT t.id AS id, t.assignee AS assignee
+           FROM tasks t
+           LEFT JOIN agents a ON a.id = t.assignee
+          WHERE t.state = 'in_progress'
+            AND t.assignee IS NOT NULL
+            AND (a.id IS NULL OR a.last_seen_at < ?)`
+        ).all(cutoff);
+        for (const row of rows) {
+          this.withRetry(
+            () => this.db.prepare(
+              `UPDATE tasks
+                SET state = 'assigned',
+                    result = COALESCE(result, '') ||
+                             CASE WHEN result IS NULL OR result = '' THEN '' ELSE '
+' END ||
+                             'parked: its station went offline while this was in progress',
+                    updated_at = ?
+              WHERE id = ? AND state = 'in_progress'`
+            ).run(now, row.id)
+          );
+          this.journal("task.parked", { id: row.id, assignee: row.assignee, at: now });
+        }
+        return rows;
+      }
       updateTaskState(input) {
         const now = input.now ?? Date.now();
         const started = input.state === "in_progress";
@@ -50056,6 +50099,7 @@ function buildServer(store, agentId, config2) {
     async (input) => {
       store.touch(agentId);
       const now = Date.now();
+      store.parkStrandedTickets(now);
       const wakes = store.wakeCounts(now);
       const peers = store.listPeers(now).map((p2) => {
         const activeAge = p2.last_active ? now - p2.last_active : null;

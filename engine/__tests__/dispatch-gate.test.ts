@@ -163,3 +163,43 @@ describe("snapshot readiness — what the dashboard renders", () => {
     expect(expo?.ready).toBe("ready");
   });
 });
+
+describe("parkStrandedTickets — in_progress must mean someone is cooking", () => {
+  it("parks a ticket whose station has gone offline", () => {
+    const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "t" });
+    store.updateTaskState({ id, state: "in_progress" });
+    // station never registered → no agent row → offline
+    const parked = store.parkStrandedTickets();
+    expect(parked.map((p) => p.id)).toContain(id);
+    expect(store.listTasks({ assignee: "station-1" })[0]?.state).toBe("assigned");
+  });
+
+  it("parks to ASSIGNED, not open — it stays that station's work", () => {
+    const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "t" });
+    store.updateTaskState({ id, state: "in_progress" });
+    store.parkStrandedTickets();
+    const task = store.listTasks({ assignee: "station-1" })[0];
+    expect(task?.state).toBe("assigned");
+    expect(task?.assignee).toBe("station-1");
+    expect(task?.result).toContain("went offline");
+  });
+
+  it("leaves a LIVE station's in_progress ticket alone", () => {
+    store.registerAgent({ id: "station-1", cwd: "/x", pid: 1 });
+    const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "t" });
+    store.updateTaskState({ id, state: "in_progress" });
+    expect(store.parkStrandedTickets()).toEqual([]);
+    expect(store.listTasks({ assignee: "station-1" })[0]?.state).toBe("in_progress");
+  });
+
+  it("ignores tickets that aren't in_progress", () => {
+    const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "t" });
+    store.updateTaskState({ id, state: "returned", result: "done" });
+    expect(store.parkStrandedTickets()).toEqual([]);
+  });
+
+  it("ignores unassigned rail tickets", () => {
+    store.createTask({ createdBy: "expo", assignee: null, title: "queued" });
+    expect(store.parkStrandedTickets()).toEqual([]);
+  });
+});
