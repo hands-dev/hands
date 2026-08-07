@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_BASENAME, type HandsConfig, loadConfig } from "./config.js";
 import { mirrorHealth } from "./journal-read.js";
-import { coordinationDir, dbPath, pidPath, repoInfo } from "./paths.js";
+import { coordinationDir, dbPath, notifyPath, pidPath, repoInfo } from "./paths.js";
 import { listStations } from "./provision.js";
 import { pruneMissing, resolveProject } from "./projects.js";
 import { openJournal, personalCraftsDir, readRemoteMismatch, sharedCraftsDir } from "./remote.js";
@@ -439,7 +439,11 @@ export function runDoctor(opts?: {
       // here is spawning a bare `tail` process, which would make a station
       // LOOK reachable without actually being able to wake — worse than the
       // gap it would "fix". This needs a human to restart the station.
-      const monitor = inboxMonitorAlive(station.id);
+      // hands#202 — anchor to THIS station's resolved notify path, not a bare
+      // `<id>.notify` substring: station ids repeat across every kitchen on
+      // the machine, and an unanchored match reads a different session's
+      // live tail as this station's own.
+      const monitor = inboxMonitorAlive(station.id, notifyPath(station.id, env, info.repoRoot));
       if (monitor === false) {
         checks.push({
           name: `${station.id}.monitor`,

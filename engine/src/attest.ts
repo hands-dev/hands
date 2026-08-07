@@ -72,7 +72,7 @@ export function assessReadiness(opts: {
   agentId: string;
   /** ids of tickets this station holds in_progress and will resume (reported, never blocking) */
   resumingTickets?: string[];
-  notifyPath?: string;
+  notifyPath: string;
   /** skip the network fetch (tests, offline) */
   offline?: boolean;
 }): Readiness {
