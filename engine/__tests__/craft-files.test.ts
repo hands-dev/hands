@@ -330,21 +330,35 @@ describe("role crafts — dispatch still works even though the roster hides them
     expect(isRoleCraft("issue-triage")).toBe(false);
   });
 
-  it("craftKnown still resolves a role craft by slug — hands craft brief cdc keeps working", () => {
+  it("craftKnown still resolves a role craft by EXACT slug — hands craft brief cdc keeps working", () => {
     const repo = fs.mkdtempSync(path.join(home, "repo-"));
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
     const shared = path.join(repo, ".hands", "crafts");
     fs.mkdirSync(shared, { recursive: true });
     fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
 
-    const { known, slugs } = craftKnown("cdc", loadConfig({ cwd: repo, env }), env, repo);
-    expect(known).toBe(true);
-    expect(slugs).toContain("cdc"); // present in the raw enumeration craftKnown uses...
-    // ...but NOT in the browsable roster, confirming the two are deliberately different views.
+    const { known } = craftKnown("cdc", loadConfig({ cwd: repo, env }), env, repo);
+    expect(known).toBe(true); // a direct, correctly-spelled dispatch always resolves
     const store = new Store({ env });
     const roster = listCrafts(store, loadConfig({ cwd: repo, env }), env, repo);
     expect(roster.map((c) => c.slug)).not.toContain("cdc");
     store.close();
+  });
+
+  it("craftKnown does NOT suggest a role craft for a typo — a near-miss must not surface it (hands#204)", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+    fs.writeFileSync(path.join(shared, "cdo.md"), "> covers: something else\n"); // a close-by real craft
+
+    // "cdd" is a typo close to both "cdc" (role craft) and "cdo" (an ordinary, suggestable craft).
+    const { known, slugs } = craftKnown("cdd", loadConfig({ cwd: repo, env }), env, repo);
+    expect(known).toBe(false);
+    expect(slugs).not.toContain("cdc"); // role crafts aren't a typo-suggestion destination
+    expect(slugs).toContain("cdo"); // ordinary crafts still are
+    expect(nearestCraftSlugs("cdd", slugs, 1)).toEqual(["cdo"]);
   });
 });
 

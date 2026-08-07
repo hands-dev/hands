@@ -201,10 +201,17 @@ function listCraftFiles(
 
 /**
  * Whether `slug` (already resolved by `craftFiles` — so any `craft-` alias is already stripped)
- * is a real, founded craft, plus the full known-slug list for a "closest match" suggestion.
+ * is a real, founded craft, plus a known-slug list for a "closest match" suggestion.
  * `hands craft brief` uses this to refuse an unknown slug loudly instead of silently writing a
  * phantom `craft_briefs` row (hands#165) — `mise`/`fold`/`promote`/`localize` have their own
  * existing checks (an open brief, a moved file count, a pending-note backlog) and don't need this.
+ *
+ * `known` is checked against the FULL roster, role crafts included — a role craft (hands#139) is
+ * still a real dispatch target (`hands craft brief cdc` must resolve), it's only excluded from
+ * browsing. `slugs`, by contrast, only ever seeds a typo suggestion (`nearestCraftSlugs`), and
+ * role crafts are deliberately left out of it: they're plugin/system-owned, not something a
+ * station discovers by browsing or backs into via a near-miss spelling — the one legitimate way
+ * to reach one is to already know its exact name.
  */
 export function craftKnown(
   slug: string,
@@ -212,8 +219,8 @@ export function craftKnown(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): { known: boolean; slugs: string[] } {
-  const slugs = listCraftFiles(config, env, cwd).map((e) => e.slug);
-  return { known: slugs.includes(slug), slugs };
+  const all = listCraftFiles(config, env, cwd).map((e) => e.slug);
+  return { known: all.includes(slug), slugs: all.filter((s) => !isRoleCraft(s)) };
 }
 
 /** Levenshtein edit distance — small inputs only (craft slugs), no need for a smarter algorithm. */

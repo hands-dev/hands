@@ -25310,8 +25310,8 @@ function listCraftFiles(config2, env = process.env, cwd = process.cwd()) {
   return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
 }
 function craftKnown(slug, config2, env = process.env, cwd = process.cwd()) {
-  const slugs = listCraftFiles(config2, env, cwd).map((e) => e.slug);
-  return { known: slugs.includes(slug), slugs };
+  const all = listCraftFiles(config2, env, cwd).map((e) => e.slug);
+  return { known: all.includes(slug), slugs: all.filter((s) => !isRoleCraft(s)) };
 }
 function editDistance(a, b) {
   const rows = a.length + 1;
