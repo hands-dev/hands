@@ -409,6 +409,33 @@ describe("Store.craftTokenUsage — subagent_samples aggregation (hands#136-dash
   });
 });
 
+describe("Store.listCraftBriefsByTicket / listCraftBriefsWithTicket — a chit's 'crafts used' (hands: Chits)", () => {
+  it("listCraftBriefsByTicket returns only briefs for that ticket, oldest first", () => {
+    const store = new Store({ env });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: 47, now: 2000 });
+    store.createCraftBrief({ craftSlug: "poissonnier", mode: "plan", openedBy: "station-2", ticketId: 47, now: 1000 });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: 99, now: 1500 });
+
+    const briefs = store.listCraftBriefsByTicket(47);
+    expect(briefs.map((b) => b.craft_slug)).toEqual(["poissonnier", "saucier"]); // oldest (1000) first
+    store.close();
+  });
+
+  it("listCraftBriefsByTicket is empty for a ticket with no craft dispatches", () => {
+    const store = new Store({ env });
+    expect(store.listCraftBriefsByTicket(1)).toEqual([]);
+    store.close();
+  });
+
+  it("listCraftBriefsWithTicket returns every ticket-tied brief, excluding ones with no ticket", () => {
+    const store = new Store({ env });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: 47 });
+    store.createCraftBrief({ craftSlug: "poissonnier", mode: "plan", openedBy: "station-2" }); // no ticket
+    expect(store.listCraftBriefsWithTicket().map((b) => b.craft_slug)).toEqual(["saucier"]);
+    store.close();
+  });
+});
+
 describe("pathsReport — no held-craft fields, plain lane label + both craft dirs", () => {
   it("reports focus as a plain label, plus personal and shared craft dirs", () => {
     const cfg = loadConfig({ env });

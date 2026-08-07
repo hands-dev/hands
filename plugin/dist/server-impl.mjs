@@ -8247,6 +8247,14 @@ var init_store = __esm({
         }
         return result;
       }
+      /** Every craft dispatch tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used." */
+      listCraftBriefsByTicket(ticketId) {
+        return this.db.prepare("SELECT * FROM craft_briefs WHERE ticket_id = ? ORDER BY created_at ASC").all(ticketId);
+      }
+      /** Every ticket-tied craft dispatch, across all tickets — one query for the dashboard to group by ticket_id itself. */
+      listCraftBriefsWithTicket() {
+        return this.db.prepare("SELECT * FROM craft_briefs WHERE ticket_id IS NOT NULL ORDER BY created_at ASC").all();
+      }
       // --- journal replay (remote.ts restore path) ---
       /**
        * Materialize one journal event into the DB. Inserts carry their original
@@ -9066,9 +9074,10 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       at: pr.updated_at
     };
   });
-  const tasks = store.listTasks({ limit: 40 }).map((t) => ({
+  const tasks = store.listTasks({ limit: 300 }).map((t) => ({
     id: t.id,
     title: t.title,
+    body: t.body,
     from: t.created_by,
     assignee: t.assignee ?? "queue",
     state: t.state,
@@ -9076,6 +9085,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     dish: t.dish,
     result: t.result,
     at: t.updated_at,
+    createdAt: t.created_at,
     startedAt: t.started_at,
     finishedAt: t.finished_at
   }));
@@ -10694,7 +10704,7 @@ function serve(opts) {
       tokens = sampler.sample(peers);
       const costs = {};
       const now = Date.now();
-      for (const t of store.listTasks({ limit: 40 })) {
+      for (const t of store.listTasks({ limit: 300 })) {
         if (!t.assignee || t.started_at == null) continue;
         costs[t.id] = sampler.usageBetween(t.assignee, t.started_at, t.finished_at ?? now).out;
       }
@@ -10760,12 +10770,29 @@ function serve(opts) {
     }
     return result;
   };
+  const buildCraftBriefsByTicket = () => {
+    const result = {};
+    for (const brief of store.listCraftBriefsWithTicket()) {
+      const ticketId = brief.ticket_id;
+      if (ticketId == null) continue;
+      const list = result[ticketId] ?? (result[ticketId] = []);
+      list.push({
+        slug: brief.craft_slug,
+        mode: brief.mode,
+        openedBy: brief.opened_by,
+        at: brief.created_at,
+        completed: brief.noted_at != null
+      });
+    }
+    return result;
+  };
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     const craftRoster = buildCraftRoster();
     const agentIds = snapshot.agents.map((a) => a.id);
     const contextUsage = buildContextUsage(agentIds);
     const agentMessages = buildAgentMessages(agentIds);
+    const craftBriefsByTicket = buildCraftBriefsByTicket();
     return {
       json: JSON.stringify({
         ...snapshot,
@@ -10779,9 +10806,10 @@ function serve(opts) {
         tokens,
         taskCosts,
         contextUsage,
-        agentMessages
+        agentMessages,
+        craftBriefsByTicket
       }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages)
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages) + JSON.stringify(craftBriefsByTicket)
     };
   };
   const clients = /* @__PURE__ */ new Set();

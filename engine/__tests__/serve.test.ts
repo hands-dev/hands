@@ -180,6 +180,33 @@ describe("serve", () => {
     expect(payload.agentMessages["station-1"]?.[0]).toMatchObject({ body: "go", ackedAt: 1234 });
   });
 
+  it("tasks carry body through to the dashboard (hands: Chits — a chit's problem statement)", async () => {
+    const store = new Store({ env });
+    store.createTask({ createdBy: "expo", title: "fix hollandaise timing", body: "breaks over 60C, should be 58C" });
+    store.close();
+
+    handle = await serve({ port: 0, env });
+    const res = await get(`${handle.url}api/state`);
+    const payload = JSON.parse(res.body) as { tasks: Array<{ title: string; body: string | null }> };
+    expect(payload.tasks[0]).toMatchObject({ title: "fix hollandaise timing", body: "breaks over 60C, should be 58C" });
+  });
+
+  it("craftBriefsByTicket groups ticket-tied craft dispatches, keyed by ticket id (hands: Chits)", async () => {
+    const store = new Store({ env });
+    const id = store.createTask({ createdBy: "expo", title: "fix hollandaise timing" });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: id, now: 1000 });
+    store.close();
+
+    handle = await serve({ port: 0, env });
+    const res = await get(`${handle.url}api/state`);
+    const payload = JSON.parse(res.body) as {
+      craftBriefsByTicket: Record<number, Array<{ slug: string; openedBy: string; completed: boolean }>>;
+    };
+    expect(payload.craftBriefsByTicket[id]).toEqual([
+      { slug: "saucier", mode: "plan", openedBy: "station-1", at: 1000, completed: false },
+    ]);
+  });
+
   it("SSE: initial frame on connect, a frame per store change, none from time alone", async () => {
     const store = new Store({ env });
     store.setStatus({ id: "station-1", cwd: "/w1", pid: 1, branch: "b1", now: Date.now() });

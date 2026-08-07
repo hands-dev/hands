@@ -1825,6 +1825,20 @@ export class Store {
     return result;
   }
 
+  /** Every craft dispatch tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used." */
+  listCraftBriefsByTicket(ticketId: number): CraftBriefRow[] {
+    return this.db
+      .prepare("SELECT * FROM craft_briefs WHERE ticket_id = ? ORDER BY created_at ASC")
+      .all(ticketId) as unknown as CraftBriefRow[];
+  }
+
+  /** Every ticket-tied craft dispatch, across all tickets — one query for the dashboard to group by ticket_id itself. */
+  listCraftBriefsWithTicket(): CraftBriefRow[] {
+    return this.db
+      .prepare("SELECT * FROM craft_briefs WHERE ticket_id IS NOT NULL ORDER BY created_at ASC")
+      .all() as unknown as CraftBriefRow[];
+  }
+
   // --- journal replay (remote.ts restore path) ---
 
   /**

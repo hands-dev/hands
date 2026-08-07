@@ -125,13 +125,17 @@ export interface SnapshotPr {
 export interface SnapshotTask {
   id: number;
   title: string;
+  /** the delegation payload's free-text description — a chit's "problem statement" */
+  body: string | null;
   from: string;
   assignee: string;
   state: string;
   priority: string | null;
   dish: string | null;
   result: string | null;
+  /** last updated — what the rail sorts/displays by */
   at: number;
+  createdAt: number;
   /** working-interval stamps (token-cost attribution) */
   startedAt: number | null;
   finishedAt: number | null;
@@ -288,9 +292,13 @@ export function buildSnapshot(
     };
   });
 
-  const tasks: SnapshotTask[] = store.listTasks({ limit: 40 }).map((t) => ({
+  // 300 — listTasks()'s own internal clamp, not an arbitrary choice here — the real ceiling on
+  // how far back the dashboard's Chits log can see. tasks rows are never deleted/trimmed, so this
+  // is "as much history as the query layer allows," not a deliberately short window.
+  const tasks: SnapshotTask[] = store.listTasks({ limit: 300 }).map((t) => ({
     id: t.id,
     title: t.title,
+    body: t.body,
     from: t.created_by,
     assignee: t.assignee ?? "queue",
     state: t.state,
@@ -298,6 +306,7 @@ export function buildSnapshot(
     dish: t.dish,
     result: t.result,
     at: t.updated_at,
+    createdAt: t.created_at,
     startedAt: t.started_at,
     finishedAt: t.finished_at,
   }));

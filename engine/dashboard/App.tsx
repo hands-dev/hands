@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import { ChitPage } from "@/components/chit-page";
+import { ChitsLog } from "@/components/chits-log";
 import { ContextUsage } from "@/components/context-usage";
 import { CraftRoster } from "@/components/craft-roster";
 import { FeedbackWidget } from "@/components/feedback-form";
@@ -32,6 +34,7 @@ const NAV_HOSTED = [
  */
 const TOP_TABS = [
   { id: "overview", label: "Overview" },
+  { id: "chits", label: "Chits" },
   { id: "crafts", label: "Crafts" },
   { id: "tokens", label: "Token usage" },
   { id: "book", label: "The book" },
@@ -210,6 +213,9 @@ export function App() {
   const activeRoleAgent = activeTab.startsWith("role:")
     ? (agentsById.get(activeTab.slice("role:".length)) ?? null)
     : null;
+  const activeChit = activeTab.startsWith("chit:")
+    ? (snapshot.tasks.find((t) => t.id === Number(activeTab.slice("chit:".length))) ?? null)
+    : null;
 
   return (
     <div className="flex min-h-dvh">
@@ -293,6 +299,7 @@ export function App() {
                     tasks={[...activeTasks, ...settledTasks]}
                     taskCosts={snapshot.taskCosts}
                     now={snapshot.now}
+                    onSelectChit={(id) => selectTab(`chit:${id}`)}
                   />
                 </div>
                 <div className="min-w-0 space-y-4">
@@ -302,6 +309,15 @@ export function App() {
                 </div>
               </div>
             </>
+          ) : null}
+
+          {activeTab === "chits" ? (
+            <ChitsLog
+              tasks={snapshot.tasks}
+              taskCosts={snapshot.taskCosts}
+              now={snapshot.now}
+              onSelectChit={(id) => selectTab(`chit:${id}`)}
+            />
           ) : null}
 
           {activeTab === "crafts" ? <CraftRoster crafts={snapshot.craftRoster} now={snapshot.now} /> : null}
@@ -326,6 +342,21 @@ export function App() {
             ) : (
               <p className="text-sm text-muted-foreground">
                 {activeTab.slice("role:".length)} isn't currently provisioned.
+              </p>
+            )
+          ) : null}
+
+          {activeTab.startsWith("chit:") ? (
+            activeChit ? (
+              <ChitPage
+                task={activeChit}
+                craftBriefs={snapshot.craftBriefsByTicket[activeChit.id] ?? []}
+                now={snapshot.now}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Chit #{activeTab.slice("chit:".length)} isn't in the current window — open the
+                Chits tab to browse what's visible.
               </p>
             )
           ) : null}
