@@ -77,3 +77,22 @@ jobs:
           fi
           git commit -m "bundle: refresh plugin/dist from $(git rev-parse --short HEAD)"
           git push origin HEAD:main
+
+      # Deliberately AFTER the commit/push above, and not gating it: the git-committed
+      # plugin/dist is what the Claude Code marketplace installs from (a plain file copy, no
+      # Blob involved at all), so it must land regardless of whether this step succeeds. Only
+      # the standalone `curl | sh` installer reads from Blob (hands#94) — if this fails, that
+      # installer just keeps serving the last successfully-published release until the next
+      # green run, never a half-published or broken one (see publish-installer-blob.mjs's own
+      # header for why). Runs even when the commit step found nothing to commit — re-publishing
+      # the same already-current commit is a safe no-op, not a special case to skip.
+      #
+      # No-op until BLOB_READ_WRITE_TOKEN is provisioned (a principal action — creating the Blob
+      # store itself, `vercel blob store add`, is not something CI should do unattended). Once
+      # that secret is set, this activates on the next push with no other change needed here.
+      - name: Publish installer payload to Vercel Blob
+        if: ${{ secrets.BLOB_READ_WRITE_TOKEN != '' }}
+        working-directory: engine
+        env:
+          BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
+        run: npm run publish-installer

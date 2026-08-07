@@ -20,10 +20,17 @@ set -eu
 REPO="${HANDS_REPO:-hands-dev/hands}"
 REF="${HANDS_REF:-main}"
 PREFIX="${HANDS_PREFIX:-$HOME/.hands}"
-# HANDS_BASE overrides where the payload comes from — an internal mirror, or a
-# local checkout (file:///path/to/hands/plugin/dist) when testing the installer
-# itself. Defaults to the public repo at the pinned ref.
-BASE="${HANDS_BASE:-https://raw.githubusercontent.com/${REPO}/${REF}/plugin/dist}"
+# HANDS_BLOB_ORIGIN is the Vercel Blob store the payload is published to, keyed by commit
+# (hands#94) — installer/<commit>/{cli.mjs,...}, plus one mutable installer/latest.json pointer
+# that "main" resolves through. Empty by default until the store exists in production; once it
+# does, the literal default below becomes the one-line cutover install.sh's own header always
+# said was coming. Until then this falls back to raw.githubusercontent exactly as before —
+# nothing here changes behavior for anyone not explicitly opting in via this var.
+BLOB_ORIGIN="${HANDS_BLOB_ORIGIN:-}"
+# HANDS_BASE overrides where the payload comes from outright — an internal mirror, or a local
+# checkout (file:///path/to/hands/plugin/dist) when testing the installer itself. Takes priority
+# over everything below.
+BASE="${HANDS_BASE:-}"
 
 LIB="$PREFIX/lib"
 BIN="$PREFIX/bin"
@@ -50,6 +57,27 @@ fi
 # like bugs in hands rather than a truncated download.
 tmp=$(mktemp -d "${TMPDIR:-/tmp}/hands-install.XXXXXX") || die "could not create a temp dir"
 trap 'rm -rf "$tmp"' EXIT INT TERM
+
+# ── resolve BASE ──────────────────────────────────────────────────────────
+# Priority: HANDS_BASE (explicit override, unconditional) → Blob, if configured, resolving
+# "latest" through installer/latest.json ONCE here (never re-resolved mid-download — everything
+# fetched below comes from one immutable commit tree, so a publish that lands between this line
+# and the last file downloaded can't produce a mixed-version install) → raw.githubusercontent at
+# the pinned ref, same as always.
+if [ -z "$BASE" ] && [ -n "$BLOB_ORIGIN" ]; then
+  if [ "$REF" = "main" ]; then
+    fetch "$BLOB_ORIGIN/installer/latest.json" "$tmp/latest.json" || die "download failed: $BLOB_ORIGIN/installer/latest.json"
+    [ -s "$tmp/latest.json" ] || die "downloaded an empty file: installer/latest.json"
+    blob_commit=$(node -e 'process.stdout.write(JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).commit||"")' "$tmp/latest.json" 2>/dev/null || printf '')
+    [ -n "$blob_commit" ] || die "installer/latest.json has no commit — malformed publish"
+  else
+    blob_commit="$REF"
+  fi
+  BASE="$BLOB_ORIGIN/installer/$blob_commit"
+  REF="$blob_commit"
+elif [ -z "$BASE" ]; then
+  BASE="https://raw.githubusercontent.com/${REPO}/${REF}/plugin/dist"
+fi
 
 say "downloading hands from ${REPO}@${REF}…"
 for f in cli.mjs cli-impl.mjs BUILD.json; do
