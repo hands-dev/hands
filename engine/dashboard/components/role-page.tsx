@@ -7,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { fmtDuration } from "@/lib/format";
 import { ago } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import type { SnapshotAgent, SnapshotMessage } from "../../src/snapshot.js";
@@ -43,6 +44,24 @@ function RoleHeader({ agent, now }: { agent: SnapshotAgent; now: number }) {
       </CardHeader>
     </Card>
   );
+}
+
+/**
+ * Ack/turnaround status — only for outbound, non-broadcast bubbles, the standard read-receipt
+ * convention (you don't ack your own sent message; you see whether the OTHER side acked it).
+ * "Acked" here means the recipient's own hands_receive first drained it — the closest honest
+ * equivalent to a read receipt this bus has (see Store.ackMessages). Unacked grows live for
+ * free: `now` already ticks forward on every SSE push, no separate timer needed.
+ */
+function AckStatus({ message, now }: { message: SnapshotMessage; now: number }) {
+  if (message.ackedAt != null) {
+    return (
+      <span className="text-heard" title={`acked ${new Date(message.ackedAt).toLocaleTimeString()}`}>
+        ✓ {fmtDuration(message.ackedAt - message.at)}
+      </span>
+    );
+  }
+  return <span>awaiting ack · {fmtDuration(Math.max(0, now - message.at))}</span>;
 }
 
 function ChatBubble({
@@ -84,6 +103,11 @@ function ChatBubble({
         </div>
         {message.subject ? <div className="text-sm font-medium">{message.subject}</div> : null}
         <div className="text-sm">{message.body}</div>
+        {outbound && !broadcast ? (
+          <div className="mt-1 flex items-center gap-1 text-xs text-primary-foreground/70">
+            <AckStatus message={message} now={now} />
+          </div>
+        ) : null}
       </div>
     </div>
   );

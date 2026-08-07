@@ -7279,6 +7279,7 @@ var init_store = __esm({
         this.ensureColumn("questions", "outcome_at", "INTEGER");
         this.ensureColumn("agents", "session_name", "TEXT");
         this.ensureColumn("craft_briefs", "ticket_id", "INTEGER");
+        this.ensureColumn("messages", "acked_at", "INTEGER");
       }
       ensureColumn(table, column, ddl) {
         const cols = this.db.prepare(`PRAGMA table_info(${table})`).all();
@@ -7510,6 +7511,22 @@ var init_store = __esm({
         params.push(limit);
         const rows = this.db.prepare(`SELECT * FROM messages ${where} ORDER BY id DESC LIMIT ?`).all(...params);
         return rows.reverse();
+      }
+      /**
+       * Stamp the recipient's read-receipt time — the dashboard's message ack/turnaround metric
+       * (hands: chat bubble checkmark). Called from `hands_receive`'s real-drain path only; a peek
+       * (`mark_read: false`) must never ack. `to_id = ?` makes broadcast-exclusion automatic and
+       * free: a broadcast row has `to_id IS NULL`, which never equality-matches a real agent id in
+       * SQL, so passing a broadcast's id here is a safe no-op rather than something the caller must
+       * filter out itself. `COALESCE` makes this first-drain-wins — a replay of the same batch (e.g.
+       * after a crash) must never push an already-set ack time later.
+       */
+      ackMessages(agentId, messageIds, now = Date.now()) {
+        if (messageIds.length === 0) return;
+        const placeholders = messageIds.map(() => "?").join(",");
+        this.withRetry(
+          () => this.db.prepare(`UPDATE messages SET acked_at = COALESCE(acked_at, ?) WHERE to_id = ? AND id IN (${placeholders})`).run(now, agentId, ...messageIds)
+        );
       }
       /**
        * Upsert this agent's live status (branch/activity/state) and bump both the
@@ -8944,7 +8961,15 @@ function stationIndex(id) {
   return m ? Number.parseInt(m[1], 10) : null;
 }
 function toSnapshotMessage(m) {
-  return { id: m.id, from: m.from_id, to: m.to_id ?? "*", subject: m.subject, body: m.body, at: m.created_at };
+  return {
+    id: m.id,
+    from: m.from_id,
+    to: m.to_id ?? "*",
+    subject: m.subject,
+    body: m.body,
+    at: m.created_at,
+    ackedAt: m.acked_at
+  };
 }
 function activity(raw) {
   if (!raw) return { files: [], ticket: null };
@@ -34720,6 +34745,7 @@ function buildServer(store, agentId, config2) {
       }
       if (markRead && messages.length > 0) {
         store.setCursor(agentId, messages[messages.length - 1].id);
+        store.ackMessages(agentId, messages.map((m) => m.id));
       }
       return asToolResult({
         agent: agentId,

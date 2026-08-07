@@ -204,3 +204,59 @@ describe("wake accounting (wake_log)", () => {
     expect(store.wakeCounts(now).get("station-1")).toMatchObject({ lastHour: 1, last24h: 1 });
   });
 });
+
+describe("message ack/turnaround (dashboard chat-bubble checkmark)", () => {
+  it("a real hands_receive drain (mark_read: true, the default) acks every directed message in the batch", async () => {
+    const expo = await connect("expo");
+    const store = stores[0]!;
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(expo, "hands_send", { to: "station-1", body: "pick up ENG-42" });
+
+    const w1 = await connect("station-1");
+    await call(w1, "hands_receive", { wait_seconds: 0 });
+
+    const [msg] = store.history({ peer: "station-1", limit: 1 });
+    expect(msg?.acked_at).not.toBeNull();
+  });
+
+  it("a peek (mark_read: false) never acks", async () => {
+    const expo = await connect("expo");
+    const store = stores[0]!;
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(expo, "hands_send", { to: "station-1", body: "pick up ENG-42" });
+
+    const w1 = await connect("station-1");
+    await call(w1, "hands_receive", { wait_seconds: 0, mark_read: false });
+
+    const [msg] = store.history({ peer: "station-1", limit: 1 });
+    expect(msg?.acked_at).toBeNull();
+  });
+
+  it("a broadcast is never acked, even once every peer has drained it", async () => {
+    const expo = await connect("expo");
+    const store = stores[0]!;
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(expo, "hands_send", { to: "*", body: "stand down" });
+
+    const w1 = await connect("station-1");
+    await call(w1, "hands_receive", { wait_seconds: 0 });
+
+    const [msg] = store.history({ limit: 1 });
+    expect(msg?.to_id).toBeNull();
+    expect(msg?.acked_at).toBeNull();
+  });
+
+  it("Store.ackMessages: first-drain wins, and a message to a different agent is never touched", () => {
+    const store = new Store({ env });
+    stores.push(store);
+    const mine = store.insertMessage({ from: "expo", to: "station-1", body: "for station-1" });
+    const theirs = store.insertMessage({ from: "expo", to: "station-2", body: "for station-2" });
+
+    store.ackMessages("station-1", [mine, theirs], 1000);
+    expect(store.history({ limit: 10 }).find((m) => m.id === mine)?.acked_at).toBe(1000);
+    expect(store.history({ limit: 10 }).find((m) => m.id === theirs)?.acked_at).toBeNull();
+
+    store.ackMessages("station-1", [mine], 2000); // a later "re-drain" must not push the time later
+    expect(store.history({ limit: 10 }).find((m) => m.id === mine)?.acked_at).toBe(1000);
+  });
+});

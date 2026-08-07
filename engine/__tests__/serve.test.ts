@@ -155,13 +155,29 @@ describe("serve", () => {
     const res = await get(`${handle.url}api/state`);
     const payload = JSON.parse(res.body) as {
       contextUsage: Record<string, Array<{ inputTokens: number }>>;
-      agentMessages: Record<string, Array<{ from: string; to: string; body: string }>>;
+      agentMessages: Record<string, Array<{ from: string; to: string; body: string; ackedAt: number | null }>>;
     };
 
     expect(payload.contextUsage["station-1"]).toEqual([{ inputTokens: 100, cacheReadTokens: 10, cacheCreationTokens: 0, at: expect.any(Number) }]);
     const station1Messages = payload.agentMessages["station-1"] ?? [];
     expect(station1Messages).toHaveLength(2);
     expect(station1Messages.map((m) => m.body).sort()).toEqual(["done", "go"]);
+    expect(station1Messages.every((m) => m.ackedAt === null)).toBe(true);
+  });
+
+  it("agentMessages surfaces ackedAt once a message has been acked", async () => {
+    const store = new Store({ env });
+    store.setStatus({ id: "station-1", cwd: "/w1", pid: 1, branch: "b1", now: Date.now() });
+    const id = store.insertMessage({ from: "expo", to: "station-1", body: "go" });
+    store.ackMessages("station-1", [id], 1234);
+    store.close();
+
+    handle = await serve({ port: 0, env });
+    const res = await get(`${handle.url}api/state`);
+    const payload = JSON.parse(res.body) as {
+      agentMessages: Record<string, Array<{ body: string; ackedAt: number | null }>>;
+    };
+    expect(payload.agentMessages["station-1"]?.[0]).toMatchObject({ body: "go", ackedAt: 1234 });
   });
 
   it("SSE: initial frame on connect, a frame per store change, none from time alone", async () => {
