@@ -4,7 +4,6 @@
   },
   "topology": "strict-hub",
   "stations": {
-    "model": "sonnet",
     "overrides": {},
     "allowScaling": true
   },

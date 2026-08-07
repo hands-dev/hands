@@ -8736,7 +8736,7 @@ function merge2(base, layer) {
       basename: expoLayer?.basename !== void 0 ? expoLayer.basename : base.expo.basename
     },
     stations: {
-      model: stationsLayer?.model ?? base.stations.model,
+      model: stationsLayer?.model !== void 0 ? stationsLayer.model : base.stations.model,
       overrides,
       worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
       baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
@@ -8808,7 +8808,7 @@ var init_config = __esm({
       topology: "strict-hub",
       expo: { basename: null },
       stations: {
-        model: "sonnet",
+        model: null,
         overrides: {},
         worktreeRoot: null,
         baseBranch: null,
@@ -9490,18 +9490,23 @@ function branchExists(cwd, branch) {
 function launchSkill(mode) {
   return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
 }
-function launchCommand(target, mode = "station") {
-  const skill = launchSkill(mode);
-  const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
-  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
+function launchArgs(target, mode, opts) {
+  const args = [];
+  if (target.model) args.push("--model", target.model);
+  if (!opts?.withoutBypass) args.push("--dangerously-skip-permissions");
+  args.push(launchSkill(mode));
+  return args;
+}
+function launchCommand(target, mode = "station", opts) {
+  const args = launchArgs(target, mode, opts);
+  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude ${args.map(shellQuote).join(" ")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
 }
 function launch(plan, env = process.env, launchMode = "station", opts) {
   if (!opts?.exec || !process.stdin.isTTY) return { launcher: "manual", launched: false };
-  const args = [...plan.model ? ["--model", plan.model] : [], launchSkill(launchMode)];
-  const res = spawnSync("claude", args, {
+  const res = spawnSync("claude", launchArgs(plan, launchMode, opts), {
     cwd: plan.dir,
     stdio: "inherit",
     env: { ...env, HANDS_ID: plan.id }
@@ -9547,13 +9552,13 @@ function addStations(count, opts) {
       sessionName = assignment.sessionName;
     }
     materializeCraftAgents(cfg, dir, opts?.env, cwd);
-    const res = launch({ id, dir, model }, opts?.env);
+    const res = launch({ id, dir, model }, opts?.env, "station", { withoutBypass: opts?.withoutBypass });
     plans.push({
       id,
       dir,
       branch,
       model,
-      command: launchCommand({ id, dir, model }),
+      command: launchCommand({ id, dir, model }, "station", { withoutBypass: opts?.withoutBypass }),
       launcher: res.launcher,
       launched: res.launched,
       ...themeColor ? { themeColor } : {},

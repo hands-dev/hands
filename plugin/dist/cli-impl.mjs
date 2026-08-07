@@ -186,7 +186,7 @@ function merge(base, layer) {
       basename: expoLayer?.basename !== void 0 ? expoLayer.basename : base.expo.basename
     },
     stations: {
-      model: stationsLayer?.model ?? base.stations.model,
+      model: stationsLayer?.model !== void 0 ? stationsLayer.model : base.stations.model,
       overrides,
       worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
       baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
@@ -258,7 +258,7 @@ var init_config = __esm({
       topology: "strict-hub",
       expo: { basename: null },
       stations: {
-        model: "sonnet",
+        model: null,
         overrides: {},
         worktreeRoot: null,
         baseBranch: null,
@@ -23976,18 +23976,23 @@ function branchExists(cwd, branch) {
 function launchSkill(mode) {
   return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
 }
-function launchCommand(target, mode = "station") {
-  const skill = launchSkill(mode);
-  const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
-  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
+function launchArgs(target, mode, opts) {
+  const args = [];
+  if (target.model) args.push("--model", target.model);
+  if (!opts?.withoutBypass) args.push("--dangerously-skip-permissions");
+  args.push(launchSkill(mode));
+  return args;
+}
+function launchCommand(target, mode = "station", opts) {
+  const args = launchArgs(target, mode, opts);
+  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude ${args.map(shellQuote).join(" ")}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
 }
 function launch(plan, env = process.env, launchMode = "station", opts) {
   if (!opts?.exec || !process.stdin.isTTY) return { launcher: "manual", launched: false };
-  const args = [...plan.model ? ["--model", plan.model] : [], launchSkill(launchMode)];
-  const res = spawnSync("claude", args, {
+  const res = spawnSync("claude", launchArgs(plan, launchMode, opts), {
     cwd: plan.dir,
     stdio: "inherit",
     env: { ...env, HANDS_ID: plan.id }
@@ -24033,13 +24038,13 @@ function addStations(count, opts) {
       sessionName = assignment.sessionName;
     }
     materializeCraftAgents(cfg, dir, opts?.env, cwd);
-    const res = launch({ id, dir, model }, opts?.env);
+    const res = launch({ id, dir, model }, opts?.env, "station", { withoutBypass: opts?.withoutBypass });
     plans.push({
       id,
       dir,
       branch,
       model,
-      command: launchCommand({ id, dir, model }),
+      command: launchCommand({ id, dir, model }, "station", { withoutBypass: opts?.withoutBypass }),
       launcher: res.launcher,
       launched: res.launched,
       ...themeColor ? { themeColor } : {},
@@ -51552,10 +51557,11 @@ function intOpt(argv, name, fallback) {
 }
 function reportPlans(plans) {
   for (const p of plans) {
+    const model = p.model ?? "default model";
     if (p.launched) {
-      out2(`\u2714 ${p.id} up (${p.model}, via ${p.launcher})`);
+      out2(`\u2714 ${p.id} up (${model}, via ${p.launcher})`);
     } else {
-      out2(`\u25CF ${p.id} provisioned (${p.model}) \u2014 start it by pasting into a new terminal:`);
+      out2(`\u25CF ${p.id} provisioned (${model}) \u2014 start it by pasting into a new terminal:`);
       out2(`    ${p.command}`);
     }
     if (p.sessionName) out2(`    theme: ${p.sessionName}`);
@@ -51575,7 +51581,7 @@ function cmdStation(argv) {
   const sub = argv[0];
   if (sub === "add") {
     const n = intOpt(argv, "-n", 1);
-    const plans = addStations(n);
+    const plans = addStations(n, { withoutBypass: flag(argv, "--without-bypass") });
     if (plans.length === 0) out2("nothing to add");
     persistSessionNames(plans);
     reportPlans(plans);
@@ -52092,17 +52098,20 @@ function cmdLogs(argv) {
 function cmdRestart(argv) {
   const { repoRoot, id, dir } = requireStation(argv, "restart");
   const cfg = loadConfig({ cwd: repoRoot });
+  const withoutBypass = flag(argv, "--without-bypass");
   const seeded = seedStationPermissions(dir);
   if (seeded.written) out2(`  seeded missing permission allowlist`);
   const synced = materializeCraftAgents(cfg, dir, process.env, repoRoot);
   if (synced.written.length > 0) out2(`  synced ${synced.written.length} craft(s)`);
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
-  const res = launch({ id, dir, model }, process.env, "station", { exec: true });
+  const res = launch({ id, dir, model }, process.env, "station", { exec: true, withoutBypass });
   if (res.launched) process.exit(res.exitCode ?? 0);
-  out2(`no terminal to attach \u2014 paste this into one:
+  out2(
+    `no terminal to attach \u2014 paste this into one:
 
-  ${launchCommand({ id, dir, model }, "station")}
-`);
+  ${launchCommand({ id, dir, model }, "station", { withoutBypass })}
+`
+  );
 }
 function cmdAttach(argv) {
   const { repoRoot, id, dir } = requireStation(argv, "attach");
@@ -52112,8 +52121,9 @@ function cmdAttach(argv) {
   if (!sessionId) {
     fail(`no Claude Code session found for ${id} \u2014 it has never taken a turn (transcripts checked at ${transcriptDir(dir)})`);
   }
-  out2(`attaching to ${id} \u2014 resuming ${sessionId} (${model})`);
-  const res = spawnSync2("claude", ["--model", model, "--resume", sessionId], {
+  out2(`attaching to ${id} \u2014 resuming ${sessionId}${model ? ` (${model})` : ""}`);
+  const args = model ? ["--model", model, "--resume", sessionId] : ["--resume", sessionId];
+  const res = spawnSync2("claude", args, {
     cwd: dir,
     stdio: "inherit",
     env: { ...process.env, HANDS_ID: id }
@@ -52292,16 +52302,16 @@ function cmdDoctor(argv) {
   }
   if (report.worst === "fail") process.exit(1);
 }
-function launchAt(dir, mode, id, model) {
+function launchAt(dir, mode, id, model, opts) {
   out2(`${id} \u2192 ${dir}`);
-  const res = launch({ id, dir, model }, process.env, mode, { exec: true });
+  const res = launch({ id, dir, model }, process.env, mode, { exec: true, ...opts });
   if (res.launched) process.exit(res.exitCode ?? 0);
   out2(`no terminal to attach \u2014 paste this into one:
 
-  ${launchCommand({ id, dir, model }, mode)}
+  ${launchCommand({ id, dir, model }, mode, opts)}
 `);
 }
-function launchStation(repoRoot, stationId) {
+function launchStation(repoRoot, stationId, opts) {
   const cfg = loadConfig({ cwd: repoRoot });
   const stations = listStations(repoRoot, cfg);
   const match = stations.find((s) => s.id === stationId);
@@ -52310,30 +52320,31 @@ function launchStation(repoRoot, stationId) {
     fail(`no ${stationId} in ${repoRoot} \u2014 stations: ${known}`);
   }
   if (!match.present) fail(`${stationId}'s worktree is missing (${match.dir}) \u2014 re-open it with \`hands station add\``);
-  launchStationSeat(repoRoot, match.id, match.dir, cfg);
+  launchStationSeat(repoRoot, match.id, match.dir, cfg, opts);
 }
-function launchStationSeat(_repoRoot, id, dir, cfg) {
+function launchStationSeat(_repoRoot, id, dir, cfg, opts) {
   seedStationPermissions(dir);
-  launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model);
+  launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model, opts);
 }
 function tryLaunch(cmd, rest) {
+  const opts = { withoutBypass: flag(rest, "--without-bypass") };
   if (!cmd) {
     const info = repoInfo(process.cwd());
     if (!info || !fs28.existsSync(path27.join(info.repoRoot, CONFIG_BASENAME))) return false;
-    launchAt(info.repoRoot, "expo", "expo");
+    launchAt(info.repoRoot, "expo", "expo", void 0, opts);
     return true;
   }
   if (STATION_ID2.test(cmd)) {
     const info = repoInfo(process.cwd());
     if (!info) fail(`not inside a git repo \u2014 use \`hands <project> ${cmd}\``);
-    launchStation(info.repoRoot, cmd);
+    launchStation(info.repoRoot, cmd, opts);
     return true;
   }
   const project = resolveProject2(cmd);
   if (!project) return false;
   const seat = rest[0];
-  if (seat && STATION_ID2.test(seat)) launchStation(project.repoRoot, seat);
-  else launchAt(project.repoRoot, "expo", "expo");
+  if (seat && STATION_ID2.test(seat)) launchStation(project.repoRoot, seat, opts);
+  else launchAt(project.repoRoot, "expo", "expo", void 0, opts);
   return true;
 }
 function cmdGo(argv) {

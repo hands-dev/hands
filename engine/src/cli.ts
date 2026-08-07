@@ -3,7 +3,7 @@
  * hands CLI — launcher + provisioning + setup. The user thinks in stations:
  *
  *   hands [<project>]         open the pass (expo) here, or in a registered kitchen
- *   hands [<project>] station-N  open a station's seat
+ *   hands [<project>] station-N  open a station's seat [--without-bypass]
  *   hands go <project> [...]  explicit form (scripts / names that collide with subcommands)
  *   hands register [path]     enroll a kitchen so it resolves by name
  *   hands init                per-repo config scaffold
@@ -20,7 +20,7 @@
  *   hands craft fold <s>       acquire the fold lease, print pending notes to distill (this also
  *                              catches up any mise notes that missed their immediate write)
  *   hands craft fold-done <s>  release the lease, mark notes folded (--through <noteId>)
- *   hands station add [-n N]   open N stations (worktree hidden inside)
+ *   hands station add [-n N] [--without-bypass]  open N stations (worktree hidden inside)
  *   hands station ls           list this repo's stations
  *   hands station rm <id>      retire a station (idempotent; --force discards)
  *   hands attach <station-N>  resume a station's own Claude Code session in this terminal
@@ -128,10 +128,11 @@ function intOpt(argv: string[], name: string, fallback: number): number {
 
 function reportPlans(plans: LaunchPlan[]): void {
   for (const p of plans) {
+    const model = p.model ?? "default model";
     if (p.launched) {
-      out(`✔ ${p.id} up (${p.model}, via ${p.launcher})`);
+      out(`✔ ${p.id} up (${model}, via ${p.launcher})`);
     } else {
-      out(`● ${p.id} provisioned (${p.model}) — start it by pasting into a new terminal:`);
+      out(`● ${p.id} provisioned (${model}) — start it by pasting into a new terminal:`);
       out(`    ${p.command}`);
     }
     if (p.sessionName) out(`    theme: ${p.sessionName}`);
@@ -159,7 +160,7 @@ function cmdStation(argv: string[]): void {
   const sub = argv[0];
   if (sub === "add") {
     const n = intOpt(argv, "-n", 1);
-    const plans = addStations(n);
+    const plans = addStations(n, { withoutBypass: flag(argv, "--without-bypass") });
     if (plans.length === 0) out("nothing to add");
     persistSessionNames(plans);
     reportPlans(plans);
@@ -799,10 +800,11 @@ function cmdLogs(argv: string[]): void {
   }
 }
 
-/** `hands restart [<project>] <station-N>` — recycle a wedged seat. */
+/** `hands restart [<project>] <station-N> [--without-bypass]` — recycle a wedged seat. */
 function cmdRestart(argv: string[]): void {
   const { repoRoot, id, dir } = requireStation(argv, "restart");
   const cfg = loadConfig({ cwd: repoRoot });
+  const withoutBypass = flag(argv, "--without-bypass");
   // Re-seed on the way through: a seat opened before seeding existed, or one
   // whose settings were removed, would otherwise come back up just as stuck.
   const seeded = seedStationPermissions(dir);
@@ -814,9 +816,11 @@ function cmdRestart(argv: string[]): void {
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
   // A restart is just a fresh launch in this terminal — there is no pane to
   // respawn into, because hands does not own one.
-  const res = launch({ id, dir, model }, process.env, "station", { exec: true });
+  const res = launch({ id, dir, model }, process.env, "station", { exec: true, withoutBypass });
   if (res.launched) process.exit(res.exitCode ?? 0);
-  out(`no terminal to attach — paste this into one:\n\n  ${launchCommand({ id, dir, model }, "station")}\n`);
+  out(
+    `no terminal to attach — paste this into one:\n\n  ${launchCommand({ id, dir, model }, "station", { withoutBypass })}\n`,
+  );
 }
 
 /**
@@ -833,10 +837,11 @@ function cmdAttach(argv: string[]): void {
   if (!sessionId) {
     fail(`no Claude Code session found for ${id} — it has never taken a turn (transcripts checked at ${transcriptDir(dir)})`);
   }
-  out(`attaching to ${id} — resuming ${sessionId} (${model})`);
+  out(`attaching to ${id} — resuming ${sessionId}${model ? ` (${model})` : ""}`);
   // stdio: "inherit" hands the current terminal straight to the resumed
   // session — this command's whole point is putting a human back in the seat.
-  const res = spawnSync("claude", ["--model", model, "--resume", sessionId], {
+  const args = model ? ["--model", model, "--resume", sessionId] : ["--resume", sessionId];
+  const res = spawnSync("claude", args, {
     cwd: dir,
     stdio: "inherit",
     env: { ...process.env, HANDS_ID: id },
@@ -1093,19 +1098,25 @@ function cmdDoctor(argv: string[]): void {
  * inherits the principal's own default (there is no expo model config, and
  * choosing one for them would silently downgrade the pass).
  */
-function launchAt(dir: string, mode: "expo" | "station", id: string, model?: string): void {
+function launchAt(
+  dir: string,
+  mode: "expo" | "station",
+  id: string,
+  model?: string | null,
+  opts?: { withoutBypass?: boolean },
+): void {
   out(`${id} → ${dir}`);
   // Hand this terminal straight to the session. Blocks until it exits, and
   // exits with its status — opening a seat IS running it, not scheduling it.
-  const res = launch({ id, dir, model }, process.env, mode, { exec: true });
+  const res = launch({ id, dir, model }, process.env, mode, { exec: true, ...opts });
   if (res.launched) process.exit(res.exitCode ?? 0);
   // No TTY to hand over (piped stdin, a script): print the exact command
   // instead of failing. The only remaining non-exec path for a single seat.
-  out(`no terminal to attach — paste this into one:\n\n  ${launchCommand({ id, dir, model }, mode)}\n`);
+  out(`no terminal to attach — paste this into one:\n\n  ${launchCommand({ id, dir, model }, mode, opts)}\n`);
 }
 
 /** Open a station seat by id within `repoRoot`, or fail naming what exists. */
-function launchStation(repoRoot: string, stationId: string): void {
+function launchStation(repoRoot: string, stationId: string, opts?: { withoutBypass?: boolean }): void {
   const cfg = loadConfig({ cwd: repoRoot });
   const stations = listStations(repoRoot, cfg);
   const match = stations.find((s) => s.id === stationId);
@@ -1114,7 +1125,7 @@ function launchStation(repoRoot: string, stationId: string): void {
     fail(`no ${stationId} in ${repoRoot} — stations: ${known}`);
   }
   if (!match.present) fail(`${stationId}'s worktree is missing (${match.dir}) — re-open it with \`hands station add\``);
-  launchStationSeat(repoRoot, match.id, match.dir, cfg);
+  launchStationSeat(repoRoot, match.id, match.dir, cfg, opts);
 }
 
 function launchStationSeat(
@@ -1122,11 +1133,12 @@ function launchStationSeat(
   id: string,
   dir: string,
   cfg: ReturnType<typeof loadConfig>,
+  opts?: { withoutBypass?: boolean },
 ): void {
   // Seed here too, not just at `station add`: a seat opened by hand, or one
   // created before seeding existed, would otherwise still stall on prompts.
   seedStationPermissions(dir);
-  launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model);
+  launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model, opts);
 }
 
 /**
@@ -1135,11 +1147,13 @@ function launchStationSeat(
  * usage rather than this swallowing every typo.
  */
 function tryLaunch(cmd: string | undefined, rest: string[]): boolean {
+  const opts = { withoutBypass: flag(rest, "--without-bypass") };
+
   // `hands` bare → the pass, here.
   if (!cmd) {
     const info = repoInfo(process.cwd());
     if (!info || !fs.existsSync(path.join(info.repoRoot, CONFIG_BASENAME))) return false;
-    launchAt(info.repoRoot, "expo", "expo");
+    launchAt(info.repoRoot, "expo", "expo", undefined, opts);
     return true;
   }
 
@@ -1147,7 +1161,7 @@ function tryLaunch(cmd: string | undefined, rest: string[]): boolean {
   if (STATION_ID.test(cmd)) {
     const info = repoInfo(process.cwd());
     if (!info) fail(`not inside a git repo — use \`hands <project> ${cmd}\``);
-    launchStation(info.repoRoot, cmd);
+    launchStation(info.repoRoot, cmd, opts);
     return true;
   }
 
@@ -1155,8 +1169,8 @@ function tryLaunch(cmd: string | undefined, rest: string[]): boolean {
   const project = resolveProject(cmd);
   if (!project) return false;
   const seat = rest[0];
-  if (seat && STATION_ID.test(seat)) launchStation(project.repoRoot, seat);
-  else launchAt(project.repoRoot, "expo", "expo");
+  if (seat && STATION_ID.test(seat)) launchStation(project.repoRoot, seat, opts);
+  else launchAt(project.repoRoot, "expo", "expo", undefined, opts);
   return true;
 }
 
