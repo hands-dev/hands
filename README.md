@@ -250,7 +250,6 @@ Scaffold it with `hands init`; attach the books to an existing config with
   "stations": {
     "model": "sonnet",                         // default tier
     "overrides": { "station-4": "opus" },      // per-station tier
-    "launcher": "auto",                        // auto | tmux | iterm | manual
     "worktreeRoot": null,                      // null = ~/.hands/worktrees/<slug>
     "baseBranch": null,                        // null = current HEAD of the main checkout
     "allowScaling": true,                      // may the expo open/close stations itself

@@ -14,7 +14,7 @@ let env: NodeJS.ProcessEnv;
 const CONFIG = {
   principal: { name: "Michael" },
   topology: "strict-hub",
-  stations: { model: "sonnet", overrides: {}, launcher: "manual", allowScaling: true },
+  stations: { model: "sonnet", overrides: {}, allowScaling: true },
   merge: { adminMergeLowRisk: false },
   gh: { poll: false },
   remote: { url: "", handle: "demo", project: "demo" },

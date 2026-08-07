@@ -6,7 +6,6 @@
   "stations": {
     "model": "sonnet",
     "overrides": {},
-    "launcher": "auto",
     "allowScaling": true
   },
   "merge": {

@@ -115,7 +115,7 @@ describe("loadConfig", () => {
       expect(cfg.stations.model).toBe("opus"); // user layer
       expect(cfg.topology).toBe("open"); // repo layer
       expect(cfg.stations.overrides).toEqual({ "station-2": "haiku" }); // repo layer
-      expect(cfg.stations.launcher).toBe("auto"); // default
+      expect(cfg.stations.theming).toBe(true); // default
     } finally {
       fs.rmSync(path.join(repoA, "hands.config.json"), { force: true });
     }

@@ -188,7 +188,6 @@ function merge(base, layer) {
     stations: {
       model: stationsLayer?.model ?? base.stations.model,
       overrides,
-      launcher: stationsLayer?.launcher ?? base.stations.launcher,
       worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
       baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
       allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling,
@@ -261,7 +260,6 @@ var init_config = __esm({
       stations: {
         model: "sonnet",
         overrides: {},
-        launcher: "auto",
         worktreeRoot: null,
         baseBranch: null,
         allowScaling: true,
@@ -23901,13 +23899,14 @@ __export(provision_exports, {
   addStations: () => addStations,
   launch: () => launch,
   launchCommand: () => launchCommand,
+  launchSkill: () => launchSkill,
   listStations: () => listStations,
   removeStation: () => removeStation,
   scaleStations: () => scaleStations,
   stationBranch: () => stationBranch,
   stationRoot: () => stationRoot
 });
-import { execFileSync as execFileSync6, spawn } from "node:child_process";
+import { execFileSync as execFileSync6, spawnSync } from "node:child_process";
 import * as fs13 from "node:fs";
 import * as os7 from "node:os";
 import * as path13 from "node:path";
@@ -23974,59 +23973,26 @@ function branchExists(cwd, branch) {
     return false;
   }
 }
+function launchSkill(mode) {
+  return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+}
 function launchCommand(target, mode = "station") {
-  const skill = mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  const skill = launchSkill(mode);
   const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
   return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
 }
-function tmuxAvailable() {
-  try {
-    execFileSync6("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function launch(plan, launcher, env = process.env, launchMode = "station") {
-  const command = launchCommand(plan, launchMode);
-  const mode = launcher === "auto" ? env.TMUX || tmuxAvailable() ? "tmux" : "manual" : launcher;
-  if (mode === "tmux") {
-    try {
-      if (env.TMUX) {
-        execFileSync6("tmux", ["new-window", "-d", "-n", plan.id, command], {
-          stdio: "ignore",
-          timeout: 1e4
-        });
-      } else {
-        execFileSync6(
-          "tmux",
-          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
-          { stdio: "ignore", timeout: 1e4 }
-        );
-      }
-      return { launcher: "tmux", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  if (mode === "iterm") {
-    const script = `tell application "iTerm"
-  activate
-  set newWindow to (create window with default profile)
-  tell current session of newWindow to write text ${JSON.stringify(command)}
-end tell`;
-    try {
-      const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
-      child.unref();
-      return { launcher: "iterm", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  return { launcher: "manual", launched: false };
+function launch(plan, env = process.env, launchMode = "station", opts) {
+  if (!opts?.exec || !process.stdin.isTTY) return { launcher: "manual", launched: false };
+  const args = [...plan.model ? ["--model", plan.model] : [], launchSkill(launchMode)];
+  const res = spawnSync("claude", args, {
+    cwd: plan.dir,
+    stdio: "inherit",
+    env: { ...env, HANDS_ID: plan.id }
+  });
+  return { launcher: "exec", launched: true, exitCode: res.status ?? 1 };
 }
 function addStations(count, opts) {
   const cwd = opts?.cwd ?? process.cwd();
@@ -24067,7 +24033,7 @@ function addStations(count, opts) {
       sessionName = assignment.sessionName;
     }
     materializeCraftAgents(cfg, dir, opts?.env, cwd);
-    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
+    const res = launch({ id, dir, model }, opts?.env);
     plans.push({
       id,
       dir,
@@ -24100,10 +24066,6 @@ function removeStation(id, opts) {
   }
   try {
     execFileSync6("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
-  }
-  try {
-    execFileSync6("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
   } catch {
   }
   let removed = false;
@@ -39385,7 +39347,7 @@ __export(login_exports, {
   waitForOAuthCallback: () => waitForOAuthCallback
 });
 import { createServer as createServer2 } from "node:http";
-import { spawn as spawn2 } from "node:child_process";
+import { spawn } from "node:child_process";
 function resolveServerUrl(env) {
   return env.HANDS_LOGIN_SERVER_URL?.trim() || DEFAULT_MCP_SERVER_URL;
 }
@@ -39433,7 +39395,7 @@ function waitForOAuthCallback(port) {
 async function defaultOpenUrl(url2) {
   if (process.platform !== "darwin") return;
   try {
-    spawn2("open", [url2], { detached: true, stdio: "ignore" }).unref();
+    spawn("open", [url2], { detached: true, stdio: "ignore" }).unref();
   } catch {
   }
 }
@@ -39665,7 +39627,6 @@ async function runInit(argv) {
           stations: {
             model: "sonnet",
             overrides: {},
-            launcher: "auto",
             allowScaling: true
           },
           merge: { adminMergeLowRisk: false },
@@ -39707,7 +39668,7 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import { execFileSync as execFileSync13, spawnSync } from "node:child_process";
+import { execFileSync as execFileSync13, spawnSync as spawnSync2 } from "node:child_process";
 import * as os15 from "node:os";
 
 // src/server.ts
@@ -50866,9 +50827,9 @@ async function main() {
 (Ctrl-C to stop)
 `);
     if (!process.argv.includes("--no-open") && process.platform === "darwin") {
-      const { spawn: spawn3 } = await import("node:child_process");
+      const { spawn: spawn2 } = await import("node:child_process");
       try {
-        spawn3("open", [handle.url], { detached: true, stdio: "ignore" }).unref();
+        spawn2("open", [handle.url], { detached: true, stdio: "ignore" }).unref();
       } catch {
       }
     }
@@ -52136,21 +52097,11 @@ function cmdRestart(argv) {
   const synced = materializeCraftAgents(cfg, dir, process.env, repoRoot);
   if (synced.written.length > 0) out2(`  synced ${synced.written.length} craft(s)`);
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
-  const command = launchCommand({ id, dir, model }, "station");
-  try {
-    execFileSync13("tmux", ["respawn-pane", "-k", "-t", id, command], {
-      stdio: "ignore",
-      timeout: 1e4
-    });
-    out2(`\u2714 ${id} restarted in its existing pane`);
-    return;
-  } catch {
-  }
-  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, "station");
-  if (res.launched) out2(`\u2714 ${id} relaunched (${res.launcher})`);
-  else out2(`launcher unavailable \u2014 paste this into a terminal:
+  const res = launch({ id, dir, model }, process.env, "station", { exec: true });
+  if (res.launched) process.exit(res.exitCode ?? 0);
+  out2(`no terminal to attach \u2014 paste this into one:
 
-  ${command}
+  ${launchCommand({ id, dir, model }, "station")}
 `);
 }
 function cmdAttach(argv) {
@@ -52162,7 +52113,7 @@ function cmdAttach(argv) {
     fail(`no Claude Code session found for ${id} \u2014 it has never taken a turn (transcripts checked at ${transcriptDir(dir)})`);
   }
   out2(`attaching to ${id} \u2014 resuming ${sessionId} (${model})`);
-  const res = spawnSync("claude", ["--model", model, "--resume", sessionId], {
+  const res = spawnSync2("claude", ["--model", model, "--resume", sessionId], {
     cwd: dir,
     stdio: "inherit",
     env: { ...process.env, HANDS_ID: id }
@@ -52342,13 +52293,10 @@ function cmdDoctor(argv) {
   if (report.worst === "fail") process.exit(1);
 }
 function launchAt(dir, mode, id, model) {
-  const cfg = loadConfig({ cwd: dir });
-  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, mode);
-  if (res.launched) {
-    out2(`\u2714 ${id} \u2192 ${dir} (${res.launcher})`);
-    return;
-  }
-  out2(`launcher unavailable \u2014 paste this into a terminal:
+  out2(`${id} \u2192 ${dir}`);
+  const res = launch({ id, dir, model }, process.env, mode, { exec: true });
+  if (res.launched) process.exit(res.exitCode ?? 0);
+  out2(`no terminal to attach \u2014 paste this into one:
 
   ${launchCommand({ id, dir, model }, mode)}
 `);

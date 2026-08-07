@@ -29,8 +29,6 @@ export interface HandsConfig {
     model: string;
     /** per-station tier overrides, keyed by canonical id ("station-4": "opus") */
     overrides: Record<string, string>;
-    /** terminal launcher for provisioned stations */
-    launcher: "auto" | "tmux" | "iterm" | "manual";
     /** where managed station worktrees live (null = ~/.hands/worktrees/<slug>) */
     worktreeRoot: string | null;
     /** branch new station worktrees fork from (null = repo default branch) */
@@ -124,7 +122,6 @@ export const DEFAULT_CONFIG: HandsConfig = {
   stations: {
     model: "sonnet",
     overrides: {},
-    launcher: "auto",
     worktreeRoot: null,
     baseBranch: null,
     allowScaling: true,
@@ -175,7 +172,6 @@ function merge(base: HandsConfig, layer: DeepPartial<HandsConfig> | null): Hands
     stations: {
       model: stationsLayer?.model ?? base.stations.model,
       overrides,
-      launcher: stationsLayer?.launcher ?? base.stations.launcher,
       worktreeRoot:
         stationsLayer?.worktreeRoot !== undefined ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
       baseBranch:
