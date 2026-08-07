@@ -2,6 +2,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resetConfigCache } from "../src/config.js";
+import { resetRepoInfoCache } from "../src/paths.js";
+import { craftFiles } from "../src/remote.js";
 import { runSubagentStop } from "../src/subagent-stop.js";
 import { Store } from "../src/store.js";
 
@@ -11,8 +14,14 @@ let env: NodeJS.ProcessEnv;
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "hands-subagent-"));
   env = { HANDS_HOME: root };
+  resetConfigCache();
+  resetRepoInfoCache();
 });
-afterEach(() => fs.rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  fs.rmSync(root, { recursive: true, force: true });
+  resetConfigCache();
+  resetRepoInfoCache();
+});
 
 function assistantLine(id: string, out: number): string {
   return `${JSON.stringify({ type: "assistant", message: { id, usage: { output_tokens: out } } })}\n`;
@@ -90,12 +99,23 @@ describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
     ].join("\n");
     fs.writeFileSync(transcript, assistantTextLine(note));
 
-    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 7000 });
+    const craftEnv = { ...env, HANDS_NO_REPO_CONFIG: "1" };
+    const result = runSubagentStop(store, {
+      ownerAgentId: "station-1",
+      agentTranscriptPath: transcript,
+      now: 7000,
+      env: craftEnv,
+      cwd: root,
+    });
 
     expect(result.craftNote).toEqual({ craftSlug: "ordering-api", briefId, entriesHarvested: 2 });
+    // mise applies itself immediately (hands#118) — only the book note is still pending.
     const pending = store.pendingCraftNotes("ordering-api");
-    expect(pending).toHaveLength(2);
-    expect(pending.map((n) => n.kind)).toEqual(["mise", "book"]);
+    expect(pending).toHaveLength(1);
+    expect(pending.map((n) => n.kind)).toEqual(["book"]);
+    const files = craftFiles("ordering-api", craftEnv, root);
+    expect(fs.readFileSync(files.mise, "utf8")).toContain("engine/src/orders/validate.ts — moved here");
+    expect(fs.readFileSync(files.book, "utf8")).toContain("[book] menu validation runs before auth");
     expect(store.getCraftBrief(briefId)?.noted_at).toBe(7000);
     store.close();
   });
@@ -113,7 +133,13 @@ describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
     ].join("\n");
     fs.writeFileSync(transcript, assistantTextLine(note));
 
-    runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 8000 });
+    runSubagentStop(store, {
+      ownerAgentId: "station-1",
+      agentTranscriptPath: transcript,
+      now: 8000,
+      env: { ...env, HANDS_NO_REPO_CONFIG: "1" },
+      cwd: root,
+    });
 
     expect(store.pendingCraftNotes("ordering-api")).toHaveLength(0);
     const spilled = store.pendingCraftNotes("db-caching");

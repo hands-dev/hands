@@ -109,8 +109,7 @@ chatty behavior is visible.
    for now — that's the whole menu; execute-mode craft dispatch isn't wired up yet.
 6. **Set your lane label.** `hands_focus({ focus: "<short label>" })` — what you're currently on
    ("auth migration", "ENG-1476"), shown on the board/rail. This is NOT a craft assignment; you
-   hold no craft. If you're the default fold-owner for a craft (see below), setting focus to that
-   craft's slug is a reasonable label too.
+   hold no craft.
 7. **Yield.** The Monitor wakes you on the next inbound — you do not poll. On a **fully idle** wake
    (empty inbox, no in-flight ticket), run the compaction check below when picking the next
    heartbeat prompt.
@@ -123,18 +122,11 @@ deployed into sub-agents for one ticket-slice at a time, not held by a station f
 `hands craft brief`/`mise` above for dispatch. A craft sub-agent picks up its own files and, before
 it returns, emits a ` ```craft-note ` block with anything it learned that differs from what it was
 told — that block is harvested automatically (whether or not you ever read the sub-agent's
-return), so you don't need to do anything with a craft's knowledge yourself beyond dispatching it.
-
-**Folding — only if you're a craft's default owner** (your `focus` is set to that craft's slug).
-On a fully idle wake, if `hands craft ls` shows pending notes for your craft: `hands craft fold
-<slug>` acquires the single-writer lease and returns the current book/mise/skill plus every
-pending note. Rewrite the files **in place** (Edit/Write) — never append — applying the placement
-rule (a path or command is mise; a sequence of steps is skill; a decision/fact/why is book) and
-discarding notes that merely restate what's already there. Then `hands craft fold-done <slug>
---through <noteId>` with the same id `hands craft fold` returned.
-
-Nobody's default owner for a craft? Its notes just wait — `hands doctor` flags a growing or aging
-backlog; not your job to chase it yourself.
+return) and applied to the craft's actual files right away: mise entries mechanically (a
+key-value upsert, no judgment needed), book/skill entries into a durable, clearly-marked raw-notes
+section. You don't need to do anything with a craft's knowledge yourself beyond dispatching it —
+weaving the raw section into curated prose is `/hands:last-call`'s job at end of shift, not
+yours mid-day.
 
 ## Wake signal, heartbeat & compaction
 

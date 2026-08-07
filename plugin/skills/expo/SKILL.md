@@ -304,9 +304,9 @@ find "$m" -mmin +15 | grep -q . && echo DUE || echo skip
 store the new hash and judge: idle capacity while a higher special is starved → fire it — idle
 capacity is just idle capacity now, no craft to cast first. A station off-specials while #1 is
 thin → `wake:false` heads-up + escalate with a recommendation. `collisions` (two stations in the
-same files) → stagger or refocus one before they trample each other. Also worth a glance:
-`hands craft ls`' pending-note counts — a craft backing up unfolded (no station's `focus` set to it)
-is worth a nudge to whichever station is best-placed to become its default fold-owner.
+same files) → stagger or refocus one before they trample each other. `hands craft ls`' pending-note
+counts are informational only — notes are expected to accumulate through the day and get distilled
+at `/hands:last-call`, not something to chase mid-shift.
 
 **A `stateHash` diff won't catch "quiet mid-ticket" (hands#99)** — it only changes on presence/
 branch/focus/task-assignment shifts, not on a station simply grinding away normally OR silently
@@ -396,11 +396,14 @@ wrap-up.
 
 ## 8. End-of-day note in the books (when the books are configured)
 
-If `remote.url` is set, once per day — your last pass, or when the principal wraps — record a 2–5
-line narrative with `hands_digest_note`: what moved, what's blocked, what tomorrow opens with. It
-renders under **Notes** at the top of today's page in the books — the first thing anyone browsing
-the day reads. When the books are shared, skim the other kitchens' pages occasionally — that's how
-hubs keep a read on each other. Skip notes on uneventful days; never spend station wakes on prose.
+`/hands:last-call` (hands#118) is the full close-out ritual — stop-work, merge sweep, craft
+distillation, this note, and next-day prep — and is what you should run when the principal wraps
+for the day. This section covers just the note itself, for the lighter case (books configured, no
+full close-out warranted): once per day, record a 2–5 line narrative with `hands_digest_note`:
+what moved, what's blocked, what tomorrow opens with. It renders under **Notes** at the top of
+today's page in the books — the first thing anyone browsing the day reads. When the books are
+shared, skim the other kitchens' pages occasionally — that's how hubs keep a read on each other.
+Skip notes on uneventful days; never spend station wakes on prose.
 
 ## Heartbeat, pacing & compaction
 

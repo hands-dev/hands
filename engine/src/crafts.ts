@@ -1,8 +1,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HandsConfig } from "./config.js";
-import { type CraftScope, craftFiles, personalCraftsDir, sanitizeSegment, sharedCraftsDir } from "./remote.js";
-import type { CraftBriefRow, Store } from "./store.js";
+import {
+  type CraftFiles,
+  type CraftScope,
+  craftFiles,
+  personalCraftsDir,
+  sanitizeSegment,
+  sharedCraftsDir,
+} from "./remote.js";
+import type { CraftBriefRow, CraftNoteRow, Store } from "./store.js";
 
 /**
  * Crafts as sub-agent-deployed specializations (hands#81/#96/#49). A craft is
@@ -16,10 +23,18 @@ import type { CraftBriefRow, Store } from "./store.js";
  * many turns that never touch a craft, and Bash sidesteps the open question
  * of whether a spawned sub-agent even inherits its parent's MCP connections.
  *
- * Sub-agents never write craft files directly — they append notes
- * (Store.insertCraftNote); a single leased fold pass (Store.acquireCraftFoldLease
- * + `hands craft fold`/`fold-done`) distills pending notes into the
- * book/mise/skill, in place, never by appending to the files themselves.
+ * Sub-agents never write craft files directly — they emit notes, harvested by
+ * subagent-stop.ts into Store.insertCraftNote. Durability and visibility are
+ * two different concerns, though: a note that only reaches the DB is durable
+ * but invisible to the next dispatch's `hands craft mise`. So every note also
+ * gets applied to the actual file the moment it's harvested
+ * (applyImmediateCraftNote, below) — mechanically for mise.md (a key-value
+ * upsert, no judgment needed) and as a durable, clearly-delimited raw append
+ * for book.md/skill.md (real curation — discarding restatements, keeping the
+ * book bounded — still needs a model, so it moves to a single predictable
+ * trigger, `/hands:last-call`, instead of an ad hoc idle-wake fold; see
+ * hands#118). `hands craft fold`/`fold-done` is what last-call runs to
+ * distill the raw sections into curated prose, in place, never by appending.
  */
 
 export interface CraftRosterEntry {
@@ -377,14 +392,124 @@ export function parseCraftNoteBlock(text: string): ParsedCraftNote | null {
   return { briefId, craftSlug, nothingNew, entries };
 }
 
+const MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
+
+/**
+ * The substring before the entry's first ` — `/` -> `/` → `/`: ` delimiter, else the whole
+ * trimmed line. Used only to match an existing bullet for upsert — getting this wrong costs a
+ * duplicate line, never a lost note, which is the bias we want.
+ */
+function extractMiseKey(entry: string): string {
+  const trimmed = entry.trim();
+  const m = MISE_KEY_DELIM_RE.exec(trimmed);
+  return (m ? trimmed.slice(0, m.index) : trimmed).trim();
+}
+
+/** Mechanical upsert-by-key into mise.md's flat bullet list — no model needed, mise is already structured. */
+export function upsertMiseLine(text: string | null, entry: string): string {
+  const line = entry.trim();
+  const key = extractMiseKey(line);
+  const lines = (text ?? "").split("\n");
+  let replaced = false;
+  const next = lines.map((l) => {
+    const m = /^- (.*)$/.exec(l);
+    if (m && !replaced && extractMiseKey(m[1]!) === key) {
+      replaced = true;
+      return `- ${line}`;
+    }
+    return l;
+  });
+  if (!replaced) {
+    while (next.length > 0 && next[next.length - 1]!.trim() === "") next.pop();
+    next.push(`- ${line}`);
+  }
+  return `${next.join("\n").trim()}\n`;
+}
+
+const RAW_NOTES_HEADING = "## Raw notes (unfolded)";
+
+/**
+ * Durable, immediate append into book.md/skill.md's trailing raw-notes section — real curation
+ * (discard restatements, keep it bounded) still needs a model, so this only guarantees the note
+ * is never lost or invisible before that happens; it does not attempt to merge into the curated
+ * prose above the section.
+ */
+export function appendRawNote(text: string | null, taggedLine: string): string {
+  const body = (text ?? "").replace(/\s+$/, "");
+  const line = `- ${taggedLine.trim()}`;
+  if (body.includes(RAW_NOTES_HEADING)) return `${body}\n${line}\n`;
+  const prefix = body ? `${body}\n\n` : "";
+  return `${prefix}${RAW_NOTES_HEADING}\n${line}\n`;
+}
+
+function formatRawTaggedLine(note: CraftNoteRow): string {
+  if (note.kind === "book") return `[book] ${note.body}`;
+  if (note.kind === "friction") return `[friction] ${note.body}`;
+  if (note.kind === "spillover") return `[spillover · from ${note.spillover_craft ?? "unknown"}] ${note.body}`;
+  return note.body; // skill — untagged, the file itself supplies the type
+}
+
+const IMMEDIATE_WRITE_LEASE_TTL_MS = 15_000;
+
+/**
+ * Apply one harvested note to its craft's actual file, right now — best-effort, never the only
+ * path to durability (the note is already journaled in craft_notes regardless). Returns false on
+ * lease contention (a concurrent harvest, or a last-call distillation already holding the
+ * book/skill lease); the caller should treat that as "fine, it'll be caught on the next pass,"
+ * never as an error. mise gets its OWN lease key (`<slug>:mise`, same table+mechanism as the
+ * book/skill fold lease, just a different resource id) so a long-running last-call rewrite of
+ * book.md/skill.md never blocks a mise write — they don't touch the same file.
+ */
+export function applyImmediateCraftNote(store: Store, files: CraftFiles, note: CraftNoteRow, holder: string): boolean {
+  if (note.kind === "mise") {
+    const leaseKey = `${files.slug}:mise`;
+    if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
+    try {
+      fs.mkdirSync(files.dir, { recursive: true });
+      fs.writeFileSync(files.mise, upsertMiseLine(readFileSafe(files.mise), note.body));
+      store.markCraftNoteFolded(note.id);
+      return true;
+    } finally {
+      store.releaseCraftFoldLease(leaseKey, holder);
+    }
+  }
+
+  const target = note.kind === "skill" ? files.skill : files.book;
+  if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
+  try {
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(target, appendRawNote(readFileSafe(target), formatRawTaggedLine(note)));
+    return true;
+  } finally {
+    store.releaseCraftFoldLease(files.slug, holder);
+  }
+}
+
+/**
+ * Catch-up sweep for any mise notes that missed their immediate write (lease contention at
+ * harvest time) — belt-and-suspenders so a mise learning can never get permanently stuck. Called
+ * from `hands craft fold` (via buildFoldContext) and, transitively, by last-call.
+ */
+export function applyPendingMiseNotes(store: Store, files: CraftFiles, holder: string): number {
+  const pending = store.pendingCraftNotes(files.slug).filter((n) => n.kind === "mise");
+  let applied = 0;
+  for (const note of pending) {
+    if (applyImmediateCraftNote(store, files, note, holder)) applied++;
+  }
+  return applied;
+}
+
 export const FOLD_INSTRUCTIONS =
-  "Distill: rewrite the book/mise/skill IN PLACE from the pending notes below plus what's already " +
-  "there — never append. Placement rule: a path or command is MISE; a sequence of steps is SKILL; a " +
-  "decision, a why, or a fact is BOOK. Discard notes that merely restate what's already written — " +
-  "that discard step is what keeps a craft from turning into a growing log instead of a " +
-  "distillation. Keep the book ≤150 lines. Stamp the header when done: " +
-  "`> covers: <domains> · distilled: <today> from <n> learnings`. Then run " +
-  "`hands craft fold-done <craft> --through <n>` with the same throughNoteId this printed.";
+  "Distill: rewrite the book/skill IN PLACE from the pending notes below plus what's already " +
+  "there — never append. The book/skill text you were given already contains a " +
+  "`## Raw notes (unfolded)` section (the same entries listed in pendingNotes below) — fold them " +
+  "into the curated prose above, then remove that section entirely as part of your rewrite. " +
+  "Placement rule: a sequence of steps is SKILL; a decision, a why, or a fact is BOOK. (mise.md " +
+  "maintains itself automatically now — nothing to do there unless correcting something wrong.) " +
+  "Discard notes that merely restate what's already written — that discard step is what keeps a " +
+  "craft from turning into a growing log instead of a distillation. Keep the book ≤150 lines. " +
+  "Stamp the header when done: `> covers: <domains> · distilled: <today> from <n> learnings`. " +
+  "Then run `hands craft fold-done <craft> --through <n>` with the same throughNoteId this printed.";
 
 export interface FoldContext {
   craftSlug: string;
@@ -408,6 +533,10 @@ export function buildFoldContext(
   cwd: string = process.cwd(),
 ): FoldContext {
   const files = craftFiles(craft, env, cwd);
+  // Catch up any mise notes that missed their immediate write at harvest time (lease
+  // contention) — never leaves a mise learning permanently stuck, and means pendingNotes below
+  // naturally excludes mise entries without any extra filtering.
+  applyPendingMiseNotes(store, files, `fold-catchup:${process.pid}`);
   const pending = store.pendingCraftNotes(files.slug);
   return {
     craftSlug: files.slug,

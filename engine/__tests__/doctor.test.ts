@@ -229,16 +229,30 @@ describe("crafts checks (hands#81/#96/#49)", () => {
     writeConfig();
     const { Store } = await import("../src/store.js");
     const store = new Store({ env });
-    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "a" });
-    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "b" });
-    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "c" });
+    for (let i = 0; i < 10; i++) {
+      store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: `note ${i}` });
+    }
     store.close();
 
     const report = runDoctor({ cwd: repo, env });
     const notes = check("crafts.notes", report);
     expect(notes?.severity).toBe("warn");
     expect(notes?.detail).toContain("saucier");
-    expect(notes?.detail).toContain("3 pending");
+    expect(notes?.detail).toContain("10 pending");
+    expect(notes?.detail).toContain("last-call");
+  });
+
+  it("says nothing for an ordinary same-day backlog below the last-call threshold", async () => {
+    writeConfig();
+    const { Store } = await import("../src/store.js");
+    const store = new Store({ env });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "a" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "b" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "c" });
+    store.close();
+
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("crafts.notes", report)).toBeUndefined();
   });
 
   it("says nothing when there's no unfolded-note backlog", () => {

@@ -321,7 +321,11 @@ export function runDoctor(opts?: {
 
     // A doctor check must never crash on a DB hiccup — this is diagnostics, not the bus itself.
     // Driven by pendingCraftSlugs(), not the file-based roster — a craft can carry pending notes
-    // before it's ever founded with a book file, and this must still catch that backlog.
+    // before it's ever founded with a book file, and this must still catch that backlog. mise
+    // notes apply themselves immediately on harvest (hands#118), so what's left pending here is
+    // book/skill/friction/spillover — EXPECTED to accumulate through the day, awaiting the next
+    // `/hands:last-call`, not a sign nobody's watching. So this only warns once a backlog looks
+    // like last-call genuinely hasn't run in a while, not on ordinary same-day accumulation.
     let store: Store | null = null;
     try {
       store = new Store({ env });
@@ -331,14 +335,14 @@ export function runDoctor(opts?: {
           const pending = store!.pendingCraftNotes(slug);
           return { slug, count: pending.length, ageMs: now - (pending[0]?.created_at ?? now) };
         })
-        .filter((c) => c.count >= 3 || c.ageMs > 24 * 60 * 60_000);
+        .filter((c) => c.count >= 10 || c.ageMs > 36 * 60 * 60_000);
       if (stale.length > 0) {
         checks.push({
           name: "crafts.notes",
           severity: "warn",
           detail:
             `${stale.map((c) => `${c.slug} (${c.count} pending, oldest ${Math.round(c.ageMs / 60_000)}m)`).join(", ")} ` +
-            "— run `hands craft distill` to fold them in",
+            "— looks like /hands:last-call hasn't run in a while; run it, or `hands craft fold <slug>` directly",
         });
       }
     } catch {

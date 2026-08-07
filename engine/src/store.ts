@@ -1607,6 +1607,10 @@ export class Store {
       .all(craftSlug) as unknown as CraftNoteRow[];
   }
 
+  getCraftNote(id: number): CraftNoteRow | undefined {
+    return this.db.prepare("SELECT * FROM craft_notes WHERE id = ?").get(id) as CraftNoteRow | undefined;
+  }
+
   /**
    * Every craft slug carrying at least one pending note — independent of whether a book file
    * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
@@ -1626,6 +1630,18 @@ export class Store {
       this.db
         .prepare("UPDATE craft_notes SET folded_at = ? WHERE craft_slug = ? AND id <= ? AND folded_at IS NULL")
         .run(now, craftSlug, throughNoteId),
+    );
+  }
+
+  /**
+   * Fold-mark exactly one note by its own id — distinct from markCraftNotesFolded's "through"
+   * batch cutoff, which would risk sweeping up older pending book/skill notes for the same craft.
+   * Used by the mechanical mise writer: a mise note is fully applied (upserted into mise.md) the
+   * instant it's harvested, independent of whatever else is still pending for that craft.
+   */
+  markCraftNoteFolded(id: number, now = Date.now()): void {
+    this.withRetry(() =>
+      this.db.prepare("UPDATE craft_notes SET folded_at = ? WHERE id = ? AND folded_at IS NULL").run(now, id),
     );
   }
 

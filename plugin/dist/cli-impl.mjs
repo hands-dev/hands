@@ -22578,6 +22578,9 @@ var init_store = __esm({
       pendingCraftNotes(craftSlug) {
         return this.db.prepare("SELECT * FROM craft_notes WHERE craft_slug = ? AND folded_at IS NULL ORDER BY id").all(craftSlug);
       }
+      getCraftNote(id) {
+        return this.db.prepare("SELECT * FROM craft_notes WHERE id = ?").get(id);
+      }
       /**
        * Every craft slug carrying at least one pending note — independent of whether a book file
        * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
@@ -22590,6 +22593,17 @@ var init_store = __esm({
       markCraftNotesFolded(craftSlug, throughNoteId, now = Date.now()) {
         this.withRetry(
           () => this.db.prepare("UPDATE craft_notes SET folded_at = ? WHERE craft_slug = ? AND id <= ? AND folded_at IS NULL").run(now, craftSlug, throughNoteId)
+        );
+      }
+      /**
+       * Fold-mark exactly one note by its own id — distinct from markCraftNotesFolded's "through"
+       * batch cutoff, which would risk sweeping up older pending book/skill notes for the same craft.
+       * Used by the mechanical mise writer: a mise note is fully applied (upserted into mise.md) the
+       * instant it's harvested, independent of whatever else is still pending for that craft.
+       */
+      markCraftNoteFolded(id, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare("UPDATE craft_notes SET folded_at = ? WHERE id = ? AND folded_at IS NULL").run(now, id)
         );
       }
       /**
@@ -24157,8 +24171,84 @@ function parseCraftNoteBlock(text) {
   }
   return { briefId, craftSlug, nothingNew, entries };
 }
+function extractMiseKey(entry) {
+  const trimmed = entry.trim();
+  const m = MISE_KEY_DELIM_RE.exec(trimmed);
+  return (m ? trimmed.slice(0, m.index) : trimmed).trim();
+}
+function upsertMiseLine(text, entry) {
+  const line = entry.trim();
+  const key = extractMiseKey(line);
+  const lines = (text ?? "").split("\n");
+  let replaced = false;
+  const next = lines.map((l) => {
+    const m = /^- (.*)$/.exec(l);
+    if (m && !replaced && extractMiseKey(m[1]) === key) {
+      replaced = true;
+      return `- ${line}`;
+    }
+    return l;
+  });
+  if (!replaced) {
+    while (next.length > 0 && next[next.length - 1].trim() === "") next.pop();
+    next.push(`- ${line}`);
+  }
+  return `${next.join("\n").trim()}
+`;
+}
+function appendRawNote(text, taggedLine) {
+  const body = (text ?? "").replace(/\s+$/, "");
+  const line = `- ${taggedLine.trim()}`;
+  if (body.includes(RAW_NOTES_HEADING)) return `${body}
+${line}
+`;
+  const prefix = body ? `${body}
+
+` : "";
+  return `${prefix}${RAW_NOTES_HEADING}
+${line}
+`;
+}
+function formatRawTaggedLine(note) {
+  if (note.kind === "book") return `[book] ${note.body}`;
+  if (note.kind === "friction") return `[friction] ${note.body}`;
+  if (note.kind === "spillover") return `[spillover \xB7 from ${note.spillover_craft ?? "unknown"}] ${note.body}`;
+  return note.body;
+}
+function applyImmediateCraftNote(store, files, note, holder) {
+  if (note.kind === "mise") {
+    const leaseKey = `${files.slug}:mise`;
+    if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
+    try {
+      fs11.mkdirSync(files.dir, { recursive: true });
+      fs11.writeFileSync(files.mise, upsertMiseLine(readFileSafe(files.mise), note.body));
+      store.markCraftNoteFolded(note.id);
+      return true;
+    } finally {
+      store.releaseCraftFoldLease(leaseKey, holder);
+    }
+  }
+  const target = note.kind === "skill" ? files.skill : files.book;
+  if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
+  try {
+    fs11.mkdirSync(files.dir, { recursive: true });
+    fs11.writeFileSync(target, appendRawNote(readFileSafe(target), formatRawTaggedLine(note)));
+    return true;
+  } finally {
+    store.releaseCraftFoldLease(files.slug, holder);
+  }
+}
+function applyPendingMiseNotes(store, files, holder) {
+  const pending = store.pendingCraftNotes(files.slug).filter((n) => n.kind === "mise");
+  let applied = 0;
+  for (const note of pending) {
+    if (applyImmediateCraftNote(store, files, note, holder)) applied++;
+  }
+  return applied;
+}
 function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) {
   const files = craftFiles(craft, env, cwd);
+  applyPendingMiseNotes(store, files, `fold-catchup:${process.pid}`);
   const pending = store.pendingCraftNotes(files.slug);
   return {
     craftSlug: files.slug,
@@ -24180,7 +24270,7 @@ function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) 
     instructions: FOLD_INSTRUCTIONS
   };
 }
-var COVERS_RE, DISTILLED_RE, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, FOLD_INSTRUCTIONS;
+var COVERS_RE, DISTILLED_RE, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -24190,7 +24280,10 @@ var init_crafts = __esm({
     NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
     KV_RE = /^(mise|book|skill|friction):\s*(.+)$/;
     SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
-    FOLD_INSTRUCTIONS = "Distill: rewrite the book/mise/skill IN PLACE from the pending notes below plus what's already there \u2014 never append. Placement rule: a path or command is MISE; a sequence of steps is SKILL; a decision, a why, or a fact is BOOK. Discard notes that merely restate what's already written \u2014 that discard step is what keeps a craft from turning into a growing log instead of a distillation. Keep the book \u2264150 lines. Stamp the header when done: `> covers: <domains> \xB7 distilled: <today> from <n> learnings`. Then run `hands craft fold-done <craft> --through <n>` with the same throughNoteId this printed.";
+    MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
+    RAW_NOTES_HEADING = "## Raw notes (unfolded)";
+    IMMEDIATE_WRITE_LEASE_TTL_MS = 15e3;
+    FOLD_INSTRUCTIONS = "Distill: rewrite the book/skill IN PLACE from the pending notes below plus what's already there \u2014 never append. The book/skill text you were given already contains a `## Raw notes (unfolded)` section (the same entries listed in pendingNotes below) \u2014 fold them into the curated prose above, then remove that section entirely as part of your rewrite. Placement rule: a sequence of steps is SKILL; a decision, a why, or a fact is BOOK. (mise.md maintains itself automatically now \u2014 nothing to do there unless correcting something wrong.) Discard notes that merely restate what's already written \u2014 that discard step is what keeps a craft from turning into a growing log instead of a distillation. Keep the book \u2264150 lines. Stamp the header when done: `> covers: <domains> \xB7 distilled: <today> from <n> learnings`. Then run `hands craft fold-done <craft> --through <n>` with the same throughNoteId this printed.";
   }
 });
 
@@ -48353,6 +48446,7 @@ function runPublish(store, opts) {
 
 // src/subagent-stop.ts
 init_crafts();
+init_remote();
 import * as fs12 from "node:fs";
 function totalOutputTokens(transcriptPath) {
   let raw;
@@ -48413,14 +48507,16 @@ function assistantText(transcriptPath) {
   }
   return chunks.join("\n");
 }
-function harvestCraftNote(store, transcriptPath, now) {
+function harvestCraftNote(store, transcriptPath, now, env, cwd) {
   const parsed = parseCraftNoteBlock(assistantText(transcriptPath));
   if (!parsed) return null;
   let entriesHarvested = 0;
   if (parsed.craftSlug) {
+    const holder = `harvest:${process.pid}`;
     for (const entry of parsed.entries) {
-      store.insertCraftNote({
-        craftSlug: entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug,
+      const targetSlug = entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug;
+      const id = store.insertCraftNote({
+        craftSlug: targetSlug,
         briefId: parsed.briefId,
         sourceAgent: `subagent:${parsed.craftSlug}`,
         kind: entry.kind,
@@ -48429,6 +48525,11 @@ function harvestCraftNote(store, transcriptPath, now) {
         now
       });
       entriesHarvested++;
+      try {
+        const row = store.getCraftNote(id);
+        if (row) applyImmediateCraftNote(store, craftFiles(targetSlug, env, cwd), row, holder);
+      } catch {
+      }
     }
   }
   if (parsed.briefId !== null) {
@@ -48446,7 +48547,13 @@ function runSubagentStop(store, opts) {
   const agentType = meta3.agentType ?? opts.agentType ?? null;
   let craftNote = null;
   try {
-    craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
+    craftNote = harvestCraftNote(
+      store,
+      opts.agentTranscriptPath,
+      now,
+      opts.env ?? process.env,
+      opts.cwd ?? process.cwd()
+    );
   } catch {
   }
   if (outputTokens === null) {
@@ -49765,12 +49872,12 @@ function runDoctor(opts) {
       const stale = store.pendingCraftSlugs().map((slug) => {
         const pending = store.pendingCraftNotes(slug);
         return { slug, count: pending.length, ageMs: now - (pending[0]?.created_at ?? now) };
-      }).filter((c) => c.count >= 3 || c.ageMs > 24 * 60 * 6e4);
+      }).filter((c) => c.count >= 10 || c.ageMs > 36 * 60 * 6e4);
       if (stale.length > 0) {
         checks.push({
           name: "crafts.notes",
           severity: "warn",
-          detail: `${stale.map((c) => `${c.slug} (${c.count} pending, oldest ${Math.round(c.ageMs / 6e4)}m)`).join(", ")} \u2014 run \`hands craft distill\` to fold them in`
+          detail: `${stale.map((c) => `${c.slug} (${c.count} pending, oldest ${Math.round(c.ageMs / 6e4)}m)`).join(", ")} \u2014 looks like /hands:last-call hasn't run in a while; run it, or \`hands craft fold <slug>\` directly`
         });
       }
     } catch {
@@ -50178,7 +50285,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
         for (const n of pending) out2(`  [${n.kind}] ${n.body} (from ${n.source_agent})`);
       }
       out2(
-        "\nThis lists the backlog only \u2014 distillation is a judgment call. Read it and edit the book/mise/skill by hand, or ask an agent to run `hands craft fold <slug>` on this craft."
+        "\nThis lists the backlog only \u2014 distillation is a judgment call (mise notes, if any slipped through, apply themselves mechanically the moment `hands craft fold` runs). Read it and edit the book/skill by hand, or ask an agent to run `hands craft fold <slug>` on this craft \u2014 `/hands:last-call` does this for every craft with a backlog at end of shift."
       );
       return;
     }

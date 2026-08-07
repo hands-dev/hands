@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
-import { parseCraftNoteBlock } from "./crafts.js";
+import { applyImmediateCraftNote, parseCraftNoteBlock } from "./crafts.js";
+import { craftFiles } from "./remote.js";
 import type { Store } from "./store.js";
 
 export interface SubagentStopResult {
@@ -109,6 +110,14 @@ function assistantText(transcriptPath: string): string {
  * reaching the books"). Best-effort like the rest of this hook: an unreadable
  * or note-less transcript is not an error, just nothing to harvest.
  *
+ * Storage and the craft's actual file are two different concerns: every note
+ * is inserted into craft_notes (durable), then immediately applied to the
+ * real file too (applyImmediateCraftNote — mechanical for mise, a durable raw
+ * append for book/skill, hands#118) so nothing sits invisible waiting on an
+ * ad hoc fold. That immediate write is itself best-effort (lease contention
+ * just means the next fold/last-call catches it) — a failure here must never
+ * fail the harvest, since the note is already safely in craft_notes either way.
+ *
  * Enforcement (blocking a sub-agent's return once to force a missing note) is
  * DESIGNED but not wired here yet — it needs the SubagentStop hook entry
  * itself made synchronous (today "async": true in hooks.json) and empirical
@@ -119,14 +128,18 @@ function harvestCraftNote(
   store: Store,
   transcriptPath: string,
   now: number,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
 ): SubagentStopResult["craftNote"] {
   const parsed = parseCraftNoteBlock(assistantText(transcriptPath));
   if (!parsed) return null;
   let entriesHarvested = 0;
   if (parsed.craftSlug) {
+    const holder = `harvest:${process.pid}`;
     for (const entry of parsed.entries) {
-      store.insertCraftNote({
-        craftSlug: entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug,
+      const targetSlug = entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug;
+      const id = store.insertCraftNote({
+        craftSlug: targetSlug,
         briefId: parsed.briefId,
         sourceAgent: `subagent:${parsed.craftSlug}`,
         kind: entry.kind,
@@ -135,6 +148,12 @@ function harvestCraftNote(
         now,
       });
       entriesHarvested++;
+      try {
+        const row = store.getCraftNote(id);
+        if (row) applyImmediateCraftNote(store, craftFiles(targetSlug, env, cwd), row, holder);
+      } catch {
+        // best-effort — see docstring above
+      }
     }
   }
   if (parsed.briefId !== null) {
@@ -164,6 +183,9 @@ export function runSubagentStop(
     agentTranscriptPath: string;
     agentType?: string | null;
     now?: number;
+    /** defaults to the real process env/cwd — override only for test isolation */
+    env?: NodeJS.ProcessEnv;
+    cwd?: string;
   },
 ): SubagentStopResult {
   const now = opts.now ?? Date.now();
@@ -174,7 +196,13 @@ export function runSubagentStop(
   // being present (hands#56's fix: the note reaches storage regardless of what else worked).
   let craftNote: SubagentStopResult["craftNote"] = null;
   try {
-    craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
+    craftNote = harvestCraftNote(
+      store,
+      opts.agentTranscriptPath,
+      now,
+      opts.env ?? process.env,
+      opts.cwd ?? process.cwd(),
+    );
   } catch {
     // best-effort — a harvest failure must never fail the hook
   }
