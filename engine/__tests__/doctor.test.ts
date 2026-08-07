@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -8,6 +8,7 @@ import { addStations } from "../src/provision.js";
 import { pidPath, resetRepoInfoCache } from "../src/paths.js";
 import { openJournal, syncPush } from "../src/remote.js";
 import { resetConfigCache } from "../src/config.js";
+import { inboxMonitorAlive } from "../src/watchers.js";
 
 let root: string;
 let repo: string;
@@ -473,5 +474,97 @@ describe("journal mirror (hands#181) — a broken clone looks healthy at every o
     const clean = runDoctor({ cwd: repo, env });
     expect(check("journal.remote", clean)).toBeUndefined();
     expect(check("journal.mirror", clean)?.severity).toBe("ok");
+  });
+});
+
+describe("inbox monitor check (hands#90) — doctor never looked at this at all before", () => {
+  /** Real station worktree via the real provisioner, so doctor's own listStations() sees it. */
+  function oneStation(): { dir: string } {
+    const worktreeRoot = path.join(root, "worktrees");
+    fs.writeFileSync(
+      path.join(repo, "hands.config.json"),
+      JSON.stringify({ ...CONFIG, stations: { ...CONFIG.stations, worktreeRoot } }, null, 2),
+    );
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+      { cwd: repo },
+    );
+    const [plan] = addStations(1, { cwd: repo, env: { ...env, TMUX: "" } });
+    if (!plan) throw new Error("provisioner returned no station");
+    return { dir: fs.realpathSync(plan.dir) };
+  }
+
+  const spawned: ChildProcess[] = [];
+  /**
+   * A real, detached `tail -F` — inboxMonitorAlive() scans real processes, so
+   * nothing short of one exercises it. `detached: true` (POSIX) makes it its
+   * own process group leader, same effect as `setsid`, and spawning the
+   * binary directly (no shell) avoids any wrapper-vs-tail double-counting.
+   * Portable: works whether inboxMonitorAlive takes the Linux /proc-scan path
+   * or the pgrep fallback.
+   */
+  function detachTail(notify: string): void {
+    const child = spawn("tail", ["-F", "-n0", notify], { stdio: "ignore", detached: true });
+    child.unref();
+    spawned.push(child);
+  }
+  afterEach(async () => {
+    // SIGKILL is delivered asynchronously — the process isn't necessarily
+    // gone from the process table by the time this returns, so a synchronous
+    // pgrep scan in the very next test can still see it (same class of
+    // flakiness as the setup-side fixed-sleep this file no longer uses; here
+    // it's on cleanup). Poll until each pid's process GROUP is confirmed gone.
+    const pids = spawned.splice(0).map((c) => c.pid).filter((p): p is number => Boolean(p));
+    for (const pid of pids) {
+      try {
+        process.kill(-pid, "SIGKILL");
+      } catch {
+        /* already gone */
+      }
+    }
+    const deadline = Date.now() + 2000;
+    for (const pid of pids) {
+      while (Date.now() < deadline) {
+        try {
+          process.kill(-pid, 0); // still alive — probing only, no signal delivered
+          await new Promise((r) => setTimeout(r, 25));
+        } catch {
+          break; // ESRCH — confirmed gone
+        }
+      }
+    }
+  });
+  /**
+   * Poll instead of a fixed sleep: how long a spawned `tail` takes to
+   * register in the process table varies with system load, and a flat delay
+   * was intermittently too short under the full suite's parallel test-file
+   * load (flaky, not deterministic — the exact class of bug this poll avoids).
+   */
+  async function waitForMonitorAlive(stationId: string, notify: string, timeoutMs = 3000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (inboxMonitorAlive(stationId, notify) === true) return;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    throw new Error(`monitor for ${stationId} never came alive within ${timeoutMs}ms`);
+  }
+
+  it("FAILS a station with no inbox monitor running, and says how to fix it", () => {
+    oneStation();
+    const report = runDoctor({ cwd: repo, env });
+    const monitor = check("station-1.monitor", report);
+    expect(monitor?.severity).toBe("fail");
+    expect(monitor?.detail).toContain("DEAD");
+    expect(monitor?.fixable).toBeUndefined(); // no mechanical fix — see the comment in doctor.ts for why
+  });
+
+  it("passes once a real tail is armed on the station's notify file", async () => {
+    oneStation();
+    const notify = path.join(env.HANDS_HOME as string, "station-1.notify");
+    detachTail(notify);
+    await waitForMonitorAlive("station-1", notify);
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("station-1.monitor", report)?.severity).toBe("ok");
   });
 });

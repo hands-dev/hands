@@ -50831,9 +50831,11 @@ ${input.body}`, [agentId, ...recipients]);
       deliverWake([assignee], { from: agentId, subject: "task" });
       const assigneePeer = store.listPeers().find((p) => p.id === assignee);
       const deadWarning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
+      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee) === false;
+      const monitorWarning = monitorDead ? `${assignee}'s inbox monitor is dead \u2014 it cannot be woken until its next pass (self-heal on the fallback heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a while; run \`hands doctor\` to confirm, or restart the station to fix it now.` : void 0;
       const leakWarning = crossPeerMentionWarning(`${input.title}
 ${input.body ?? ""}`, [agentId, assignee]);
-      const warnings = [deadWarning, leakWarning].filter((w) => Boolean(w));
+      const warnings = [deadWarning, monitorWarning, leakWarning].filter((w) => Boolean(w));
       return asToolResult({
         ok: true,
         id,
@@ -51624,6 +51626,7 @@ function describeSession(s) {
 // src/doctor.ts
 init_attest();
 init_store();
+init_watchers();
 var IDLE_WARN_MS = 30 * 6e4;
 var WAL_RATIO_WARN = 10;
 function worstOf(checks) {
@@ -51914,6 +51917,22 @@ function runDoctor(opts) {
           });
           blockedStations.push(station.id);
         }
+      }
+      const monitor = inboxMonitorAlive(station.id);
+      if (monitor === false) {
+        checks.push({
+          name: `${station.id}.monitor`,
+          severity: "fail",
+          detail: "inbox monitor DEAD \u2014 it cannot be woken. Restart the station, or wait for its next pass."
+        });
+      } else if (monitor === true) {
+        checks.push({ name: `${station.id}.monitor`, severity: "ok", detail: "armed" });
+      } else {
+        checks.push({
+          name: `${station.id}.monitor`,
+          severity: "warn",
+          detail: "cannot inspect the inbox monitor on this platform \u2014 UNVERIFIED, not passing"
+        });
       }
       const idle = idleMs(station.dir, now);
       if (idle === null) {
