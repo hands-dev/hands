@@ -1375,7 +1375,7 @@ export class Store {
   answerQuestion(input: {
     id: number;
     answer: string;
-    resolvedBy: "expo" | "human";
+    resolvedBy: "expo" | "human" | "sous";
     answeredVia?: "dashboard" | "tui" | "cli" | "expo" | null;
     answerOptions?: AnswerOptions | null;
     priorityRef?: string | null;

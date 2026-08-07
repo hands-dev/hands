@@ -7,6 +7,7 @@ import {
   agentIdFromArgv,
   indexFromDirName,
   isExpo,
+  isSous,
   isStation,
   resolveAgentId,
   resolveAgentRef,
@@ -55,6 +56,9 @@ describe("isStation / isExpo", () => {
     expect(isExpo("expo")).toBe(true);
     expect(isExpo("foreman")).toBe(false); // pre-brigade id — no longer routed
     expect(isExpo("station-1")).toBe(false);
+    expect(isSous("sous")).toBe(true);
+    expect(isSous("station-1")).toBe(false);
+    expect(isSous("expo")).toBe(false);
   });
 });
 

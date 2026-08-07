@@ -113,6 +113,14 @@ export interface HandsConfig {
     adminMergeLowRisk: boolean;
   };
   gh: { poll: boolean };
+  /**
+   * The sous chef (hands#87/#171) — composes tickets, is the expo's
+   * escalation hop, signs off ticket completeness, and stewards crafts.
+   * Off by default: a kitchen with no sous session running shouldn't have
+   * `hands_escalate` waking an identity nobody's listening as. Flip on once
+   * a sous pane actually exists for this repo.
+   */
+  sous: { enabled: boolean };
 }
 
 export const DEFAULT_CONFIG: HandsConfig = {
@@ -133,6 +141,7 @@ export const DEFAULT_CONFIG: HandsConfig = {
   dispatch: { requireAttestation: true },
   merge: { adminMergeLowRisk: false },
   gh: { poll: true },
+  sous: { enabled: false },
 };
 
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
@@ -196,6 +205,7 @@ function merge(base: HandsConfig, layer: DeepPartial<HandsConfig> | null): Hands
     },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll },
+    sous: { enabled: layer.sous?.enabled ?? base.sous.enabled },
   };
 }
 

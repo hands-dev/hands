@@ -136,6 +136,22 @@ describe("loadConfig — usage.mode (/hands:low-usage)", () => {
   });
 });
 
+describe("loadConfig — sous.enabled (hands#87/#171)", () => {
+  it("defaults to false — no sous session, no wake target", () => {
+    expect(loadConfig({ cwd: home, env }).sous.enabled).toBe(false);
+  });
+
+  it("a user-level hands.config.json can turn it on", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".claude", "hands.config.json"), JSON.stringify({ sous: { enabled: true } }));
+    resetConfigCache();
+    const cfg = loadConfig({ cwd: home, env });
+    expect(cfg.sous.enabled).toBe(true);
+    // nothing else about the config should differ from defaults
+    expect({ ...cfg, sous: DEFAULT_CONFIG.sous }).toEqual(DEFAULT_CONFIG);
+  });
+});
+
 describe("currentUsageMode — deliberately UNCACHED (hot toggle, unlike loadConfig)", () => {
   it("defaults to normal with no config files at all", () => {
     expect(currentUsageMode(home, env)).toBe("normal");

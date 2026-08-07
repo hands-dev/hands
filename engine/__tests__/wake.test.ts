@@ -325,6 +325,40 @@ describe("hands_obligations / hands_chase_mark (hands#164)", () => {
   });
 });
 
+describe("hands_escalate wakes sous when configured (hands#87/#171 phase b)", () => {
+  it("does NOT wake sous when sous.enabled is false (default)", async () => {
+    const expo = await connect("expo"); // DEFAULT_CONFIG — sous disabled
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const w1 = await connect("station-1");
+    const ask = await call(w1, "hands_ask", { question: "ship it?" });
+    const res = await call(expo, "hands_escalate", { id: ask.body.id as number, recommendation: "yes" });
+    expect(res.body.wokeSous).toBe(false);
+    expect(notifyLines("sous")).toHaveLength(0);
+  });
+
+  it("wakes sous when sous.enabled is true", async () => {
+    const withSous = { ...DEFAULT_CONFIG, sous: { enabled: true } };
+    const expo = await connect("expo", withSous);
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const w1 = await connect("station-1", withSous);
+    const ask = await call(w1, "hands_ask", { question: "ship it?" });
+    const res = await call(expo, "hands_escalate", { id: ask.body.id as number, recommendation: "yes" });
+    expect(res.body.wokeSous).toBe(true);
+    expect(notifyLines("sous")).toHaveLength(1);
+  });
+
+  it("hands_answer accepts by:'sous' and records provenance", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const w1 = await connect("station-1");
+    const ask = await call(w1, "hands_ask", { question: "ship it?" });
+    const res = await call(expo, "hands_answer", { id: ask.body.id as number, answer: "yes", by: "sous" });
+    expect(res.isError).toBe(false);
+    const q = stores[0]!.getQuestion(ask.body.id as number);
+    expect(q?.resolved_by).toBe("sous");
+  });
+});
+
 describe("board stateHash + full bundle", () => {
   it("is stable when nothing changes and moves when assignments change", async () => {
     const expo = await connect("expo");

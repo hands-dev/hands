@@ -8900,7 +8900,8 @@ function merge2(base, layer) {
       requireAttestation: layer.dispatch?.requireAttestation ?? base.dispatch.requireAttestation
     },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
-    gh: { poll: layer.gh?.poll ?? base.gh.poll }
+    gh: { poll: layer.gh?.poll ?? base.gh.poll },
+    sous: { enabled: layer.sous?.enabled ?? base.sous.enabled }
   };
 }
 function userConfigPath(env = process.env) {
@@ -8962,7 +8963,8 @@ var init_config = __esm({
       usage: { mode: "normal" },
       dispatch: { requireAttestation: true },
       merge: { adminMergeLowRisk: false },
-      gh: { poll: true }
+      gh: { poll: true },
+      sous: { enabled: false }
     };
     CONFIG_BASENAME = "hands.config.json";
     cache = /* @__PURE__ */ new Map();
@@ -36122,7 +36124,7 @@ ${input.body}`, [agentId, ...recipients]);
         id: external_exports3.number().int(),
         answer: external_exports3.string().optional().describe("free-text answer \u2014 required unless chosenLabels is set"),
         chosenLabels: external_exports3.array(external_exports3.string()).optional().describe("which option label(s) were picked, for a structured question"),
-        by: external_exports3.enum(["expo", "human"]).optional(),
+        by: external_exports3.enum(["expo", "human", "sous"]).optional(),
         answeredVia: external_exports3.enum(["dashboard", "tui", "cli", "expo"]).optional().describe("which surface produced this answer \u2014 omit when by='expo'"),
         priority: external_exports3.string().optional().describe("the priority this maps to")
       },
@@ -36165,7 +36167,7 @@ ${input.body}`, [agentId, ...recipients]);
     "hands_escalate",
     {
       title: "Bubble a question up to the principal",
-      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane, and to /hands:questions). Include your recommendation and the priority it touches \u2014 pass options if the decision decomposes into 2-4 concrete choices, so every surface (dashboard, the AskUserQuestion dialog) can render real buttons instead of a paragraph. Then present it via the AskUserQuestion tool in this same turn (recommended option first, labelled), not just prose. Once he decides, call hands_answer with by='human'.`,
+      description: `Mark a question as needing a decision (shows in the dashboard 'Needs you' lane, and to /hands:questions). Include your recommendation and the priority it touches \u2014 pass options if the decision decomposes into 2-4 concrete choices, so every surface (dashboard, the AskUserQuestion dialog) can render real buttons instead of a paragraph.` + (cfg.sous.enabled ? ` This wakes the sous (hands#87/#171) \u2014 the sous is your first escalation hop and may resolve recipe/product judgment itself (hands_answer with by='sous'), or present it to ${principal} in turn via AskUserQuestion (recommended option first, labelled). Once decided, call hands_answer.` : ` Then present it via the AskUserQuestion tool in this same turn (recommended option first, labelled), not just prose. Once ${principal} decides, call hands_answer with by='human'.`),
       inputSchema: {
         id: external_exports3.number().int(),
         recommendation: external_exports3.string().optional(),
@@ -36186,7 +36188,13 @@ ${input.body}`, [agentId, ...recipients]);
         multiSelect: input.multiSelect,
         priorityRef: input.priority ?? null
       });
-      return asToolResult({ ok: true, id: input.id });
+      if (cfg.sous.enabled) {
+        try {
+          deliverWake(["sous"], { from: agentId, subject: "escalation" });
+        } catch {
+        }
+      }
+      return asToolResult({ ok: true, id: input.id, wokeSous: cfg.sous.enabled });
     }
   );
   server.registerTool(
