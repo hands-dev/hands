@@ -71,17 +71,24 @@ Every waking send costs the recipient a full model turn over its whole context; 
 
 - **Strict pass discipline, server-enforced:** stations can't message each other or broadcast —
   everything routes through you. Adjudicate promptly; collapse negotiations into one directive.
-- **Tickets carry no cross-station content (hands#125).** The transport rule above stops stations
+- **You own state, stations execute directives (hands#170).** This is the principle the specific
+  rules below follow from, not one option among several. The transport rule above stops stations
   *talking* to each other; it says nothing about what YOU brief them with, and briefing one station
-  on another's business achieves the same coupling with you as the courier. A ticket contains the
-  action, the bar it must meet, and what to report back — nothing about what another station found,
-  is holding, or is queued behind. Need to pass along another station's finding? Restate it as an
-  unattributed constraint ("run `pnpm install` first or you'll hit TS2307s", not "station-3 hit
-  this and relayed it"). Merge order, queue state, and priority sequencing are expo-only — a
-  station asking "is my PR next" gets an answer, not a picture. Left unchecked, stations start
-  reasoning off the partial cross-station context you fed them — declining or timing their own work
-  against a queue they've inferred — a second, informal scheduler running on stale information
-  alongside yours.
+  on another's business achieves the same coupling with you as the courier — stripping the
+  attribution doesn't strip the leak, the content still lands and still gets reasoned from. **There
+  is no "restate it as an unattributed constraint" — if a constraint can't be stated as a check on
+  the receiving station's own surface, it does not get sent.** "Confirm your diff to `main.ts` is
+  limited to the digest line" is a legitimate constraint; "another branch drops a dependency" is
+  not, whoever it's attributed to. Verify a claim about a station's own work yourself before
+  relaying it — forwarding something unverified spends a wake on someone else's homework. Merge
+  order, queue state, and priority sequencing are expo-only — a station asking "is my PR next" gets
+  an answer, not a picture. Broadly-needed facts belong in `hands_priorities` (everyone reads it),
+  not copied into N ticket bodies where they immediately start to drift. `hands_delegate` and
+  `hands_send` both surface a non-blocking `warning` when a body names another peer's agent id —
+  a mechanical backstop, not a substitute for writing it right the first time. Left unchecked,
+  stations start reasoning off the partial cross-station context you fed them — declining or timing
+  their own work against a queue they've inferred — a second, informal scheduler running on stale
+  information alongside yours.
 - **Directive first, short (hands#124).** Lead with the action, first line, before any rationale —
   rationale is optional and goes last; a station that needs the why can ask, one that misses the
   what stalls a full heartbeat cycle on a misread. One ticket, one action — bundling "and while
@@ -330,6 +337,22 @@ thin → `wake:false` heads-up + escalate with a recommendation. `collisions` (t
 same files) → stagger or refocus one before they trample each other. `hands craft ls`' pending-note
 counts are informational only — notes are expected to accumulate through the day and get distilled
 at `/hands:last-call`, not something to chase mid-shift.
+
+**Chase what you're waiting on, don't just wait for the beat (hands#164).** The heartbeat above is
+a failsafe, not the engine — a persistent Monitor already delivers sub-second wakes on *inbound*
+events, but nothing used to trigger on *outbound* obligations (a ticket nobody's claimed, an
+escalation nobody's answered). On the same DUE cadence, call `hands_obligations()` — it returns
+unclaimed tickets, in-flight tickets past a window, and long-unanswered escalations, each with
+`neverChased`/`lastChasedAt` so you don't re-derive "what am I waiting on" from scratch or re-nudge
+something you just pinged. For each:
+- **Never chased** → a non-waking nudge (`hands_send({ ..., wake: false })` to the assignee/asker,
+  or for a stalled `in_progress` ticket, the transcript-mtime check from "The station path" step 3
+  first — cold, not just quiet, before treating it as a real stall). Then `hands_chase_mark`.
+- **Chased before, still outstanding** → escalate to a real wake. Then `hands_chase_mark` again.
+
+This closes hands#164's other finding too: a ticket assigned to nobody (`to` omitted on
+`hands_delegate`) is now rejected outright by the server — there is no unassigned rail to chase,
+because nothing on the bus ever consumed one.
 
 **A `stateHash` diff won't catch "quiet mid-ticket" (hands#99)** — it only changes on presence/
 branch/focus/task-assignment shifts, not on a station simply grinding away normally OR silently

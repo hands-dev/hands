@@ -7808,6 +7808,58 @@ var init_store = __esm({
           ).run(agentId, key, value)
         );
       }
+      /**
+       * Outstanding obligations (hands#164) — tickets the expo is waiting on
+       * (unclaimed past `unclaimedAfterMs`, or in-flight past `staleAfterMs`)
+       * and escalations nobody has answered past `unclaimedAfterMs`. This is
+       * the durable state the heartbeat was missing: instead of re-deriving
+       * "what am I waiting on" from scratch every pass, the caller queries this
+       * directly and consults `lastChasedAt` (via the `chase:<kind>:<id>`
+       * watermark key, agent_id `"*"` — same non-agent-scoped convention the
+       * table already uses for cross-worktree dedup) to decide whether a nudge
+       * is even due yet, rather than re-pinging on every beat.
+       */
+      listObligations(opts) {
+        const obligations = [];
+        const lastChased = (kind, id) => {
+          const v = this.getWatermark("*", `chase:${kind}:${id}`);
+          return v === null ? null : Number(v);
+        };
+        const tasks = this.db.prepare("SELECT * FROM tasks WHERE state IN ('assigned','in_progress')").all();
+        for (const t of tasks) {
+          const ageMs = opts.now - t.updated_at;
+          const threshold = t.state === "assigned" ? opts.unclaimedAfterMs : opts.staleAfterMs;
+          if (ageMs < threshold) continue;
+          obligations.push({
+            kind: "task",
+            id: t.id,
+            state: t.state,
+            title: t.title,
+            assignee: t.assignee,
+            ageMs,
+            lastChasedAt: lastChased("task", t.id)
+          });
+        }
+        const questions = this.db.prepare("SELECT * FROM questions WHERE state IN ('open','needs_human')").all();
+        for (const q of questions) {
+          const ageMs = opts.now - q.updated_at;
+          if (ageMs < opts.unclaimedAfterMs) continue;
+          obligations.push({
+            kind: "question",
+            id: q.id,
+            state: q.state,
+            title: q.question,
+            assignee: q.asker,
+            ageMs,
+            lastChasedAt: lastChased("question", q.id)
+          });
+        }
+        return obligations;
+      }
+      /** Record that an obligation was just nudged, so the next pass doesn't immediately re-nudge it. */
+      markChased(kind, id, now = Date.now()) {
+        this.setWatermark("*", `chase:${kind}:${id}`, String(now));
+      }
       // --- questions (worktree → expo escalation) ---
       askQuestion(input) {
         const now = input.now ?? Date.now();
@@ -35610,6 +35662,12 @@ function buildServer(store, agentId, config2) {
     }
     return { id };
   };
+  const crossPeerMentionWarning = (text, excluded) => {
+    const excludeSet = new Set(excluded);
+    const mentioned = store.listPeers().map((p) => p.id).filter((id) => !excludeSet.has(id)).filter((id) => new RegExp(`\\b${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text));
+    if (mentioned.length === 0) return void 0;
+    return `mentions ${mentioned.join(", ")} \u2014 a ticket/message shouldn't carry another agent's findings or state (hands#170); restate as a check on the recipient's own surface instead`;
+  };
   const deliverWake = (recipients, meta3) => {
     const result = notify(recipients, meta3);
     if (result.notified.length > 0) {
@@ -35689,6 +35747,10 @@ function buildServer(store, agentId, config2) {
       }
       const peerById = new Map(store.listPeers().map((p) => [p.id, p]));
       const deadRecipients = recipients.filter((r) => peerById.get(r)?.alive === false);
+      const deadWarning = deadRecipients.length > 0 ? `${deadRecipients.join(", ")} process not found (pid check failed) \u2014 message recorded but may never be seen` : void 0;
+      const leakWarning = crossPeerMentionWarning(`${input.subject ?? ""}
+${input.body}`, [agentId, ...recipients]);
+      const warnings = [deadWarning, leakWarning].filter((w) => Boolean(w));
       return asToolResult({
         ok: true,
         id,
@@ -35697,9 +35759,7 @@ function buildServer(store, agentId, config2) {
         woken,
         coalesced,
         notifyFailed,
-        ...deadRecipients.length > 0 ? {
-          warning: `${deadRecipients.join(", ")} process not found (pid check failed) \u2014 message recorded but may never be seen`
-        } : {}
+        ...warnings.length > 0 ? { warning: warnings.join(" \xB7 ") } : {}
       });
     }
   );
@@ -36044,7 +36104,7 @@ function buildServer(store, agentId, config2) {
     "hands_delegate",
     {
       title: "Fire a ticket to a station (delegate a task)",
-      description: 'Hand a ticket (a unit of real work) to a station \u2014 expo use. `to` = a station agent id (station-1, station-2, \u2026), or omit for the unassigned rail ("any available station"). The first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.',
+      description: "Hand a ticket (a unit of real work) to a station \u2014 expo-only (hands#171/#87). `to` = a station agent id (station-1, station-2, \u2026) and is required \u2014 there is no unassigned rail (hands#164: nothing on the bus ever consumes a queued ticket, so a to-less delegation reaches nobody). The first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.",
       inputSchema: {
         title: external_exports3.string(),
         body: external_exports3.string().optional(),
@@ -36059,24 +36119,30 @@ function buildServer(store, agentId, config2) {
     },
     async (input) => {
       store.touch(agentId);
-      if (cfg.topology === "strict-hub" && isStation(agentId)) {
+      if (!isExpo(agentId)) {
         return {
           ...asToolResult({
             ok: false,
-            error: "Stations don't fire tickets. Hand work upward instead: hands_ask for a decision, or hands_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
+            error: "Only the expo may assign tickets to a station. Hand work upward instead: hands_ask for a decision, or hands_send({to:'expo'}) to propose the ticket \u2014 the expo delegates it."
           }),
           isError: true
         };
       }
-      let assignee = null;
-      if (input.to) {
-        const resolved = resolveRecipient(input.to);
-        if ("error" in resolved) {
-          return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
-        }
-        assignee = resolved.id;
+      if (!input.to) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error: "hands_delegate requires `to` \u2014 a station-less ticket sits in a queue nothing ever reads (hands#164). Assign it to a specific station."
+          }),
+          isError: true
+        };
       }
-      if (assignee && isStation(assignee) && cfg.dispatch.requireAttestation && !input.force) {
+      const resolved = resolveRecipient(input.to);
+      if ("error" in resolved) {
+        return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
+      }
+      const assignee = resolved.id;
+      if (isStation(assignee) && cfg.dispatch.requireAttestation && !input.force) {
         const verdict = attestationFor(store, assignee);
         if (!verdict.ready) {
           return {
@@ -36099,10 +36165,18 @@ function buildServer(store, agentId, config2) {
         priority: input.priority ?? null,
         dish: input.dish ?? null
       });
-      if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
-      const assigneePeer = assignee ? store.listPeers().find((p) => p.id === assignee) : void 0;
-      const warning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
-      return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue", ...warning ? { warning } : {} });
+      deliverWake([assignee], { from: agentId, subject: "task" });
+      const assigneePeer = store.listPeers().find((p) => p.id === assignee);
+      const deadWarning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
+      const leakWarning = crossPeerMentionWarning(`${input.title}
+${input.body ?? ""}`, [agentId, assignee]);
+      const warnings = [deadWarning, leakWarning].filter((w) => Boolean(w));
+      return asToolResult({
+        ok: true,
+        id,
+        assignedTo: assignee,
+        ...warnings.length > 0 ? { warning: warnings.join(" \xB7 ") } : {}
+      });
     }
   );
   server.registerTool(
@@ -36350,6 +36424,47 @@ function buildServer(store, agentId, config2) {
           new: r.new,
           updated: r.updated
         });
+      }
+    );
+    server.registerTool(
+      "hands_obligations",
+      {
+        title: "What the expo is waiting on \u2014 chase, don't just heartbeat (expo only, hands#164)",
+        description: "Unclaimed tickets, in-flight tickets past a window, and unanswered escalations \u2014 the durable outstanding-obligations state the heartbeat alone can't provide. Each item carries `lastChasedAt` (null = never nudged) so you can decide non-waking nudge vs a real wake without re-deriving the whole picture every pass. Call `hands_chase_mark` right after you act on one, or the next pass will surface it as still-needing-a-nudge immediately.",
+        inputSchema: {
+          unclaimedAfterMinutes: external_exports3.number().int().min(1).optional().describe("ticket still 'assigned' (station hasn't started it) or question still unanswered past this age. Default 10."),
+          staleAfterMinutes: external_exports3.number().int().min(1).optional().describe("ticket still 'in_progress' past this age \u2014 pair with a transcript-mtime check before treating as a real stall. Default 30.")
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      },
+      async (input) => {
+        store.touch(agentId);
+        const now = Date.now();
+        const obligations = store.listObligations({
+          now,
+          unclaimedAfterMs: (input.unclaimedAfterMinutes ?? 10) * 6e4,
+          staleAfterMs: (input.staleAfterMinutes ?? 30) * 6e4
+        });
+        return asToolResult({
+          obligations: obligations.map((o) => ({ ...o, neverChased: o.lastChasedAt === null }))
+        });
+      }
+    );
+    server.registerTool(
+      "hands_chase_mark",
+      {
+        title: "Record a chase nudge (expo only, hands#164)",
+        description: "Call right after sending a chase nudge or wake for a task or question returned by hands_obligations, so it isn't reported as needing another nudge next pass.",
+        inputSchema: {
+          kind: external_exports3.enum(["task", "question"]),
+          id: external_exports3.number().int()
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+      },
+      async (input) => {
+        store.touch(agentId);
+        store.markChased(input.kind, input.id);
+        return asToolResult({ ok: true });
       }
     );
   }

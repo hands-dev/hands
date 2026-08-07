@@ -131,6 +131,19 @@ export interface TaskRow {
   finished_at: number | null;
 }
 
+/** One outstanding obligation (hands#164) — see `Store.listObligations`. */
+export interface Obligation {
+  kind: "task" | "question";
+  id: number;
+  state: string;
+  title: string;
+  /** task's assignee, or the question's asker */
+  assignee: string | null;
+  ageMs: number;
+  /** null = never nudged */
+  lastChasedAt: number | null;
+}
+
 export interface TodoRow {
   id: number;
   title: string;
@@ -1201,6 +1214,67 @@ export class Store {
         )
         .run(agentId, key, value),
     );
+  }
+
+  /**
+   * Outstanding obligations (hands#164) — tickets the expo is waiting on
+   * (unclaimed past `unclaimedAfterMs`, or in-flight past `staleAfterMs`)
+   * and escalations nobody has answered past `unclaimedAfterMs`. This is
+   * the durable state the heartbeat was missing: instead of re-deriving
+   * "what am I waiting on" from scratch every pass, the caller queries this
+   * directly and consults `lastChasedAt` (via the `chase:<kind>:<id>`
+   * watermark key, agent_id `"*"` — same non-agent-scoped convention the
+   * table already uses for cross-worktree dedup) to decide whether a nudge
+   * is even due yet, rather than re-pinging on every beat.
+   */
+  listObligations(opts: { now: number; unclaimedAfterMs: number; staleAfterMs: number }): Obligation[] {
+    const obligations: Obligation[] = [];
+    const lastChased = (kind: "task" | "question", id: number): number | null => {
+      const v = this.getWatermark("*", `chase:${kind}:${id}`);
+      return v === null ? null : Number(v);
+    };
+
+    const tasks = this.db
+      .prepare("SELECT * FROM tasks WHERE state IN ('assigned','in_progress')")
+      .all() as unknown as TaskRow[];
+    for (const t of tasks) {
+      const ageMs = opts.now - t.updated_at;
+      const threshold = t.state === "assigned" ? opts.unclaimedAfterMs : opts.staleAfterMs;
+      if (ageMs < threshold) continue;
+      obligations.push({
+        kind: "task",
+        id: t.id,
+        state: t.state,
+        title: t.title,
+        assignee: t.assignee,
+        ageMs,
+        lastChasedAt: lastChased("task", t.id),
+      });
+    }
+
+    const questions = this.db
+      .prepare("SELECT * FROM questions WHERE state IN ('open','needs_human')")
+      .all() as unknown as QuestionRow[];
+    for (const q of questions) {
+      const ageMs = opts.now - q.updated_at;
+      if (ageMs < opts.unclaimedAfterMs) continue;
+      obligations.push({
+        kind: "question",
+        id: q.id,
+        state: q.state,
+        title: q.question,
+        assignee: q.asker,
+        ageMs,
+        lastChasedAt: lastChased("question", q.id),
+      });
+    }
+
+    return obligations;
+  }
+
+  /** Record that an obligation was just nudged, so the next pass doesn't immediately re-nudge it. */
+  markChased(kind: "task" | "question", id: number, now: number = Date.now()): void {
+    this.setWatermark("*", `chase:${kind}:${id}`, String(now));
   }
 
   // --- questions (worktree → expo escalation) ---

@@ -115,6 +115,28 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     return { id }; // unknown ref (e.g. the principal) — passes through as before
   };
 
+  // hands#170 — a ticket/message must not carry another peer's findings or
+  // state ("station-3 hit this and relayed it"), the exact leak the retired
+  // "unattributed constraint" escape hatch used to launder by stripping the
+  // byline instead of the content. Flags a body that names a bus peer other
+  // than the sender or the intended recipient(s). Deliberately a WARNING, not
+  // a refusal: a technique reference ("same pattern station-2 used") isn't a
+  // leak, and false positives here are real enough that blocking would be
+  // worse than the problem it's meant to catch.
+  const crossPeerMentionWarning = (text: string, excluded: readonly string[]): string | undefined => {
+    const excludeSet = new Set(excluded);
+    const mentioned = store
+      .listPeers()
+      .map((p) => p.id)
+      .filter((id) => !excludeSet.has(id))
+      .filter((id) => new RegExp(`\\b${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`).test(text));
+    if (mentioned.length === 0) return undefined;
+    return (
+      `mentions ${mentioned.join(", ")} — a ticket/message shouldn't carry another agent's ` +
+      "findings or state (hands#170); restate as a check on the recipient's own surface instead"
+    );
+  };
+
   // Deliver a real wake: append .notify lines AND log them (wake accounting).
   // Every actual wake goes through here so wakesLastHour on the board stays true.
   // Only recipients whose .notify write actually succeeded get counted as
@@ -265,6 +287,12 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       // into the void — this is exactly the discrepancy #173 asked to surface.
       const peerById = new Map(store.listPeers().map((p) => [p.id, p]));
       const deadRecipients = recipients.filter((r) => peerById.get(r)?.alive === false);
+      const deadWarning =
+        deadRecipients.length > 0
+          ? `${deadRecipients.join(", ")} process not found (pid check failed) — message recorded but may never be seen`
+          : undefined;
+      const leakWarning = crossPeerMentionWarning(`${input.subject ?? ""}\n${input.body}`, [agentId, ...recipients]);
+      const warnings = [deadWarning, leakWarning].filter((w): w is string => Boolean(w));
       return asToolResult({
         ok: true,
         id,
@@ -273,13 +301,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         woken,
         coalesced,
         notifyFailed,
-        ...(deadRecipients.length > 0
-          ? {
-              warning:
-                `${deadRecipients.join(", ")} process not found (pid check failed) — ` +
-                "message recorded but may never be seen",
-            }
-          : {}),
+        ...(warnings.length > 0 ? { warning: warnings.join(" · ") } : {}),
       });
     },
   );
@@ -697,9 +719,11 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     {
       title: "Fire a ticket to a station (delegate a task)",
       description:
-        "Hand a ticket (a unit of real work) to a station — expo use. `to` = a station agent id " +
-        '(station-1, station-2, …), or omit for the unassigned rail ("any available station"). The ' +
-        "first step for a fresh priority is usually a plan. Include enough detail to act; cite the priority.",
+        "Hand a ticket (a unit of real work) to a station — expo-only (hands#171/#87). `to` = a " +
+        "station agent id (station-1, station-2, …) and is required — there is no unassigned rail " +
+        "(hands#164: nothing on the bus ever consumes a queued ticket, so a to-less delegation " +
+        "reaches nobody). The first step for a fresh priority is usually a plan. Include enough " +
+        "detail to act; cite the priority.",
       inputSchema: {
         title: z.string(),
         body: z.string().optional(),
@@ -722,32 +746,50 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     },
     async (input) => {
       store.touch(agentId);
-      // Strict hub-and-spoke: delegation flows downward from the hub only.
-      if (cfg.topology === "strict-hub" && isStation(agentId)) {
+      // Assignment is expo-exclusive (hands#171/#87 phase a) — a sous (once it
+      // exists) composes tickets and hands them to the expo, it does not
+      // assign them to stations, and neither can a station assign itself or
+      // another. Unconditional, not scoped to strict-hub topology: the old
+      // check was about station-to-station MESSAGING; this is about WHO may
+      // assign, which the principal set as an absolute rule independent of
+      // topology.
+      if (!isExpo(agentId)) {
         return {
           ...asToolResult({
             ok: false,
             error:
-              "Stations don't fire tickets. Hand work upward instead: hands_ask for a decision, or " +
-              "hands_send({to:'expo'}) to propose the ticket — the expo delegates it.",
+              "Only the expo may assign tickets to a station. Hand work upward instead: hands_ask " +
+              "for a decision, or hands_send({to:'expo'}) to propose the ticket — the expo delegates it.",
           }),
           isError: true,
         };
       }
-      let assignee: string | null = null;
-      if (input.to) {
-        const resolved = resolveRecipient(input.to);
-        if ("error" in resolved) {
-          return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
-        }
-        assignee = resolved.id;
+      // No unassigned rail (hands#164) — a to-less delegation is a dispatch
+      // target with no consumer: a station's own pass only ever queries
+      // assignee:"<self>", so nothing on the bus ever discovers a queued
+      // ticket unless the expo happens to remember and message someone by
+      // hand. Reject outright rather than silently accept a delegation that
+      // reaches nobody.
+      if (!input.to) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error: "hands_delegate requires `to` — a station-less ticket sits in a queue nothing ever reads (hands#164). Assign it to a specific station.",
+          }),
+          isError: true,
+        };
       }
+      const resolved = resolveRecipient(input.to);
+      if ("error" in resolved) {
+        return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
+      }
+      const assignee = resolved.id;
 
       // Attestation gate (hands#157). A ticket is only as good as the picture
       // behind it, and the expo is the single point where a stale picture
       // becomes EVERYONE's stale picture. Enforced here rather than in the expo
       // skill: prose asks a model to comply; the server makes it true.
-      if (assignee && isStation(assignee) && cfg.dispatch.requireAttestation && !input.force) {
+      if (isStation(assignee) && cfg.dispatch.requireAttestation && !input.force) {
         const verdict = attestationFor(store, assignee);
         if (!verdict.ready) {
           return {
@@ -774,16 +816,28 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         priority: input.priority ?? null,
         dish: input.dish ?? null,
       });
-      if (assignee) deliverWake([assignee], { from: agentId, subject: "task" });
+      deliverWake([assignee], { from: agentId, subject: "task" });
       // hands#183 — a ticket delivered to a confirmed-dead process should say
       // so loudly rather than proceed as clean success (the expo dispatching
       // into the void is exactly the failure this ticket is fixing).
-      const assigneePeer = assignee ? store.listPeers().find((p) => p.id === assignee) : undefined;
-      const warning =
+      const assigneePeer = store.listPeers().find((p) => p.id === assignee);
+      const deadWarning =
         assigneePeer && !assigneePeer.alive
           ? `${assignee} process not found (pid ${assigneePeer.pid} not running) — ticket created but may sit unclaimed`
           : undefined;
-      return asToolResult({ ok: true, id, assignedTo: assignee ?? "queue", ...(warning ? { warning } : {}) });
+      // hands#170 — a ticket must not carry another peer's findings/state; a
+      // careless mention is exactly the leak the "unattributed constraint"
+      // escape hatch used to launder. Non-blocking: false positives are real
+      // (e.g. "same pattern station-2 used" about a technique isn't a leak),
+      // so this surfaces loudly rather than refusing.
+      const leakWarning = crossPeerMentionWarning(`${input.title}\n${input.body ?? ""}`, [agentId, assignee]);
+      const warnings = [deadWarning, leakWarning].filter((w): w is string => Boolean(w));
+      return asToolResult({
+        ok: true,
+        id,
+        assignedTo: assignee,
+        ...(warnings.length > 0 ? { warning: warnings.join(" · ") } : {}),
+      });
     },
   );
 
@@ -1104,6 +1158,66 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           new: r.new,
           updated: r.updated,
         });
+      },
+    );
+
+    server.registerTool(
+      "hands_obligations",
+      {
+        title: "What the expo is waiting on — chase, don't just heartbeat (expo only, hands#164)",
+        description:
+          "Unclaimed tickets, in-flight tickets past a window, and unanswered escalations — the " +
+          "durable outstanding-obligations state the heartbeat alone can't provide. Each item carries " +
+          "`lastChasedAt` (null = never nudged) so you can decide non-waking nudge vs a real wake " +
+          "without re-deriving the whole picture every pass. Call `hands_chase_mark` right after you " +
+          "act on one, or the next pass will surface it as still-needing-a-nudge immediately.",
+        inputSchema: {
+          unclaimedAfterMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .optional()
+            .describe("ticket still 'assigned' (station hasn't started it) or question still unanswered past this age. Default 10."),
+          staleAfterMinutes: z
+            .number()
+            .int()
+            .min(1)
+            .optional()
+            .describe("ticket still 'in_progress' past this age — pair with a transcript-mtime check before treating as a real stall. Default 30."),
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        const now = Date.now();
+        const obligations = store.listObligations({
+          now,
+          unclaimedAfterMs: (input.unclaimedAfterMinutes ?? 10) * 60_000,
+          staleAfterMs: (input.staleAfterMinutes ?? 30) * 60_000,
+        });
+        return asToolResult({
+          obligations: obligations.map((o) => ({ ...o, neverChased: o.lastChasedAt === null })),
+        });
+      },
+    );
+
+    server.registerTool(
+      "hands_chase_mark",
+      {
+        title: "Record a chase nudge (expo only, hands#164)",
+        description:
+          "Call right after sending a chase nudge or wake for a task or question returned by " +
+          "hands_obligations, so it isn't reported as needing another nudge next pass.",
+        inputSchema: {
+          kind: z.enum(["task", "question"]),
+          id: z.number().int(),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        store.markChased(input.kind, input.id);
+        return asToolResult({ ok: true });
       },
     );
   }

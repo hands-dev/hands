@@ -142,8 +142,11 @@ describe("open topology (opt-out)", () => {
     expect(notifyLines("station-2").length).toBeGreaterThan(0);
     const bc = await call(w1, "hands_send", { to: "*", body: "hi" });
     expect(bc.isError).toBe(false);
+    // hands#171/#87 phase a: assignment is expo-exclusive UNCONDITIONALLY —
+    // "open" topology restores station-to-station messaging, not delegation.
     const del = await call(w1, "hands_delegate", { title: "task", to: "station-2" });
-    expect(del.isError).toBe(false);
+    expect(del.isError).toBe(true);
+    expect(String(del.body.error)).toContain("Only the expo may assign");
   });
 });
 

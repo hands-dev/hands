@@ -205,6 +205,126 @@ describe("silent-failure surfacing (hands#173, hands#183)", () => {
   });
 });
 
+describe("assignment is expo-exclusive, no unassigned rail (hands#171/#87 phase a, hands#164)", () => {
+  it("rejects a to-less delegation outright — no more silent queue", async () => {
+    const expo = await connect("expo");
+    const res = await call(expo, "hands_delegate", { title: "orphan ticket" });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("requires `to`");
+  });
+
+  it("rejects a station trying to assign itself or another station, even naming itself", async () => {
+    const w1 = await connect("station-1");
+    stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 2 });
+    const toOther = await call(w1, "hands_delegate", { title: "task", to: "station-2" });
+    expect(toOther.isError).toBe(true);
+    expect(String(toOther.body.error)).toContain("Only the expo may assign");
+    const toSelf = await call(w1, "hands_delegate", { title: "task", to: "station-1" });
+    expect(toSelf.isError).toBe(true);
+  });
+
+  it("still lets the expo assign normally", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    expect(res.isError).toBe(false);
+    expect(res.body.assignedTo).toBe("station-1");
+  });
+});
+
+describe("cross-peer-id mention warning (hands#170)", () => {
+  it("hands_delegate warns when a ticket body names another peer", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
+    const res = await call(expo, "hands_delegate", {
+      title: "fix the bug",
+      body: "station-2 found this in their branch, go check it",
+      to: "station-1",
+    });
+    expect(res.isError).toBe(false); // still lands — warning, not a block
+    expect(String(res.body.warning)).toContain("station-2");
+    expect(String(res.body.warning)).toContain("hands#170");
+  });
+
+  it("hands_delegate does NOT warn when the body only names the sender or the recipient", async () => {
+    const expo = await connect("expo");
+    // A real, alive pid — isolates this test to the leak-warning path only,
+    // no interference from the unrelated hands#183 dead-pid warning.
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
+    const res = await call(expo, "hands_delegate", {
+      title: "fix the bug",
+      body: "station-1, confirm your diff to main.ts is limited to the digest line",
+      to: "station-1",
+    });
+    expect(res.body.warning).toBeUndefined();
+  });
+
+  it("hands_send warns when a DM body names a third peer", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    stores[0]!.registerAgent({ id: "station-3", cwd: "/", pid: 3 });
+    const res = await call(expo, "hands_send", {
+      to: "station-1",
+      body: "station-3 is behind on this — factor that in",
+    });
+    expect(String(res.body.warning)).toContain("station-3");
+  });
+});
+
+describe("hands_obligations / hands_chase_mark (hands#164)", () => {
+  it("surfaces an unclaimed ticket past the threshold, with lastChasedAt null until marked", async () => {
+    const expo = await connect("expo");
+    const store = stores[0]!;
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    // Backdated directly via the store (bypassing the MCP tool, which has no
+    // `now` param) so the ticket reads as unclaimed past a 1-minute threshold.
+    const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "plan X", now: Date.now() - 2 * 60_000 });
+
+    const before = await call(expo, "hands_obligations", { unclaimedAfterMinutes: 1 });
+    const obligations = before.body.obligations as Array<{ kind: string; id: number; lastChasedAt: number | null; neverChased: boolean }>;
+    const mine = obligations.find((o) => o.kind === "task" && o.id === id);
+    expect(mine).toBeDefined();
+    expect(mine?.lastChasedAt).toBeNull();
+    expect(mine?.neverChased).toBe(true);
+
+    await call(expo, "hands_chase_mark", { kind: "task", id });
+    const after = await call(expo, "hands_obligations", { unclaimedAfterMinutes: 1 });
+    const mineAfter = (after.body.obligations as Array<{ id: number; neverChased: boolean }>).find((o) => o.id === id);
+    expect(mineAfter?.neverChased).toBe(false);
+  });
+
+  it("does not surface a fresh ticket still inside the threshold", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const res = await call(expo, "hands_obligations", { unclaimedAfterMinutes: 10 });
+    expect(res.body.obligations).toEqual([]);
+  });
+
+  it("surfaces a long-unanswered escalation", async () => {
+    const expo = await connect("expo");
+    const store = stores[0]!;
+    const id = store.askQuestion({ asker: "station-1", question: "ship it?", now: Date.now() - 20 * 60_000 });
+    store.escalateQuestion({ id, recommendation: "yes", now: Date.now() - 20 * 60_000 });
+
+    const res = await call(expo, "hands_obligations", { unclaimedAfterMinutes: 10 });
+    const obligations = res.body.obligations as Array<{ kind: string; id: number }>;
+    expect(obligations.some((o) => o.kind === "question" && o.id === id)).toBe(true);
+  });
+
+  it("is expo-only — not registered for a station", async () => {
+    const expo = await connect("expo");
+    const w1 = await connect("station-1");
+    const expoTools = (await expo.listTools()).tools.map((t) => t.name);
+    const stationTools = (await w1.listTools()).tools.map((t) => t.name);
+    expect(expoTools).toContain("hands_obligations");
+    expect(expoTools).toContain("hands_chase_mark");
+    expect(stationTools).not.toContain("hands_obligations");
+    expect(stationTools).not.toContain("hands_chase_mark");
+  });
+});
+
 describe("board stateHash + full bundle", () => {
   it("is stable when nothing changes and moves when assignments change", async () => {
     const expo = await connect("expo");
