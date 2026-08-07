@@ -28,7 +28,25 @@ chatty behavior is visible.
   `wake: false`, or put them in the ticket's `result`. Only send a waking message when the expo
   must act *now*.
 
-## First invocation — find your identity, then arm the Monitor (once)
+## First invocation — claim your seat, find your identity, then arm the Monitor (once)
+
+0. **Claim the worktree before anything else** (hands#153):
+
+   ```bash
+   hands claim
+   ```
+
+   A station **is** its worktree, and two sessions in one worktree is a silent
+   correctness hazard, not a degraded mode. It has happened here twice: two panes answering as
+   one station sent flatly contradictory reports in the same update — one with commit SHAs and
+   test counts, the other saying it had written nothing. Neither was lying. A station also found
+   commits on its own branch it had not made, and escalated an unexplained concurrent writer that
+   turned out to be itself.
+
+   **If `hands claim` refuses, STOP.** Do not work, do not arm a Monitor, do not touch a file. It
+   will name the pid already holding the seat. Say so to the expo and end your turn — a second
+   session here will commit over the first, and the losing write leaves no trace. Only run
+   `hands claim --evict` if the principal explicitly tells you to take the seat.
 
 1. **Resolve your id + notify path** with the `hands_paths` tool — the bus is scoped per repo,
    so never guess paths. Note `agentId` (your `station-<n>`), `notify`, `coordinationDir`,
