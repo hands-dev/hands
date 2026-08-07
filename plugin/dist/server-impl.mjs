@@ -7285,6 +7285,23 @@ var init_store = __esm({
         holder     TEXT NOT NULL,
         expires_at INTEGER NOT NULL
       );
+
+      -- Station readiness (hands#157). A station attests about ITSELF: clean
+      -- and ready. The expo does not inspect or clean other worktrees; it reads
+      -- these. head_sha and origin_sha are what make the record expire by
+      -- EVENT rather than by clock -- a stale attestation carrying a freshness
+      -- stamp is worse than none, which is the flaw #157 identified in
+      -- priorities reporting stale:false about a superseded picture.
+      CREATE TABLE IF NOT EXISTS attestations (
+        agent_id   TEXT PRIMARY KEY,
+        ok         INTEGER NOT NULL,       -- 1 = clean and ready, 0 = declined
+        reason     TEXT,                   -- the station's OWN words when declining
+        head_sha   TEXT,                   -- worktree HEAD at attestation time
+        origin_sha TEXT,                   -- origin/main at attestation time
+        lock_pid   INTEGER,                -- worktree lock holder, to spot handover
+        details    TEXT,                   -- JSON: the individual checks
+        at         INTEGER NOT NULL
+      );
     `);
         this.ensureColumn("agents", "branch", "TEXT");
         this.ensureColumn("agents", "activity", "TEXT");
@@ -7378,6 +7395,52 @@ var init_store = __esm({
        * not presence-windowed (unlike listPeers): an offline station's craft must
        * still resolve so its files inject correctly at the next connect.
        */
+      /**
+       * Record a station's self-attestation (hands#157).
+       *
+       * The station asserts about ITSELF; the expo reads. `ok:false` is a
+       * first-class outcome, not a failure to record — a station that says "14
+       * uncommitted files I don't recognise" is giving better information than any
+       * outside inspection could, and it is information only that station has.
+       */
+      setAttestation(input) {
+        this.withRetry(
+          () => this.db.prepare(
+            `INSERT INTO attestations (agent_id, ok, reason, head_sha, origin_sha, lock_pid, details, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(agent_id) DO UPDATE SET
+             ok = excluded.ok, reason = excluded.reason, head_sha = excluded.head_sha,
+             origin_sha = excluded.origin_sha, lock_pid = excluded.lock_pid,
+             details = excluded.details, at = excluded.at`
+          ).run(
+            input.agentId,
+            input.ok ? 1 : 0,
+            input.reason ?? null,
+            input.headSha ?? null,
+            input.originSha ?? null,
+            input.lockPid ?? null,
+            input.details === void 0 ? null : JSON.stringify(input.details),
+            input.now ?? Date.now()
+          )
+        );
+        this.journal("attest", {
+          agent: input.agentId,
+          ok: input.ok,
+          reason: input.reason ?? null,
+          at: input.now ?? Date.now()
+        });
+      }
+      getAttestation(agentId) {
+        const row = this.db.prepare(`SELECT * FROM attestations WHERE agent_id = ?`).get(agentId);
+        return row ?? null;
+      }
+      allAttestations() {
+        return this.db.prepare(`SELECT * FROM attestations`).all();
+      }
+      /** Drop a station's attestation — used when an event invalidates it. */
+      clearAttestation(agentId) {
+        this.withRetry(() => this.db.prepare(`DELETE FROM attestations WHERE agent_id = ?`).run(agentId));
+      }
       getFocus(agentId) {
         const row = this.db.prepare(`SELECT focus FROM agents WHERE id = ?`).get(agentId);
         return row?.focus ?? null;
