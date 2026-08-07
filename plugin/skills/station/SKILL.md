@@ -48,6 +48,10 @@ chatty behavior is visible.
    session here will commit over the first, and the losing write leaves no trace. Only run
    `hands claim --evict` if the principal explicitly tells you to take the seat.
 
+   Then get to zero state and attest: **`/hands:ready`** (hands#157). The expo cannot dispatch to
+   a station with no current attestation, so this is how you come on shift — and `hands attest`
+   names exactly what to fix if you are carrying leftovers.
+
 1. **Resolve your id + notify path** with the `hands_paths` tool — the bus is scoped per repo,
    so never guess paths. Note `agentId` (your `station-<n>`), `notify`, `coordinationDir`,
    `craftsDir` (personal crafts), and `sharedCraftsDir` (repo-shared crafts). The craft roster

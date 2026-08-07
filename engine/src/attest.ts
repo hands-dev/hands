@@ -60,18 +60,18 @@ function git(cwd: string, args: string[]): string | null {
 /**
  * Assess a station worktree.
  *
- * `activeTicketsWithoutSession` is passed in rather than derived here: only the
- * caller knows the bus state, and a ticket sitting `in_progress` with nobody
- * working it is the half-made dish nothing currently detects. An `assigned`
- * ticket is NOT dirty — that is the menu, and `/hands:last-call` deliberately
- * preps next-day work. Treating it as leftover would make the close-out ritual
- * and the open-up gate fight each other every morning.
+ * On tickets: neither an `assigned` ticket nor this station's own `in_progress`
+ * ticket is dirt. `/hands:last-call` deliberately preps next-day work and leaves
+ * things in_progress so a station knows where to start — treating either as
+ * leftover would make the close-out ritual and the open-up gate reject each
+ * other every morning. An order waiting is the menu; a dish half-cooked is
+ * uncommitted CHANGES, which the `clean` check already catches.
  */
 export function assessReadiness(opts: {
   worktree: string;
   agentId: string;
-  /** ids of tickets this station holds in_progress with no live session */
-  strandedTickets?: string[];
+  /** ids of tickets this station holds in_progress and will resume (reported, never blocking) */
+  resumingTickets?: string[];
   notifyPath?: string;
   /** skip the network fetch (tests, offline) */
   offline?: boolean;
@@ -106,14 +106,21 @@ export function assessReadiness(opts: {
         : `${stashCount} stash(es) — an unclaimed stash is a question for the expo, not garbage`,
   });
 
-  const stranded = opts.strandedTickets ?? [];
+  // A station's OWN in_progress ticket is work to resume, not dirt — the
+  // station is alive and about to cook it, and /hands:last-call deliberately
+  // leaves work in_progress so a station knows where to start. Flagging it here
+  // would fail attestation every morning for doing exactly what the close-out
+  // asked. "Stranded" means in_progress with NO live session, which is a fact
+  // about OTHER stations for the expo to detect — not something a running
+  // station can be guilty of about itself.
+  const resuming = opts.resumingTickets ?? [];
   checks.push({
     name: "tickets",
-    ok: stranded.length === 0,
+    ok: true,
     detail:
-      stranded.length === 0
-        ? "no half-made dishes"
-        : `ticket(s) ${stranded.join(", ")} are in_progress with nobody working them`,
+      resuming.length === 0
+        ? "no tickets to resume"
+        : `resuming ${resuming.join(", ")} from the previous shift`,
   });
 
   // ── nothing missing ──────────────────────────────────────────────────────

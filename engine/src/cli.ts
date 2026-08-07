@@ -1045,14 +1045,14 @@ function cmdAttest(argv: string[]): void {
 
   const store = new Store();
   try {
-    const stranded = store
+    const resuming = store
       .listTasks({ assignee: agentId, state: "in_progress" })
       .map((t) => `#${t.id}`);
 
     const readiness = assessReadiness({
       worktree: process.cwd(),
       agentId,
-      strandedTickets: flag(argv, "--assume-working") ? [] : stranded,
+      resumingTickets: resuming,
       offline: flag(argv, "--offline"),
     });
 
