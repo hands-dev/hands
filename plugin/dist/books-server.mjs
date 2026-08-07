@@ -3229,8 +3229,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path12) {
-      let input = path12;
+    function removeDotSegments(path17) {
+      let input = path17;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3482,8 +3482,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path12, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path12 && path12 !== "/" ? path12 : void 0;
+        const [path17, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path17 && path17 !== "/" ? path17 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6902,12 +6902,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs9, exportName) {
+    function addFormats(ajv, list, fs14, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs9[f]);
+        ajv.addFormat(f, fs14[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -6916,8 +6916,8 @@ var require_dist = __commonJS({
 });
 
 // src/books-server.ts
-import * as fs8 from "node:fs";
-import * as path11 from "node:path";
+import * as fs13 from "node:fs";
+import * as path16 from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -7279,8 +7279,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path12, errorMaps, issueData } = params;
-  const fullPath = [...path12, ...issueData.path || []];
+  const { data, path: path17, errorMaps, issueData } = params;
+  const fullPath = [...path17, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -7395,11 +7395,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path12, key) {
+  constructor(parent, value, path17, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path12;
+    this._path = path17;
     this._key = key;
   }
   get path() {
@@ -11322,10 +11322,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path12) {
-  if (!path12)
+function getElementAtPath(obj, path17) {
+  if (!path17)
     return obj;
-  return path12.reduce((acc, key) => acc?.[key], obj);
+  return path17.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -11708,11 +11708,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path12, issues) {
+function prefixIssues(path17, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path12);
+    iss.path.unshift(path17);
     return iss;
   });
 }
@@ -11895,7 +11895,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path12 = []) => {
+  const processError = (error49, path17 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -11905,7 +11905,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path12, ...issue2.path];
+        const fullpath = [...path17, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -11937,8 +11937,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path12 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path12) {
+  const path17 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path17) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -22546,11 +22546,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path12) {
-  if (path12.length === 0) {
+function getDotPath(path17) {
+  if (path17.length === 0) {
     return "object root";
   }
-  return path12.reduce((acc, seg, index) => {
+  return path17.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -24360,13 +24360,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path12 = ref.slice(1).split("/").filter(Boolean);
-  if (path12.length === 0) {
+  const path17 = ref.slice(1).split("/").filter(Boolean);
+  if (path17.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path12[0] === defsKey) {
-    const key = path12[1];
+  if (path17[0] === defsKey) {
+    const key = path17[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -30258,10 +30258,10 @@ var StdioServerTransport = class {
 };
 
 // src/remote.ts
-import { execFileSync as execFileSync2 } from "node:child_process";
-import * as fs7 from "node:fs";
-import * as os5 from "node:os";
-import * as path10 from "node:path";
+import { execFileSync as execFileSync5 } from "node:child_process";
+import * as fs12 from "node:fs";
+import * as os7 from "node:os";
+import * as path15 from "node:path";
 
 // src/config.ts
 import * as fs3 from "node:fs";
@@ -30292,33 +30292,61 @@ import * as fs5 from "node:fs";
 import * as path5 from "node:path";
 
 // src/snapshot.ts
-import * as path9 from "node:path";
+import * as path14 from "node:path";
 
-// src/board.ts
-import { createHash as createHash2 } from "node:crypto";
-
-// src/identity.ts
-import * as path6 from "node:path";
-
-// src/board.ts
+// src/attest.ts
+import { execFileSync as execFileSync3 } from "node:child_process";
 import * as path7 from "node:path";
 
-// src/store.ts
+// src/worktree-lock.ts
+import * as crypto from "node:crypto";
 import * as fs6 from "node:fs";
+import * as os4 from "node:os";
+import * as path6 from "node:path";
+
+// src/watchers.ts
+import { execFileSync as execFileSync2 } from "node:child_process";
+import * as fs7 from "node:fs";
+
+// src/board.ts
+import { createHash as createHash3 } from "node:crypto";
+
+// src/identity.ts
+import * as path8 from "node:path";
+
+// src/board.ts
+import * as path9 from "node:path";
+
+// src/store.ts
+import * as fs8 from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 var ONLINE_WINDOW_MS = 15 * 6e4;
 
 // src/board.ts
 var IDLE_THRESHOLD_MS = 3 * 6e4;
 
+// src/provision.ts
+import { execFileSync as execFileSync4, spawn } from "node:child_process";
+import * as fs11 from "node:fs";
+import * as os6 from "node:os";
+import * as path13 from "node:path";
+
+// src/crafts.ts
+import * as fs9 from "node:fs";
+import * as path10 from "node:path";
+
+// src/seed-permissions.ts
+import * as fs10 from "node:fs";
+import * as path11 from "node:path";
+
 // src/theming.ts
-import * as os4 from "node:os";
-import * as path8 from "node:path";
+import * as os5 from "node:os";
+import * as path12 from "node:path";
 
 // src/remote.ts
 var GIT_TIMEOUT_MS = 2e4;
 function git(cwd, args) {
-  return execFileSync2("git", args, {
+  return execFileSync5("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -30361,7 +30389,7 @@ function syncPull(dir) {
 }
 function listProjects(dir) {
   try {
-    return fs7.readdirSync(path10.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs12.readdirSync(path15.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -30386,16 +30414,16 @@ function requireProject(cfg, input) {
   return sanitizeSegment(project);
 }
 function journalPath(dir, ...segments) {
-  const root = path11.resolve(dir, "journal");
-  const full = path11.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
-  if (full !== root && !full.startsWith(`${root}${path11.sep}`)) return null;
+  const root = path16.resolve(dir, "journal");
+  const full = path16.resolve(root, ...segments.map((s) => sanitizeSegment(s)));
+  if (full !== root && !full.startsWith(`${root}${path16.sep}`)) return null;
   return full;
 }
 function listHandles(dir, project) {
   const p = journalPath(dir, project);
   if (!p) return [];
   try {
-    return fs8.readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs13.readdirSync(p, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -30404,7 +30432,7 @@ function listDigestDates(dir, project, handle) {
   const p = journalPath(dir, project, handle);
   if (!p) return [];
   try {
-    return fs8.readdirSync(p).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
+    return fs13.readdirSync(p).filter((f) => /^\d{4}-\d{2}-\d{2}\.md$/.test(f)).map((f) => f.slice(0, 10)).sort().reverse();
   } catch {
     return [];
   }
@@ -30413,7 +30441,7 @@ function listCraftSlugs(dir, project, handle) {
   const p = journalPath(dir, project, handle, "crafts");
   if (!p) return [];
   try {
-    const files = fs8.readdirSync(p);
+    const files = fs13.readdirSync(p);
     const slugs = new Set(
       files.filter((f) => f.endsWith(".md")).map((f) => f.endsWith(".skill.md") ? f.slice(0, -".skill.md".length) : f.slice(0, -".md".length))
     );
@@ -30424,7 +30452,7 @@ function listCraftSlugs(dir, project, handle) {
 }
 function readCraftFile(file2) {
   try {
-    return fs8.readFileSync(file2, "utf8");
+    return fs13.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -30502,8 +30530,8 @@ function buildBooksServer(cfg) {
       const handleDir = journalPath(cfg.dir, p, h);
       try {
         if (!handleDir) throw new Error("path escaped the journal root");
-        const file2 = path11.join(handleDir, "README.md");
-        return asToolResult({ project: p, handle: h, markdown: fs8.readFileSync(file2, "utf8") });
+        const file2 = path16.join(handleDir, "README.md");
+        return asToolResult({ project: p, handle: h, markdown: fs13.readFileSync(file2, "utf8") });
       } catch {
         return errorResult(`no index for ${p}/${h} \u2014 check books_list_handles`);
       }
@@ -30530,7 +30558,7 @@ function buildBooksServer(cfg) {
       const file2 = journalPath(cfg.dir, p, h, `${date5}.md`);
       try {
         if (!file2) throw new Error("path escaped the journal root");
-        return asToolResult({ project: p, handle: h, date: date5, markdown: fs8.readFileSync(file2, "utf8") });
+        return asToolResult({ project: p, handle: h, date: date5, markdown: fs13.readFileSync(file2, "utf8") });
       } catch {
         return errorResult(`no digest for ${p}/${h}/${date5} \u2014 check books_list_days`);
       }
@@ -30574,8 +30602,8 @@ function buildBooksServer(cfg) {
       const s = sanitizeSegment(slug);
       const craftsDir = journalPath(cfg.dir, p, h, "crafts");
       if (!craftsDir) return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
-      const book = readCraftFile(path11.join(craftsDir, `${s}.md`));
-      const skill = readCraftFile(path11.join(craftsDir, `${s}.skill.md`));
+      const book = readCraftFile(path16.join(craftsDir, `${s}.md`));
+      const skill = readCraftFile(path16.join(craftsDir, `${s}.skill.md`));
       if (book === null && skill === null) {
         return errorResult(`no craft "${s}" for ${p}/${h} \u2014 check books_list_crafts`);
       }
@@ -30606,8 +30634,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL(fs8.realpathSync(argv1)).href;
-    const self = pathToFileURL(fs8.realpathSync(fileURLToPath(import.meta.url))).href;
+    const entry = pathToFileURL(fs13.realpathSync(argv1)).href;
+    const self = pathToFileURL(fs13.realpathSync(fileURLToPath(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL(argv1).href;

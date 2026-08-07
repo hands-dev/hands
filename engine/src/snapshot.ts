@@ -1,5 +1,7 @@
 import * as path from "node:path";
+import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { IDLE_THRESHOLD_MS } from "./board.js";
+import { listStations } from "./provision.js";
 import { readPriorities } from "./priorities.js";
 import { type MessageRow, Store } from "./store.js";
 import { themeColorForIndex } from "./theming.js";
@@ -37,6 +39,14 @@ export interface SnapshotAgent {
    * id that doesn't parse as `station-<n>`.
    */
   themeColor: string | null;
+  /**
+   * Readiness (hands#157). Dispatch depends on this, so it has to be legible at
+   * a glance or the gate becomes a mystery stall. "declined" carries the
+   * station's OWN words in `readyReason` — information only that station has,
+   * which is the whole argument for attestation over inspection.
+   */
+  ready: "ready" | "unattested" | "declined" | "expired";
+  readyReason: string | null;
 }
 
 /** `station-<n>` → n, or null when the id doesn't parse (e.g. "expo"). */
@@ -189,6 +199,29 @@ function activity(raw: string | null): { files: string[]; ticket: string | null 
 }
 
 /** Read-only view of the whole bus for the dashboard. */
+
+/**
+ * A station's readiness for the board. Four states rather than a boolean:
+ * "unattested" (never said), "declined" (said no, and why), "expired" (said yes
+ * but the world moved), "ready". A boolean would collapse the three failure
+ * modes that need different responses.
+ */
+function readinessOf(
+  store: Store,
+  agentId: string,
+  worktree: string | undefined,
+): { ready: SnapshotAgent["ready"]; readyReason: string | null } {
+  if (!/^station-\d+$/.test(agentId)) return { ready: "ready", readyReason: null };
+  const record = store.getAttestation(agentId);
+  if (!record) return { ready: "unattested", readyReason: null };
+  if (!record.ok) return { ready: "declined", readyReason: record.reason };
+  if (!worktree) return { ready: "ready", readyReason: null };
+  const verdict = attestationValid(record, currentWorktreeFacts(worktree));
+  return verdict.valid
+    ? { ready: "ready", readyReason: null }
+    : { ready: "expired", readyReason: verdict.reason };
+}
+
 export function buildSnapshot(
   store: Store,
   now: number = Date.now(),
@@ -196,12 +229,23 @@ export function buildSnapshot(
 ): Snapshot {
   const peers = store.listPeers(now);
   const wakes = store.wakeCounts(now);
+  // Readiness per station (hands#157). Read once, not per-agent: the worktree
+  // facts come from git, and re-deriving them inside a map would shell out per
+  // station on every snapshot — this feeds an SSE stream.
+  const stationDirs = new Map<string, string>();
+  try {
+    for (const st of listStations()) stationDirs.set(st.id, st.dir);
+  } catch {
+    /* not in a repo / no stations — every station reads as unattested, which is honest */
+  }
+
   const agents: SnapshotAgent[] = peers.map((p) => {
     const { files, ticket } = activity(p.activity);
     const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
     const state: AgentState = !p.online ? "offline" : activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
     const index = stationIndex(p.id);
     return {
+      ...readinessOf(store, p.id, stationDirs.get(p.id)),
       id: p.id,
       state,
       online: p.online,
