@@ -23,7 +23,8 @@ server also conform to the [Agent Plugins](https://agent-plugins.org) open stand
 That registers everything: the MCP server (`hands_*` tools), the passive-standup hooks
 (`Stop → publish`, `UserPromptSubmit → board`), the `/hands:expo` · `/hands:station` · `/hands:init` ·
 `/hands:crafts` · `/hands:dashboard` · `/hands:feedback` · `/hands:login` · `/hands:rail` ·
-`/hands:hands` skills, and the `hands` CLI on your Bash PATH. Requires Node ≥ 22.5.
+`/hands:hands` · `/hands:install-cli` skills, and the `hands` CLI on your Bash PATH. Requires
+Node ≥ 22.5.
 
 Then, per repo (from its main checkout) — one slash command:
 
@@ -37,6 +38,10 @@ Then, per repo (from its main checkout) — one slash command:
 ```bash
 curl -fsSL https://hands-cc.dev/install.sh | sh    # → ~/.hands/bin/hands
 ```
+
+Already have the plugin and just want `hands` on a *real* terminal's PATH too (the plugin's own
+copy only lives on Claude Code's internal Bash-tool PATH)? `/hands:install-cli` runs the same
+installer for you, conversationally.
 
 Both can coexist, and when they do the standalone install wins: the plugin's copy only moves when
 you remember to update the plugin, and a stale copy is invisible — the symptom is *"that command
