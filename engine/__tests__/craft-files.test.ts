@@ -5,6 +5,9 @@ import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config.js";
 import {
+  appendRawNote,
+  applyImmediateCraftNote,
+  applyPendingMiseNotes,
   composeChit,
   craftAgentPath,
   craftSkillPath,
@@ -13,6 +16,7 @@ import {
   materializeCraftAgents,
   parseCraftHeader,
   parseCraftNoteBlock,
+  upsertMiseLine,
 } from "../src/crafts.js";
 import { resetRepoInfoCache } from "../src/paths.js";
 import { craftFiles } from "../src/remote.js";
@@ -403,6 +407,191 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     expect(after).toMatch(/craft-saucier \[personal\] —/);
     expect(after).not.toContain("craft-saucier [personal, not yet synced]");
 
+    store.close();
+  });
+});
+
+describe("upsertMiseLine — mechanical, key-based upsert into mise.md (hands#118)", () => {
+  it("appends a new key to an empty/null file", () => {
+    const result = upsertMiseLine(null, "engine/src/foo.ts — exports bar()");
+    expect(result).toBe("- engine/src/foo.ts — exports bar()\n");
+  });
+
+  it("replaces an existing bullet with the same key rather than duplicating it", () => {
+    const before = "- engine/src/foo.ts — exports bar()\n- engine/src/other.ts — does X\n";
+    const after = upsertMiseLine(before, "engine/src/foo.ts — actually exports baz(), not bar()");
+    expect(after).toContain("- engine/src/foo.ts — actually exports baz(), not bar()");
+    expect(after).not.toContain("exports bar()");
+    expect(after).toContain("- engine/src/other.ts — does X");
+    expect(after.match(/engine\/src\/foo\.ts/g)?.length).toBe(1);
+  });
+
+  it("appends rather than replacing when the key differs", () => {
+    const before = "- engine/src/foo.ts — exports bar()\n";
+    const after = upsertMiseLine(before, "engine/src/other.ts — does X");
+    expect(after).toContain("- engine/src/foo.ts — exports bar()");
+    expect(after).toContain("- engine/src/other.ts — does X");
+  });
+
+  it("a body with no recognizable delimiter still appends safely (never throws, never drops it)", () => {
+    const result = upsertMiseLine("- some existing line\n", "just a plain sentence with no dash");
+    expect(result).toContain("- just a plain sentence with no dash");
+    expect(result).toContain("- some existing line");
+  });
+});
+
+describe("appendRawNote — durable, immediate append into book.md/skill.md's raw section (hands#118)", () => {
+  it("creates the heading on a null/empty file", () => {
+    const result = appendRawNote(null, "[book] beurre blanc breaks over 58C");
+    expect(result).toBe("## Raw notes (unfolded)\n- [book] beurre blanc breaks over 58C\n");
+  });
+
+  it("creates the heading below existing curated content, blank-line separated", () => {
+    const result = appendRawNote("> covers: sauces\nExisting curated prose.", "[book] a new learning");
+    expect(result).toBe(
+      "> covers: sauces\nExisting curated prose.\n\n## Raw notes (unfolded)\n- [book] a new learning\n",
+    );
+  });
+
+  it("accumulates under an existing heading rather than creating a second one", () => {
+    const once = appendRawNote(null, "[book] first learning");
+    const twice = appendRawNote(once, "[friction] second learning");
+    expect(twice.match(/## Raw notes \(unfolded\)/g)?.length).toBe(1);
+    expect(twice).toContain("- [book] first learning");
+    expect(twice).toContain("- [friction] second learning");
+  });
+});
+
+describe("Store.markCraftNoteFolded — single-row fold-mark (hands#118)", () => {
+  it("marks exactly one note folded, leaving an older pending sibling untouched", () => {
+    const store = new Store({ env });
+    const olderId = store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "older" });
+    const newerId = store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "mise", body: "newer" });
+    store.markCraftNoteFolded(newerId);
+    const pending = store.pendingCraftNotes("saucier");
+    expect(pending.map((n) => n.id)).toEqual([olderId]);
+    store.close();
+  });
+});
+
+describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
+  it("mise: upserts into mise.md and marks the note folded immediately", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    const id = store.insertCraftNote({
+      craftSlug: "saucier",
+      sourceAgent: "subagent:saucier",
+      kind: "mise",
+      body: "engine/src/foo.ts — exports bar()",
+    });
+    const note = store.getCraftNote(id)!;
+    const applied = applyImmediateCraftNote(store, files, note, "harvest:test");
+    expect(applied).toBe(true);
+    expect(fs.readFileSync(files.mise, "utf8")).toContain("engine/src/foo.ts — exports bar()");
+    expect(store.pendingCraftNotes("saucier")).toEqual([]);
+    store.close();
+  });
+
+  it("book: appends to book.md's raw section, tagged, and stays pending", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    const id = store.insertCraftNote({
+      craftSlug: "saucier",
+      sourceAgent: "subagent:saucier",
+      kind: "book",
+      body: "beurre blanc breaks over 58C",
+    });
+    const note = store.getCraftNote(id)!;
+    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    const bookText = fs.readFileSync(files.book, "utf8");
+    expect(bookText).toContain("## Raw notes (unfolded)");
+    expect(bookText).toContain("- [book] beurre blanc breaks over 58C");
+    expect(store.pendingCraftNotes("saucier").map((n) => n.id)).toEqual([id]); // still pending
+    store.close();
+  });
+
+  it("skill: appends to skill.md's raw section untagged", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    const id = store.insertCraftNote({
+      craftSlug: "saucier",
+      sourceAgent: "subagent:saucier",
+      kind: "skill",
+      body: "taste before plating",
+    });
+    const note = store.getCraftNote(id)!;
+    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    const skillText = fs.readFileSync(files.skill, "utf8");
+    expect(skillText).toContain("## Raw notes (unfolded)");
+    expect(skillText).toContain("- taste before plating");
+    expect(skillText).not.toContain("[skill]");
+    store.close();
+  });
+
+  it("spillover: tags the source craft and stays pending", () => {
+    const store = new Store({ env });
+    const files = craftFiles("ordering-api", env);
+    const id = store.insertCraftNote({
+      craftSlug: "ordering-api",
+      sourceAgent: "subagent:saucier",
+      kind: "spillover",
+      body: "menu validation lives in app.py",
+      spilloverCraft: "saucier",
+    });
+    const note = store.getCraftNote(id)!;
+    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    const bookText = fs.readFileSync(files.book, "utf8");
+    expect(bookText).toContain("- [spillover · from saucier] menu validation lives in app.py");
+    store.close();
+  });
+
+  it("skips cleanly (returns false, note stays pending) when the lease is already held", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    expect(store.acquireCraftFoldLease("saucier", "someone-else", 60_000)).toBe(true); // book/skill lease
+    const id = store.insertCraftNote({
+      craftSlug: "saucier",
+      sourceAgent: "subagent:saucier",
+      kind: "book",
+      body: "held-out learning",
+    });
+    const note = store.getCraftNote(id)!;
+    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(false);
+    expect(store.pendingCraftNotes("saucier").map((n) => n.id)).toEqual([id]);
+    expect(fs.existsSync(files.book)).toBe(false); // never written
+    store.close();
+  });
+
+  it("a mise write is NOT blocked by a held book/skill fold lease — different files, different lease key", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    expect(store.acquireCraftFoldLease("saucier", "someone-else", 60_000)).toBe(true); // book/skill lease only
+    const id = store.insertCraftNote({
+      craftSlug: "saucier",
+      sourceAgent: "subagent:saucier",
+      kind: "mise",
+      body: "engine/src/bar.ts — does Y",
+    });
+    const note = store.getCraftNote(id)!;
+    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    store.close();
+  });
+});
+
+describe("applyPendingMiseNotes — catch-up sweep (hands#118)", () => {
+  it("applies every still-pending mise note and leaves book/skill notes untouched", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a/b.ts — does A" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "c/d.ts — does C" });
+    const bookId = store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "a fact" });
+
+    const applied = applyPendingMiseNotes(store, files, "fold-catchup:test");
+    expect(applied).toBe(2);
+    const miseText = fs.readFileSync(files.mise, "utf8");
+    expect(miseText).toContain("a/b.ts — does A");
+    expect(miseText).toContain("c/d.ts — does C");
+    expect(store.pendingCraftNotes("saucier").map((n) => n.id)).toEqual([bookId]);
     store.close();
   });
 });

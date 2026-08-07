@@ -12,10 +12,12 @@
  *   hands craft sync           materialize crafts as real Agent types + Skills (one-call dispatch)
  *   hands craft promote <s>    move a personal craft to the repo-shared tier
  *   hands craft localize <s>   move a shared craft back to the personal tier
- *   hands craft distill [<s>]  list a craft's unfolded notes (`hands craft fold` does the real fold)
+ *   hands craft distill [<s>]  list a craft's unfolded book/skill notes (mise already applies
+ *                              itself immediately on harvest — nothing to distill there)
  *   hands craft brief <s>      dispatch: open a brief, print the chit (for a general-purpose Agent)
  *   hands craft mise <id>      a craft sub-agent's first call: prints its book/mise/skill as JSON
- *   hands craft fold <s>       acquire the fold lease, print pending notes to distill
+ *   hands craft fold <s>       acquire the fold lease, print pending notes to distill (this also
+ *                              catches up any mise notes that missed their immediate write)
  *   hands craft fold-done <s>  release the lease, mark notes folded (--through <noteId>)
  *   hands station add [-n N]   open N stations (worktree hidden inside)
  *   hands station ls           list this repo's stations
@@ -368,8 +370,11 @@ function cmdCraft(argv: string[]): void {
         for (const n of pending) out(`  [${n.kind}] ${n.body} (from ${n.source_agent})`);
       }
       out(
-        "\nThis lists the backlog only — distillation is a judgment call. Read it and edit the " +
-          "book/mise/skill by hand, or ask an agent to run `hands craft fold <slug>` on this craft.",
+        "\nThis lists the backlog only — distillation is a judgment call (mise notes, if any " +
+          "slipped through, apply themselves mechanically the moment `hands craft fold` runs). " +
+          "Read it and edit the book/skill by hand, or ask an agent to run " +
+          "`hands craft fold <slug>` on this craft — `/hands:last-call` does this for every " +
+          "craft with a backlog at end of shift.",
       );
       return;
     }
