@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { type ChatEvent, hasAgentSdkInstalled, runChatTurn } from "./chat.js";
 import { type HandsConfig, loadConfig } from "./config.js";
 import { listCrafts, readCraftFileCapped } from "./crafts.js";
 import { fileFeedback, type FeedbackResult, type GhRunner } from "./feedback.js";
@@ -95,6 +96,8 @@ export type DashboardPayload = Snapshot & {
     number,
     Array<{ slug: string; mode: string; openedBy: string; at: number; completed: boolean }>
   >;
+  /** whether POST /api/chat can actually run — dev-checkout only, see chat.ts's hasAgentSdkInstalled */
+  chatAvailable: boolean;
 };
 
 export interface ServeHandle {
@@ -119,6 +122,12 @@ const MAX_FEEDBACK_BODY_BYTES = 100_000;
 const MAX_FEEDBACK_TITLE_BYTES = 300;
 const FEEDBACK_RATE_LIMIT_MAX = 5;
 const FEEDBACK_RATE_LIMIT_WINDOW_MS = 60_000;
+
+/** A chat prompt is a question, not a file upload — same bound as feedback's body for the same reason. */
+const MAX_CHAT_PROMPT_BYTES = 100_000;
+/** Generous enough for an actual back-and-forth conversation; still bounded — each request spawns a real subprocess. */
+const CHAT_RATE_LIMIT_MAX = 20;
+const CHAT_RATE_LIMIT_WINDOW_MS = 60_000;
 
 /**
  * Same-origin check for state-changing routes (currently just POST
@@ -234,6 +243,10 @@ export function serve(opts?: {
   fileFeedback?: (opts: { body: string; title?: string; cwd?: string }) => FeedbackResult;
   /** override just the `gh` invocation the REAL fileFeedback() uses (test hook) — lets a test drive the actual route → fileFeedback() → gh chain without either mocking the whole function or shelling out for real */
   feedbackGh?: GhRunner;
+  /** override the chat-turn generator POST /api/chat drives (test hook) — bypasses the real Agent SDK/subprocess entirely, so tests never make a network call */
+  chatTurn?: typeof runChatTurn;
+  /** override the availability check both the payload's chatAvailable flag and POST /api/chat use (test hook) */
+  chatAvailable?: typeof hasAgentSdkInstalled;
 }): Promise<ServeHandle> {
   const env = opts?.env ?? process.env;
   const host = opts?.host ?? "127.0.0.1";
@@ -244,7 +257,10 @@ export function serve(opts?: {
   const fileFeedbackFn =
     opts?.fileFeedback ?? ((args: { body: string; title?: string; cwd?: string }) =>
       fileFeedback({ ...args, gh: opts?.feedbackGh }));
+  const runChatTurnFn = opts?.chatTurn ?? runChatTurn;
+  const hasAgentSdkInstalledFn = opts?.chatAvailable ?? hasAgentSdkInstalled;
   let feedbackRequestTimes: number[] = [];
+  let chatRequestTimes: number[] = [];
   const store = new Store({ env });
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
@@ -383,6 +399,7 @@ export function serve(opts?: {
     const contextUsage = buildContextUsage(agentIds);
     const agentMessages = buildAgentMessages(agentIds);
     const craftBriefsByTicket = buildCraftBriefsByTicket();
+    const chatAvailable = hasAgentSdkInstalledFn();
     return {
       json: JSON.stringify({
         ...snapshot,
@@ -398,6 +415,7 @@ export function serve(opts?: {
         contextUsage,
         agentMessages,
         craftBriefsByTicket,
+        chatAvailable,
       }),
       key:
         snapshotKey(snapshot) +
@@ -409,7 +427,8 @@ export function serve(opts?: {
         JSON.stringify(taskCosts) +
         JSON.stringify(contextUsage) +
         JSON.stringify(agentMessages) +
-        JSON.stringify(craftBriefsByTicket),
+        JSON.stringify(craftBriefsByTicket) +
+        JSON.stringify(chatAvailable),
     };
   };
 
@@ -586,6 +605,90 @@ export function serve(opts?: {
           res.writeHead(502, { "content-type": "application/json" });
           res.end(JSON.stringify({ error: result.error ?? "filing failed" }));
         }
+      });
+      return;
+    }
+
+    if (req.method === "POST" && url.startsWith("/api/chat")) {
+      if (!isTrustedOrigin(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "cross-origin request rejected" }));
+        return;
+      }
+      if (!hasAgentSdkInstalledFn()) {
+        res.writeHead(503, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "chat isn't available in this install — needs a dev checkout with node_modules" }));
+        return;
+      }
+      // Same check-but-don't-yet-consume shape as /api/feedback above.
+      const now = Date.now();
+      chatRequestTimes = chatRequestTimes.filter((t) => now - t < CHAT_RATE_LIMIT_WINDOW_MS);
+      if (chatRequestTimes.length >= CHAT_RATE_LIMIT_MAX) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "too many chat messages — try again in a minute" }));
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let tooLarge = false;
+      req.on("data", (chunk: Buffer) => {
+        if (tooLarge) return;
+        chunks.push(chunk);
+        if (chunks.reduce((n, c) => n + c.length, 0) > MAX_CHAT_PROMPT_BYTES) {
+          tooLarge = true;
+          res.writeHead(413, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "message too large" }));
+          req.destroy();
+        }
+      });
+      req.on("end", () => {
+        if (tooLarge) return;
+        let parsed: { prompt?: unknown; sessionId?: unknown };
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+        if (typeof parsed.prompt !== "string" || !parsed.prompt.trim()) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "prompt is required" }));
+          return;
+        }
+        if (parsed.sessionId !== undefined && typeof parsed.sessionId !== "string") {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "sessionId must be a string" }));
+          return;
+        }
+        // validation passed — NOW this request counts against the window
+        chatRequestTimes.push(now);
+        const prompt = parsed.prompt;
+        const resume = parsed.sessionId;
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-store",
+          connection: "keep-alive",
+        });
+        void (async () => {
+          try {
+            for await (const event of runChatTurnFn({ prompt, resume, cwd: process.cwd() })) {
+              res.write(`data: ${JSON.stringify(event)}\n\n`);
+            }
+          } catch (err) {
+            // A genuinely unexpected throw (not the generator's own "unavailable"/error-result
+            // events, which already flow through the loop above) — surface it rather than just
+            // hanging the client on a stream that silently stopped.
+            const errEvent: ChatEvent = {
+              type: "done",
+              sessionId: typeof resume === "string" ? resume : "",
+              error: err instanceof Error ? err.message : String(err),
+            };
+            res.write(`data: ${JSON.stringify(errEvent)}\n\n`);
+          } finally {
+            res.end();
+          }
+        })();
       });
       return;
     }

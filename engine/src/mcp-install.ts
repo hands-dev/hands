@@ -72,6 +72,42 @@ export function resolveBooksServerEntry(
   return null;
 }
 
+/**
+ * Locate the bundled hands MCP server entry (the Node-floor-checked wrapper,
+ * same file Claude Code itself spawns per plugin/mcp.json) next to the
+ * running CLI module — falls back to the committed plugin/dist copy for a
+ * dev `tsx src/cli.ts` checkout, same shape as resolveBooksServerEntry above.
+ */
+export function resolveHandsServerEntry(
+  here: string = path.dirname(fileURLToPath(import.meta.url)),
+): string | null {
+  const bundled = path.join(here, "server.mjs");
+  if (fs.existsSync(bundled)) return bundled;
+  const devFallback = path.resolve(here, "..", "..", "plugin", "dist", "server.mjs");
+  if (fs.existsSync(devFallback)) return devFallback;
+  return null;
+}
+
+/**
+ * Locate the Claude Agent SDK's entry point in engine/node_modules — dev
+ * checkout only, deliberately. Its platform optional-dependency vendors a
+ * ~280MB copy of the `claude` CLI binary, which cannot be esbuild-bundled or
+ * committed into plugin/dist (that bundle is a plain, npm-install-free copy
+ * on every plugin install). So the dashboard chat feature only lights up
+ * when hands is run from a source checkout with `npm install` already done
+ * in engine/ — never from a marketplace/plugin-cache install. Both call
+ * sites (`tsx src/...` dev execution, and the bundled plugin/dist/*.mjs
+ * output) sit exactly two directories below the repo root, so one relative
+ * path resolves correctly from either.
+ */
+export function resolveAgentSdkEntry(
+  here: string = path.dirname(fileURLToPath(import.meta.url)),
+): string | null {
+  const devOnly = path.resolve(here, "..", "..", "engine", "node_modules", "@anthropic-ai", "claude-agent-sdk", "sdk.mjs");
+  if (fs.existsSync(devOnly)) return devOnly;
+  return null;
+}
+
 export function desktopConfigPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.HANDS_TEST_DESKTOP_CONFIG?.trim();
   if (override) return override;

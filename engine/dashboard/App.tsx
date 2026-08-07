@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ChatPanel } from "@/components/chat-panel";
 import { ChitPage } from "@/components/chit-page";
 import { ChitsLog } from "@/components/chits-log";
 import { ContextUsage } from "@/components/context-usage";
@@ -38,6 +39,7 @@ const TOP_TABS = [
   { id: "crafts", label: "Crafts" },
   { id: "tokens", label: "Token usage" },
   { id: "book", label: "The book" },
+  { id: "chat", label: "Ask" },
 ] as const;
 
 function initialTabFromHash(): string {
@@ -330,6 +332,8 @@ export function App() {
           ) : null}
 
           {activeTab === "book" ? <JournalFeed journal={snapshot.journal} now={snapshot.now} /> : null}
+
+          {activeTab === "chat" ? <ChatPanel chatAvailable={snapshot.chatAvailable} /> : null}
 
           {activeTab.startsWith("role:") ? (
             activeRoleAgent ? (
