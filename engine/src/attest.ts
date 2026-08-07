@@ -217,3 +217,29 @@ export function attestationValid(
 export function notifyFor(coordinationDir: string, agentId: string): string {
   return path.join(coordinationDir, `${agentId}.notify`);
 }
+
+
+/**
+ * The expo's read of a station's readiness — LOOK, DON'T TOUCH.
+ *
+ * Re-derives the current facts from the station's worktree (git only, no
+ * writes) and checks them against what the station attested. That's how an
+ * offline station stays cheap: one that attested clean and then sat idle is
+ * still clean, because nothing ran, so nobody has to boot five stations just to
+ * collect signatures.
+ *
+ * Detecting leftovers does not require the station; JUDGING them does. This
+ * function only detects. Whether the uncommitted work matters is the station's
+ * call, and it already gave its answer in `reason`.
+ */
+export function currentWorktreeFacts(worktree: string): {
+  headSha: string | null;
+  originSha: string | null;
+  lockPid: number | null;
+} {
+  return {
+    headSha: git(worktree, ["rev-parse", "HEAD"]),
+    originSha: git(worktree, ["rev-parse", "origin/main"]),
+    lockPid: readLock(worktree)?.pid ?? null,
+  };
+}

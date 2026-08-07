@@ -3237,8 +3237,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path19) {
-      let input = path19;
+    function removeDotSegments(path21) {
+      let input = path21;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -3490,8 +3490,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path19, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path19 && path19 !== "/" ? path19 : void 0;
+        const [path21, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path21 && path21 !== "/" ? path21 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -6910,12 +6910,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs21, exportName) {
+    function addFormats(ajv, list, fs22, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs21[f]);
+        ajv.addFormat(f, fs22[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -8712,6 +8712,9 @@ function merge2(base, layer) {
     usage: {
       mode: layer.usage?.mode === "low" || layer.usage?.mode === "normal" ? layer.usage.mode : base.usage.mode
     },
+    dispatch: {
+      requireAttestation: layer.dispatch?.requireAttestation ?? base.dispatch.requireAttestation
+    },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll }
   };
@@ -8774,6 +8777,7 @@ var init_config = __esm({
       remote: { url: null, handle: null, project: null },
       crafts: { sharedDir: null },
       usage: { mode: "normal" },
+      dispatch: { requireAttestation: true },
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
@@ -10063,35 +10067,35 @@ var init_crafts = __esm({
 });
 
 // src/seed-permissions.ts
-import * as fs15 from "node:fs";
-import * as path14 from "node:path";
+import * as fs16 from "node:fs";
+import * as path16 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function unseedStationPermissions(dir) {
-  const file2 = path14.join(dir, SEEDED_RELPATH);
-  if (!fs15.existsSync(file2)) return false;
-  fs15.rmSync(file2, { force: true });
-  const parent = path14.dirname(file2);
+  const file2 = path16.join(dir, SEEDED_RELPATH);
+  if (!fs16.existsSync(file2)) return false;
+  fs16.rmSync(file2, { force: true });
+  const parent = path16.dirname(file2);
   try {
-    if (fs15.readdirSync(parent).length === 0) fs15.rmdirSync(parent);
+    if (fs16.readdirSync(parent).length === 0) fs16.rmdirSync(parent);
   } catch {
   }
   return true;
 }
 function seedStationPermissions(dir) {
-  const file2 = path14.join(dir, ".claude", "settings.local.json");
-  if (fs15.existsSync(file2)) return { path: file2, written: false };
-  fs15.mkdirSync(path14.dirname(file2), { recursive: true });
-  fs15.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+  const file2 = path16.join(dir, ".claude", "settings.local.json");
+  if (fs16.existsSync(file2)) return { path: file2, written: false };
+  fs16.mkdirSync(path16.dirname(file2), { recursive: true });
+  fs16.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
 `);
   return { path: file2, written: true };
 }
 function mergeStationSettings(dir, patch) {
-  const file2 = path14.join(dir, SEEDED_RELPATH);
+  const file2 = path16.join(dir, SEEDED_RELPATH);
   let existing = {};
   try {
-    const raw = fs15.readFileSync(file2, "utf8");
+    const raw = fs16.readFileSync(file2, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") existing = parsed;
   } catch {
@@ -10105,8 +10109,8 @@ function mergeStationSettings(dir, patch) {
     }
   }
   if (!changed) return { path: file2, written: false };
-  fs15.mkdirSync(path14.dirname(file2), { recursive: true });
-  fs15.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
+  fs16.mkdirSync(path16.dirname(file2), { recursive: true });
+  fs16.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -10178,12 +10182,12 @@ __export(provision_exports, {
   stationBranch: () => stationBranch,
   stationRoot: () => stationRoot
 });
-import { execFileSync as execFileSync7, spawn } from "node:child_process";
-import * as fs16 from "node:fs";
-import * as os7 from "node:os";
-import * as path15 from "node:path";
-function git4(cwd, args) {
-  return execFileSync7("git", args, {
+import { execFileSync as execFileSync8, spawn } from "node:child_process";
+import * as fs17 from "node:fs";
+import * as os8 from "node:os";
+import * as path17 from "node:path";
+function git5(cwd, args) {
+  return execFileSync8("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -10198,7 +10202,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path15.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path17.join(os8.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -10207,7 +10211,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs16.readdirSync(root);
+    names = fs17.readdirSync(root);
   } catch {
     return [];
   }
@@ -10219,7 +10223,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path15.join(root, name),
+      dir: path17.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -10229,7 +10233,7 @@ function listStations(cwd = process.cwd(), config2) {
 function onlyDirtInWorktreeIsOurs(dir) {
   let status;
   try {
-    status = git4(dir, ["status", "--porcelain", "--untracked-files=all"]);
+    status = git5(dir, ["status", "--porcelain", "--untracked-files=all"]);
   } catch {
     return false;
   }
@@ -10239,7 +10243,7 @@ function onlyDirtInWorktreeIsOurs(dir) {
 }
 function branchExists(cwd, branch) {
   try {
-    git4(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
+    git5(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
     return true;
   } catch {
     return false;
@@ -10255,7 +10259,7 @@ function shellQuote(s) {
 }
 function tmuxAvailable() {
   try {
-    execFileSync7("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
+    execFileSync8("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
     return true;
   } catch {
     return false;
@@ -10267,12 +10271,12 @@ function launch(plan, launcher, env = process.env, launchMode = "station") {
   if (mode === "tmux") {
     try {
       if (env.TMUX) {
-        execFileSync7("tmux", ["new-window", "-d", "-n", plan.id, command], {
+        execFileSync8("tmux", ["new-window", "-d", "-n", plan.id, command], {
           stdio: "ignore",
           timeout: 1e4
         });
       } else {
-        execFileSync7(
+        execFileSync8(
           "tmux",
           ["new-session", "-d", "-s", `hands-${plan.id}`, command],
           { stdio: "ignore", timeout: 1e4 }
@@ -10304,20 +10308,20 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs16.mkdirSync(root, { recursive: true });
+  fs17.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path15.join(root, id);
+    const dir = path17.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
-      git4(info.repoRoot, ["worktree", "add", dir, branch]);
+      git5(info.repoRoot, ["worktree", "add", dir, branch]);
     } else {
-      git4(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
+      git5(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
     }
     const model = cfg.stations.overrides[id] ?? cfg.stations.model;
     seedStationPermissions(dir);
@@ -10325,13 +10329,13 @@ function addStations(count, opts) {
     let sessionName;
     if (cfg.stations.theming) {
       const assignment = assignStationTheme({
-        repoLabel: path15.basename(info.repoRoot),
+        repoLabel: path17.basename(info.repoRoot),
         repoSlug: info.slug,
         index,
         env: opts?.env
       });
-      fs16.mkdirSync(path15.dirname(assignment.file), { recursive: true });
-      fs16.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+      fs17.mkdirSync(path17.dirname(assignment.file), { recursive: true });
+      fs17.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
 `);
       mergeStationSettings(dir, { theme: assignment.themeId });
       themeColor = assignment.color.hex;
@@ -10362,28 +10366,28 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path15.join(root, `station-${index}`);
+  const dir = path17.join(root, `station-${index}`);
   if (cfg.stations.theming) {
     try {
-      fs16.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+      fs17.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
     } catch {
     }
   }
   try {
-    execFileSync7("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
+    execFileSync8("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
   } catch {
   }
   try {
-    execFileSync7("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
+    execFileSync8("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
   } catch {
   }
   let removed = false;
-  if (fs16.existsSync(dir)) {
+  if (fs17.existsSync(dir)) {
     if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
     try {
-      git4(info.repoRoot, args);
+      git5(info.repoRoot, args);
     } catch (err) {
       throw new ProvisionError(
         `could not remove ${id}: ${err instanceof Error ? err.message.split("\n")[0] : String(err)} (uncommitted work? re-run with --force to discard it)`
@@ -10391,11 +10395,11 @@ function removeStation(id, opts) {
     }
     removed = true;
   }
-  git4(info.repoRoot, ["worktree", "prune"]);
+  git5(info.repoRoot, ["worktree", "prune"]);
   const branch = stationBranch(index);
   if (branchExists(info.repoRoot, branch)) {
     try {
-      git4(info.repoRoot, ["branch", "-D", branch]);
+      git5(info.repoRoot, ["branch", "-D", branch]);
     } catch {
     }
   }
@@ -10431,20 +10435,20 @@ var init_provision = __esm({
 });
 
 // src/mcp-install.ts
-import * as fs17 from "node:fs";
-import * as os8 from "node:os";
-import * as path16 from "node:path";
+import * as fs18 from "node:fs";
+import * as os9 from "node:os";
+import * as path18 from "node:path";
 import { fileURLToPath } from "node:url";
-function resolveHandsServerEntry(here = path16.dirname(fileURLToPath(import.meta.url))) {
-  const bundled = path16.join(here, "server.mjs");
-  if (fs17.existsSync(bundled)) return bundled;
-  const devFallback = path16.resolve(here, "..", "..", "plugin", "dist", "server.mjs");
-  if (fs17.existsSync(devFallback)) return devFallback;
+function resolveHandsServerEntry(here = path18.dirname(fileURLToPath(import.meta.url))) {
+  const bundled = path18.join(here, "server.mjs");
+  if (fs18.existsSync(bundled)) return bundled;
+  const devFallback = path18.resolve(here, "..", "..", "plugin", "dist", "server.mjs");
+  if (fs18.existsSync(devFallback)) return devFallback;
   return null;
 }
-function resolveAgentSdkEntry(here = path16.dirname(fileURLToPath(import.meta.url))) {
-  const devOnly = path16.resolve(here, "..", "..", "engine", "node_modules", "@anthropic-ai", "claude-agent-sdk", "sdk.mjs");
-  if (fs17.existsSync(devOnly)) return devOnly;
+function resolveAgentSdkEntry(here = path18.dirname(fileURLToPath(import.meta.url))) {
+  const devOnly = path18.resolve(here, "..", "..", "engine", "node_modules", "@anthropic-ai", "claude-agent-sdk", "sdk.mjs");
+  if (fs18.existsSync(devOnly)) return devOnly;
   return null;
 }
 var init_mcp_install = __esm({
@@ -10535,7 +10539,7 @@ var init_chat = __esm({
 });
 
 // src/feedback.ts
-import { execFileSync as execFileSync8 } from "node:child_process";
+import { execFileSync as execFileSync9 } from "node:child_process";
 function githubHandle(cwd, gh2) {
   try {
     return gh2(["api", "user", "--jq", ".login"], cwd).trim() || null;
@@ -10592,7 +10596,7 @@ var init_feedback = __esm({
   "src/feedback.ts"() {
     "use strict";
     FEEDBACK_REPO = "hands-dev/hands";
-    runGh = (args, cwd) => execFileSync8("gh", args, {
+    runGh = (args, cwd) => execFileSync9("gh", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -10602,9 +10606,9 @@ var init_feedback = __esm({
 });
 
 // src/tokens.ts
-import * as fs18 from "node:fs";
-import * as os9 from "node:os";
-import * as path17 from "node:path";
+import * as fs19 from "node:fs";
+import * as os10 from "node:os";
+import * as path19 from "node:path";
 function encodeProjectDir(cwd) {
   return cwd.replace(/[^A-Za-z0-9]/g, "-");
 }
@@ -10623,17 +10627,17 @@ var init_tokens = __esm({
       /** agentId → messageId → final usage (last write wins — the dedupe) */
       messages = /* @__PURE__ */ new Map();
       constructor(opts) {
-        this.projectsDir = opts?.projectsDir ?? path17.join(os9.homedir(), ".claude", "projects");
+        this.projectsDir = opts?.projectsDir ?? path19.join(os10.homedir(), ".claude", "projects");
         this.now = opts?.now ?? (() => Date.now());
       }
       sample(agents) {
         const now = this.now();
         for (const agent of agents) {
           if (!agent.cwd) continue;
-          const dir = path17.join(this.projectsDir, encodeProjectDir(agent.cwd));
+          const dir = path19.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
-            names = fs18.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+            names = fs19.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
           } catch {
             continue;
           }
@@ -10643,9 +10647,9 @@ var init_tokens = __esm({
             this.messages.set(agent.id, byMsg);
           }
           for (const name of names) {
-            const file2 = path17.join(dir, name);
+            const file2 = path19.join(dir, name);
             try {
-              const stat = fs18.statSync(file2);
+              const stat = fs19.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
               this.readAppended(file2, stat.size, byMsg);
             } catch {
@@ -10653,21 +10657,21 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs18.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path17.join(dir, e.name, "subagents"));
+            sessionDirs = fs19.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path19.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
           for (const subDir of sessionDirs) {
             let subNames = [];
             try {
-              subNames = fs18.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+              subNames = fs19.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
             } catch {
               continue;
             }
             for (const name of subNames) {
-              const file2 = path17.join(subDir, name);
+              const file2 = path19.join(subDir, name);
               try {
-                const stat = fs18.statSync(file2);
+                const stat = fs19.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
                 this.readAppended(file2, stat.size, byMsg, file2);
               } catch {
@@ -10695,11 +10699,11 @@ var init_tokens = __esm({
         if (size <= state.offset) return;
         const length = size - state.offset;
         const buffer = Buffer.alloc(length);
-        const fd = fs18.openSync(file2, "r");
+        const fd = fs19.openSync(file2, "r");
         try {
-          fs18.readSync(fd, buffer, 0, length, state.offset);
+          fs19.readSync(fd, buffer, 0, length, state.offset);
         } finally {
-          fs18.closeSync(fd);
+          fs19.closeSync(fd);
         }
         state.offset = size;
         let text = state.partial + buffer.toString("utf8");
@@ -10756,10 +10760,10 @@ var init_tokens = __esm({
       callLabel(callFile) {
         const cached2 = this.metaLabels.get(callFile);
         if (cached2) return cached2;
-        let label = path17.basename(callFile, ".jsonl");
+        let label = path19.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
-            fs18.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
+            fs19.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
           );
           if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
           else if (meta3.agentType) label = meta3.agentType;
@@ -10825,9 +10829,9 @@ __export(serve_exports, {
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
-import * as fs19 from "node:fs";
+import * as fs20 from "node:fs";
 import { createServer } from "node:http";
-import * as path18 from "node:path";
+import * as path20 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 function isTrustedOrigin(req) {
   const host = req.headers.host;
@@ -10853,7 +10857,7 @@ function escapeHtml(s) {
   );
 }
 function kitchenName(db) {
-  return path18.basename(path18.dirname(db)) || "kitchen";
+  return path20.basename(path20.dirname(db)) || "kitchen";
 }
 function shellHtml(kitchen) {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"/>
@@ -10872,13 +10876,13 @@ function shellHtml(kitchen) {
 `;
 }
 function defaultAssetsDir() {
-  const here = path18.dirname(fileURLToPath2(import.meta.url));
+  const here = path20.dirname(fileURLToPath2(import.meta.url));
   return [
-    path18.join(here, "assets"),
+    path20.join(here, "assets"),
     // plugin/dist/server-impl.mjs → sibling assets/
-    path18.join(here, "..", "..", "plugin", "dist", "assets")
+    path20.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs19.existsSync(d)) ?? null;
+  ].find((d) => fs20.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -11065,7 +11069,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs19.readFileSync(path18.join(assetsDir, name));
+        const body = fs20.readFileSync(path20.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -11286,7 +11290,7 @@ function serve(opts) {
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
       const pidFile = pidPath(env);
       try {
-        fs19.writeFileSync(pidFile, String(process.pid), { mode: 384 });
+        fs20.writeFileSync(pidFile, String(process.pid), { mode: 384 });
       } catch {
       }
       resolve3({
@@ -11311,7 +11315,7 @@ function serve(opts) {
           server.close();
           store.close();
           try {
-            if (fs19.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs19.unlinkSync(pidFile);
+            if (fs20.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs20.unlinkSync(pidFile);
           } catch {
           }
         }
@@ -11361,7 +11365,7 @@ var init_serve = __esm({
 });
 
 // src/server.ts
-import * as fs20 from "node:fs";
+import * as fs21 from "node:fs";
 import { fileURLToPath as fileURLToPath3, pathToFileURL as pathToFileURL2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -11723,8 +11727,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path19, errorMaps, issueData } = params;
-  const fullPath = [...path19, ...issueData.path || []];
+  const { data, path: path21, errorMaps, issueData } = params;
+  const fullPath = [...path21, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -11839,11 +11843,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path19, key) {
+  constructor(parent, value, path21, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path19;
+    this._path = path21;
     this._key = key;
   }
   get path() {
@@ -15766,10 +15770,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path19) {
-  if (!path19)
+function getElementAtPath(obj, path21) {
+  if (!path21)
     return obj;
-  return path19.reduce((acc, key) => acc?.[key], obj);
+  return path21.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -16152,11 +16156,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path19, issues) {
+function prefixIssues(path21, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path19);
+    iss.path.unshift(path21);
     return iss;
   });
 }
@@ -16339,7 +16343,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path19 = []) => {
+  const processError = (error49, path21 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -16349,7 +16353,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path19, ...issue2.path];
+        const fullpath = [...path21, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -16381,8 +16385,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path19 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path19) {
+  const path21 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path21) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -26990,11 +26994,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path19) {
-  if (path19.length === 0) {
+function getDotPath(path21) {
+  if (path21.length === 0) {
     return "object root";
   }
-  return path19.reduce((acc, seg, index) => {
+  return path21.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -28804,13 +28808,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path19 = ref.slice(1).split("/").filter(Boolean);
-  if (path19.length === 0) {
+  const path21 = ref.slice(1).split("/").filter(Boolean);
+  if (path21.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path19[0] === defsKey) {
-    const key = path19[1];
+  if (path21[0] === defsKey) {
+    const key = path21[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -35257,7 +35261,7 @@ var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function mirrorHealth(dir, url2) {
   const isRemote = /^(https?:\/\/|git@|ssh:\/\/)/.test(url2 ?? "");
   if (!isRemote) return { behind: 0, ahead: 0, problem: null };
-  const git5 = (args) => {
+  const git6 = (args) => {
     try {
       return execFileSync6("git", args, {
         cwd: dir,
@@ -35269,7 +35273,7 @@ function mirrorHealth(dir, url2) {
       return null;
     }
   };
-  const upstream = git5(["rev-parse", "--abbrev-ref", "@{upstream}"]);
+  const upstream = git6(["rev-parse", "--abbrev-ref", "@{upstream}"]);
   if (!upstream) {
     return {
       behind: null,
@@ -35277,7 +35281,7 @@ function mirrorHealth(dir, url2) {
       problem: "the local books mirror has no upstream branch \u2014 it has never been able to pull. Fix: git -C <booksDir> branch --set-upstream-to=origin/main main"
     };
   }
-  const counts = git5(["rev-list", "--left-right", "--count", `HEAD...${upstream}`]);
+  const counts = git6(["rev-list", "--left-right", "--count", `HEAD...${upstream}`]);
   const [aheadRaw, behindRaw] = (counts ?? "").split(/\s+/);
   const ahead = Number.isFinite(Number(aheadRaw)) ? Number(aheadRaw) : null;
   const behind = Number.isFinite(Number(behindRaw)) ? Number(behindRaw) : null;
@@ -35380,7 +35384,86 @@ function readPreviousPage(opts) {
   return readJournal({ date: previous, env: opts?.env, cwd: opts?.cwd, maxBytes: opts?.maxBytes });
 }
 
+// src/attest.ts
+import { execFileSync as execFileSync7 } from "node:child_process";
+import * as path15 from "node:path";
+
+// src/worktree-lock.ts
+init_paths();
+import * as crypto from "node:crypto";
+import * as fs15 from "node:fs";
+import * as os7 from "node:os";
+import * as path14 from "node:path";
+function lockPath(worktree, env = process.env, cwd) {
+  let resolved = worktree;
+  try {
+    resolved = fs15.realpathSync(worktree);
+  } catch {
+  }
+  const digest = crypto.createHash("sha256").update(resolved).digest("hex").slice(0, 12);
+  return path14.join(
+    coordinationDir(env, cwd ?? resolved),
+    "locks",
+    `${path14.basename(resolved)}-${digest}.json`
+  );
+}
+function readLock(worktree, env, cwd) {
+  try {
+    const raw = fs15.readFileSync(lockPath(worktree, env, cwd), "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.worktree !== "string") return null;
+    return {
+      pid: parsed.pid,
+      startedAtBoot: typeof parsed.startedAtBoot === "number" ? parsed.startedAtBoot : null,
+      claimedAt: typeof parsed.claimedAt === "number" ? parsed.claimedAt : 0,
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : "unknown",
+      worktree: parsed.worktree,
+      hostname: typeof parsed.hostname === "string" ? parsed.hostname : "unknown"
+    };
+  } catch {
+    return null;
+  }
+}
+
+// src/attest.ts
+function git4(cwd, args) {
+  try {
+    return execFileSync7("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15e3
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+function attestationValid(record2, now) {
+  if (!record2.ok) return { valid: false, reason: "the station declined to attest" };
+  if (record2.head_sha && now.headSha && record2.head_sha !== now.headSha) {
+    return { valid: false, reason: "the worktree has moved since it attested" };
+  }
+  if (record2.origin_sha && now.originSha && record2.origin_sha !== now.originSha) {
+    return { valid: false, reason: "origin/main has advanced since it attested" };
+  }
+  if (record2.lock_pid && now.lockPid && record2.lock_pid !== now.lockPid) {
+    return { valid: false, reason: "the worktree lock changed hands since it attested" };
+  }
+  if (now.shiftStartedAt && record2.at < now.shiftStartedAt) {
+    return { valid: false, reason: "attested in a previous shift" };
+  }
+  return { valid: true, reason: null };
+}
+function currentWorktreeFacts(worktree) {
+  return {
+    headSha: git4(worktree, ["rev-parse", "HEAD"]),
+    originSha: git4(worktree, ["rev-parse", "origin/main"]),
+    lockPid: readLock(worktree)?.pid ?? null
+  };
+}
+
 // src/server.ts
+init_provision();
 var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;
 var MAX_WAIT_SECONDS = 120;
@@ -35841,7 +35924,10 @@ function buildServer(store, agentId, config2) {
         body: external_exports3.string().optional(),
         to: external_exports3.string().optional(),
         priority: external_exports3.string().optional(),
-        dish: external_exports3.string().optional().describe('the DISH this ticket helps assemble \u2014 external ref ("ENG-1476", "PR #2455")')
+        dish: external_exports3.string().optional().describe('the DISH this ticket helps assemble \u2014 external ref ("ENG-1476", "PR #2455")'),
+        force: external_exports3.boolean().optional().describe(
+          "dispatch even if the station has no current attestation (hands#157). Use when you know the risk and accept it \u2014 the refusal exists because a ticket is only as good as the picture behind it."
+        )
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     },
@@ -35863,6 +35949,21 @@ function buildServer(store, agentId, config2) {
           return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
         }
         assignee = resolved.id;
+      }
+      if (assignee && isStation(assignee) && cfg.dispatch.requireAttestation && !input.force) {
+        const verdict = attestationFor(store, assignee);
+        if (!verdict.ready) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error: `${assignee} has no current attestation \u2014 ${verdict.why}. It must run \`/hands:ready\` (which ends in \`hands attest\`) before it can take a ticket. Dispatch anyway with force:true, or set dispatch.requireAttestation=false to disable the gate.`,
+              station: assignee,
+              reason: verdict.why,
+              stationSaid: verdict.stationSaid ?? void 0
+            }),
+            isError: true
+          };
+        }
       }
       const id = store.createTask({
         createdBy: agentId,
@@ -36206,6 +36307,26 @@ function buildServer(store, agentId, config2) {
 function resolveSelf() {
   return resolveAgentId({ expoBasename: loadConfig().expo.basename });
 }
+function attestationFor(store, stationId) {
+  const anyAttested = store.allAttestations().length > 0;
+  const record2 = store.getAttestation(stationId);
+  if (!record2) {
+    return anyAttested ? { ready: false, why: "it has never attested" } : { ready: true, why: "attestation gate inactive \u2014 no station in this kitchen has attested yet" };
+  }
+  if (!record2.ok) {
+    return {
+      ready: false,
+      why: "it attested but declined",
+      stationSaid: record2.reason
+    };
+  }
+  const station = listStations().find((s) => s.id === stationId);
+  if (!station?.present) {
+    return { ready: true, why: "attested" };
+  }
+  const verdict = attestationValid(record2, currentWorktreeFacts(station.dir));
+  return verdict.valid ? { ready: true, why: "attested" } : { ready: false, why: verdict.reason ?? "its attestation is no longer valid" };
+}
 function pathsReport(agentId, cfg, focus) {
   const info = repoInfo();
   const enabled = Boolean(cfg.remote.url?.trim());
@@ -36251,7 +36372,7 @@ function runCli(subcommand, argv, hookPayload) {
   if (subcommand === "paths") {
     const id = resolveSelf();
     let focus = null;
-    if (fs20.existsSync(dbPath())) {
+    if (fs21.existsSync(dbPath())) {
       const s = new Store();
       try {
         focus = s.getFocus(id);
@@ -36343,8 +36464,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL2(fs20.realpathSync(argv1)).href;
-    const self = pathToFileURL2(fs20.realpathSync(fileURLToPath3(import.meta.url))).href;
+    const entry = pathToFileURL2(fs21.realpathSync(argv1)).href;
+    const self = pathToFileURL2(fs21.realpathSync(fileURLToPath3(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL2(argv1).href;

@@ -41,6 +41,8 @@ import { formatRosterContext, listCrafts } from "./crafts.js";
 import { type MessageRow, Store } from "./store.js";
 import { inboxMonitorAlive } from "./watchers.js";
 import { readJournal, readPreviousPage } from "./journal-read.js";
+import { attestationValid, currentWorktreeFacts } from "./attest.js";
+import { listStations } from "./provision.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
 
@@ -651,6 +653,14 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           .string()
           .optional()
           .describe('the DISH this ticket helps assemble — external ref ("ENG-1476", "PR #2455")'),
+        force: z
+          .boolean()
+          .optional()
+          .describe(
+            "dispatch even if the station has no current attestation (hands#157). Use when you " +
+              "know the risk and accept it — the refusal exists because a ticket is only as good " +
+              "as the picture behind it.",
+          ),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -676,6 +686,30 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         }
         assignee = resolved.id;
       }
+
+      // Attestation gate (hands#157). A ticket is only as good as the picture
+      // behind it, and the expo is the single point where a stale picture
+      // becomes EVERYONE's stale picture. Enforced here rather than in the expo
+      // skill: prose asks a model to comply; the server makes it true.
+      if (assignee && isStation(assignee) && cfg.dispatch.requireAttestation && !input.force) {
+        const verdict = attestationFor(store, assignee);
+        if (!verdict.ready) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error:
+                `${assignee} has no current attestation — ${verdict.why}. ` +
+                `It must run \`/hands:ready\` (which ends in \`hands attest\`) before it can take a ticket. ` +
+                "Dispatch anyway with force:true, or set dispatch.requireAttestation=false to disable the gate.",
+              station: assignee,
+              reason: verdict.why,
+              stationSaid: verdict.stationSaid ?? undefined,
+            }),
+            isError: true,
+          };
+        }
+      }
+
       const id = store.createTask({
         createdBy: agentId,
         assignee,
@@ -1118,6 +1152,52 @@ function resolveSelf(): string {
  * `hands paths` CLI, and the hands_paths MCP tool — the one authority
  * agents consult instead of guessing per-repo paths.
  */
+
+/**
+ * Is this station dispatchable? Reads its recorded attestation and re-derives
+ * the facts it attested against (hands#157). `stationSaid` carries the
+ * station's OWN words when it declined — that is information only the station
+ * has, and the expo relaying it beats any inspection the expo could run.
+ */
+function attestationFor(
+  store: Store,
+  stationId: string,
+): { ready: boolean; why: string; stationSaid?: string | null } {
+  // Grace while a kitchen hasn't adopted attestation yet. If NO station has
+  // ever attested, the mechanism plainly isn't in use — refusing would strand
+  // the whole kitchen on the update that introduced it, with no warning. The
+  // gate arms itself the moment any station attests, so adoption is automatic
+  // rather than a migration step somebody has to know about.
+  //
+  // Found by shipping it without this: 6 existing tests broke instantly, which
+  // is precisely what every live kitchen would have experienced.
+  const anyAttested = store.allAttestations().length > 0;
+  const record = store.getAttestation(stationId);
+  if (!record) {
+    return anyAttested
+      ? { ready: false, why: "it has never attested" }
+      : { ready: true, why: "attestation gate inactive — no station in this kitchen has attested yet" };
+  }
+  if (!record.ok) {
+    return {
+      ready: false,
+      why: "it attested but declined",
+      stationSaid: record.reason,
+    };
+  }
+  const station = listStations().find((s) => s.id === stationId);
+  if (!station?.present) {
+    // No worktree to re-derive from. The record is all we have; trust it rather
+    // than inventing a failure — a missing worktree is its own separate problem
+    // that `hands doctor` already reports.
+    return { ready: true, why: "attested" };
+  }
+  const verdict = attestationValid(record, currentWorktreeFacts(station.dir));
+  return verdict.valid
+    ? { ready: true, why: "attested" }
+    : { ready: false, why: verdict.reason ?? "its attestation is no longer valid" };
+}
+
 export function pathsReport(agentId: string, cfg: HandsConfig, focus?: string | null) {
   const info = repoInfo();
   const enabled = Boolean(cfg.remote.url?.trim());
