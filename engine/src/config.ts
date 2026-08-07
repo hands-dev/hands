@@ -91,6 +91,21 @@ export interface HandsConfig {
    */
   usage: { mode: "low" | "normal" };
   /** Review/merge authority the principal has delegated to the expo. */
+  /** Dispatch policy — what the expo is allowed to fire a ticket at. */
+  dispatch: {
+    /**
+     * true (default) = hands_delegate REFUSES a station with no current
+     * attestation (hands#157). A ticket is only as good as the picture behind
+     * it, and a station carrying leftovers from a previous shift produces work
+     * against stale code. Enforced server-side rather than in prose: prose asks
+     * a model to comply, the server makes it true.
+     *
+     * `force: true` on the call overrides for a single ticket. Setting this to
+     * false disables the gate entirely — reasonable while a kitchen is
+     * migrating, since every station is unattested on first deploy.
+     */
+    requireAttestation: boolean;
+  };
   merge: {
     /**
      * true = the expo may admin-merge LOW-RISK station PRs itself (green or
@@ -118,6 +133,7 @@ export const DEFAULT_CONFIG: HandsConfig = {
   remote: { url: null, handle: null, project: null },
   crafts: { sharedDir: null },
   usage: { mode: "normal" },
+  dispatch: { requireAttestation: true },
   merge: { adminMergeLowRisk: false },
   gh: { poll: true },
 };
@@ -177,6 +193,10 @@ function merge(base: HandsConfig, layer: DeepPartial<HandsConfig> | null): Hands
     },
     usage: {
       mode: layer.usage?.mode === "low" || layer.usage?.mode === "normal" ? layer.usage.mode : base.usage.mode,
+    },
+    dispatch: {
+      requireAttestation:
+        layer.dispatch?.requireAttestation ?? base.dispatch.requireAttestation,
     },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll },
