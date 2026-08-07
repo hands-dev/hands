@@ -36465,9 +36465,11 @@ ${input.body}`, [agentId, ...recipients]);
       deliverWake([assignee], { from: agentId, subject: "task" });
       const assigneePeer = store.listPeers().find((p) => p.id === assignee);
       const deadWarning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
+      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee) === false;
+      const monitorWarning = monitorDead ? `${assignee}'s inbox monitor is dead \u2014 it cannot be woken until its next pass (self-heal on the fallback heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a while; run \`hands doctor\` to confirm, or restart the station to fix it now.` : void 0;
       const leakWarning = crossPeerMentionWarning(`${input.title}
 ${input.body ?? ""}`, [agentId, assignee]);
-      const warnings = [deadWarning, leakWarning].filter((w) => Boolean(w));
+      const warnings = [deadWarning, monitorWarning, leakWarning].filter((w) => Boolean(w));
       return asToolResult({
         ok: true,
         id,

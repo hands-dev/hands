@@ -19,6 +19,7 @@ import {
 import { idleMs } from "./station-logs.js";
 import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { Store } from "./store.js";
+import { inboxMonitorAlive } from "./watchers.js";
 
 /**
  * `hands doctor` — the checks are not hypothetical. Every one of them
@@ -429,6 +430,30 @@ export function runDoctor(opts?: {
           });
           blockedStations.push(station.id);
         }
+      }
+
+      // hands#90 — a dead inbox monitor is indistinguishable from idle on the
+      // board, and until now `hands doctor` never looked at it at all (only
+      // the attestation gate did, and only at the moment a station last
+      // attested — not since). No `--fix`: the only mechanical fix available
+      // here is spawning a bare `tail` process, which would make a station
+      // LOOK reachable without actually being able to wake — worse than the
+      // gap it would "fix". This needs a human to restart the station.
+      const monitor = inboxMonitorAlive(station.id);
+      if (monitor === false) {
+        checks.push({
+          name: `${station.id}.monitor`,
+          severity: "fail",
+          detail: "inbox monitor DEAD — it cannot be woken. Restart the station, or wait for its next pass.",
+        });
+      } else if (monitor === true) {
+        checks.push({ name: `${station.id}.monitor`, severity: "ok", detail: "armed" });
+      } else {
+        checks.push({
+          name: `${station.id}.monitor`,
+          severity: "warn",
+          detail: "cannot inspect the inbox monitor on this platform — UNVERIFIED, not passing",
+        });
       }
 
       const idle = idleMs(station.dir, now);

@@ -926,13 +926,27 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         assigneePeer && !assigneePeer.alive
           ? `${assignee} process not found (pid ${assigneePeer.pid} not running) — ticket created but may sit unclaimed`
           : undefined;
+      // hands#90 — the process being alive is not the same as being reachable.
+      // A station's inbox Monitor can die (a harness-level crash, exit 144 —
+      // not anything hands' own code does) while the session itself is fine,
+      // and nothing re-checks that before this. The ticket is NOT refused —
+      // the message is already durably in the DB and the station's own
+      // self-heal (every pass, or the fallback heartbeat at worst) will pick
+      // it up — but the dispatcher gets told rather than assuming delivery.
+      const monitorDead =
+        isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee) === false;
+      const monitorWarning = monitorDead
+        ? `${assignee}'s inbox monitor is dead — it cannot be woken until its next pass (self-heal on the fallback ` +
+          "heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a " +
+          "while; run `hands doctor` to confirm, or restart the station to fix it now."
+        : undefined;
       // hands#170 — a ticket must not carry another peer's findings/state; a
       // careless mention is exactly the leak the "unattributed constraint"
       // escape hatch used to launder. Non-blocking: false positives are real
       // (e.g. "same pattern station-2 used" about a technique isn't a leak),
       // so this surfaces loudly rather than refusing.
       const leakWarning = crossPeerMentionWarning(`${input.title}\n${input.body ?? ""}`, [agentId, assignee]);
-      const warnings = [deadWarning, leakWarning].filter((w): w is string => Boolean(w));
+      const warnings = [deadWarning, monitorWarning, leakWarning].filter((w): w is string => Boolean(w));
       return asToolResult({
         ok: true,
         id,

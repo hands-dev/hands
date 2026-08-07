@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,6 +9,7 @@ import { computeStateHash } from "../src/board.js";
 import { type HandsConfig, DEFAULT_CONFIG } from "../src/config.js";
 import { buildServer } from "../src/server.js";
 import { Store } from "../src/store.js";
+import { inboxMonitorAlive } from "../src/watchers.js";
 
 let home: string;
 let env: NodeJS.ProcessEnv;
@@ -31,6 +32,7 @@ beforeEach(() => {
 afterEach(async () => {
   for (const c of cleanups) await c();
   for (const s of stores) s.close();
+  await killSpawned();
   delete process.env.HANDS_HOME;
   delete process.env.HANDS_TEST_HOME;
   delete process.env.HANDS_NO_REPO_CONFIG;
@@ -132,6 +134,64 @@ function deadPid(): number {
   return spawnSync(process.execPath, ["-e", "process.exit(0)"]).pid!;
 }
 
+/**
+ * A real, detached `tail -F` process — inboxMonitorAlive() shells out to
+ * pgrep/proc-scan for an actual process, so nothing short of a real one
+ * exercises it. `detached: true` (POSIX) makes the child its own process
+ * group leader, same effect as `setsid` — and since it's spawned directly
+ * (no shell wrapper), there's no wrapper-vs-tail double-counting to worry
+ * about either. Portable: works whether inboxMonitorAlive takes the Linux
+ * /proc-scan path or the pgrep fallback.
+ */
+const spawned: ChildProcess[] = [];
+function detachTail(notify: string): void {
+  const child = spawn("tail", ["-F", "-n0", notify], { stdio: "ignore", detached: true });
+  child.unref();
+  spawned.push(child);
+}
+/**
+ * SIGKILL is delivered asynchronously — the process isn't necessarily gone
+ * from the process table by the time this returns, so a synchronous pgrep
+ * scan in the very next test can still see it (the same class of flakiness
+ * as the setup-side fixed-sleep this file no longer uses; here it's on
+ * cleanup). Poll until each pid's process GROUP is confirmed gone.
+ */
+async function killSpawned(): Promise<void> {
+  const pids = spawned.splice(0).map((c) => c.pid).filter((p): p is number => Boolean(p));
+  for (const pid of pids) {
+    try {
+      process.kill(-pid, "SIGKILL");
+    } catch {
+      /* already gone */
+    }
+  }
+  const deadline = Date.now() + 2000;
+  for (const pid of pids) {
+    while (Date.now() < deadline) {
+      try {
+        process.kill(-pid, 0); // still alive — probing only, no signal delivered
+        await new Promise((r) => setTimeout(r, 25));
+      } catch {
+        break; // ESRCH — confirmed gone
+      }
+    }
+  }
+}
+/**
+ * Poll instead of a fixed sleep: how long a spawned `tail` takes to actually
+ * register in the process table varies with system load, and a flat delay
+ * was intermittently too short under the full suite's parallel test-file
+ * load (flaky, not deterministic — the exact class of bug this poll avoids).
+ */
+async function waitForMonitorAlive(stationId: string, notify: string, timeoutMs = 3000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (inboxMonitorAlive(stationId, notify) === true) return;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  throw new Error(`monitor for ${stationId} never came alive within ${timeoutMs}ms`);
+}
+
 describe("silent-failure surfacing (hands#173, hands#183)", () => {
   it("distinguishes woken from coalesced in the response, instead of both reading as empty `woken`", async () => {
     const expo = await connect("expo");
@@ -180,12 +240,36 @@ describe("silent-failure surfacing (hands#173, hands#183)", () => {
     expect(res.body.warning).toContain("station-1");
   });
 
-  it("a healthy assignee (real pid) gets no warning", async () => {
+  // station-90, not station-1: pgrep matches ANY process system-wide on the
+  // notify substring, and vitest runs test FILES in parallel — doctor.test.ts
+  // provisions a REAL "station-1" worktree with its own real tail processes,
+  // so sharing that id here raced against it. A distinctive id (matching
+  // watchers.test.ts's own "station-9" for the same reason) avoids it.
+  it("a healthy assignee (real pid AND a real armed monitor) gets no warning", async () => {
     const expo = await connect("expo");
-    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
-    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    stores[0]!.registerAgent({ id: "station-90", cwd: "/", pid: process.pid });
+    const notify = path.join(home, "station-90.notify");
+    detachTail(notify);
+    await waitForMonitorAlive("station-90", notify);
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-90" });
     expect(res.body.warning).toBeUndefined();
   });
+
+  it(
+    "warns on hands_delegate when the process is alive but its inbox monitor is confirmed dead (hands#90)",
+    async () => {
+      const expo = await connect("expo");
+      // process alive, but no tail on its notify file — the actual bug: a
+      // live session that has gone deaf looks identical to a healthy one
+      // everywhere except here.
+      stores[0]!.registerAgent({ id: "station-90", cwd: "/", pid: process.pid });
+      const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-90" });
+      expect(res.body.ok).toBe(true); // NOT refused — the ticket is durably created regardless
+      expect(res.body.assignedTo).toBe("station-90");
+      expect(res.body.warning).toContain("station-90");
+      expect(res.body.warning).toContain("monitor");
+    },
+  );
 
   it("hands_peers and hands_board surface `alive` distinctly from `online` for a dead-pid peer", async () => {
     const expo = await connect("expo");
@@ -249,13 +333,20 @@ describe("cross-peer-id mention warning (hands#170)", () => {
 
   it("hands_delegate does NOT warn when the body only names the sender or the recipient", async () => {
     const expo = await connect("expo");
-    // A real, alive pid — isolates this test to the leak-warning path only,
-    // no interference from the unrelated hands#183 dead-pid warning.
-    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
+    // A real, alive pid AND a real armed monitor — isolates this test to the
+    // leak-warning path only, no interference from the unrelated hands#183
+    // dead-pid or hands#90 dead-monitor warnings. station-91, not station-1:
+    // doctor.test.ts provisions a REAL "station-1" worktree with its own real
+    // tail processes, and vitest runs test files in parallel — pgrep matches
+    // system-wide, so sharing that id here would race against it.
+    stores[0]!.registerAgent({ id: "station-91", cwd: "/", pid: process.pid });
+    const notify = path.join(home, "station-91.notify");
+    detachTail(notify);
+    await waitForMonitorAlive("station-91", notify);
     const res = await call(expo, "hands_delegate", {
       title: "fix the bug",
-      body: "station-1, confirm your diff to main.ts is limited to the digest line",
-      to: "station-1",
+      body: "station-91, confirm your diff to main.ts is limited to the digest line",
+      to: "station-91",
     });
     expect(res.body.warning).toBeUndefined();
   });
