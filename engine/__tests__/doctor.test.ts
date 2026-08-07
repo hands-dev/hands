@@ -165,6 +165,51 @@ describe("the station permission check — the fourteen-hour regression", () => 
     const report = runDoctor({ cwd: repo, env });
     expect(report.checks.find((c) => c.name === "station-1.permissions")?.severity).toBe("ok");
   });
+
+  /** A real seeded station worktree, then its settings rewritten back to the pre-hands#86 shape. */
+  function staleStation(): string {
+    worktreeRoot = path.join(root, "worktrees");
+    fs.writeFileSync(
+      path.join(repo, "hands.config.json"),
+      JSON.stringify({ ...CONFIG, stations: { ...CONFIG.stations, worktreeRoot } }, null, 2),
+    );
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+      { cwd: repo },
+    );
+    const [plan] = addStations(1, { cwd: repo, env: { ...env, TMUX: "" } });
+    if (!plan) throw new Error("provisioner returned no station");
+    const settings = path.join(plan.dir, ".claude", "settings.local.json");
+    const current = JSON.parse(fs.readFileSync(settings, "utf8"));
+    current.permissions.allow = current.permissions.allow.filter((r: string) => r !== "Bash(git push *)");
+    current.permissions.deny = [...current.permissions.deny, "Bash(git push *)"];
+    fs.writeFileSync(settings, JSON.stringify(current, null, 2));
+    return plan.dir;
+  }
+
+  it("hands#86: FAILS a station whose settings predate the push-permission grant", () => {
+    staleStation();
+    const report = runDoctor({ cwd: repo, env });
+    const perms = report.checks.find((c) => c.name === "station-1.permissions");
+    expect(perms?.severity).toBe("fail");
+    expect(perms?.detail).toContain("hands#86");
+    expect(report.worst).toBe("fail");
+  });
+
+  it("hands#86: --fix reconciles a stale station's push permission without re-seeding the rest", () => {
+    const dir = staleStation();
+    const settings = path.join(dir, ".claude", "settings.local.json");
+    const before = JSON.parse(fs.readFileSync(settings, "utf8"));
+
+    const report = runDoctor({ cwd: repo, env, fix: true });
+
+    const after = JSON.parse(fs.readFileSync(settings, "utf8"));
+    expect(after.permissions.allow).toContain("Bash(git push *)");
+    expect(after.permissions.deny).not.toContain("Bash(git push *)");
+    expect(after.permissions.allow.filter((r: string) => r !== "Bash(git push *)")).toEqual(before.permissions.allow);
+    expect(report.checks.find((c) => c.name === "station-1.permissions")?.severity).toBe("ok");
+  });
 });
 
 describe("the dashboard.serve pidfile check (hands#77/#82)", () => {

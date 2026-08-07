@@ -55,7 +55,7 @@ import {
   scaleStations,
 } from "./provision.js";
 import { listRegisteredProjects, registerProject, resolveProject } from "./projects.js";
-import { seedStationPermissions } from "./seed-permissions.js";
+import { reconcileStationPushPermission, seedStationPermissions } from "./seed-permissions.js";
 import { idleMs, latestSessionId, recentActivity, transcriptDir } from "./station-logs.js";
 import { runDoctor } from "./doctor.js";
 import { claimWorktree, releaseWorktree } from "./worktree-lock.js";
@@ -1194,6 +1194,9 @@ function launchStationSeat(
   // Seed here too, not just at `station add`: a seat opened by hand, or one
   // created before seeding existed, would otherwise still stall on prompts.
   seedStationPermissions(dir);
+  // hands#86: a seat provisioned before `git push` moved to ALLOW still has the old policy —
+  // seedStationPermissions above is a no-op on an existing file, so this is what catches it up.
+  reconcileStationPushPermission(dir);
   launchAt(dir, "station", id, cfg.stations.overrides[id] ?? cfg.stations.model, opts);
 }
 

@@ -9340,10 +9340,11 @@ function mergeStationSettings(dir, patch) {
 `);
   return { path: file2, written: true };
 }
-var ALLOW, DENY, SEEDED_RELPATH;
+var PUSH_RULE, ALLOW, DENY, SEEDED_RELPATH;
 var init_seed_permissions = __esm({
   "src/seed-permissions.ts"() {
     "use strict";
+    PUSH_RULE = "Bash(git push *)";
     ALLOW = [
       "Read",
       "Glob",
@@ -9382,10 +9383,10 @@ var init_seed_permissions = __esm({
       "mcp__plugin_hands_hands__hands_history",
       "mcp__plugin_hands_hands__hands_priorities",
       "mcp__plugin_hands_hands__hands_questions",
-      "mcp__plugin_hands_hands__hands_todos"
+      "mcp__plugin_hands_hands__hands_todos",
+      PUSH_RULE
     ];
     DENY = [
-      "Bash(git push *)",
       "Bash(git reset --hard *)",
       "Bash(gh pr merge *)",
       "mcp__plugin_hands_hands__hands_scale",

@@ -121,9 +121,9 @@ chatty behavior is visible.
    - Either way, finish with
      `hands_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
    The `result` is your report — the expo reads it at the pass without being woken. Plans and
-   investigation are always safe; for building, stay **reversible**: commit to your own branch,
-   never merge/push-to-shared/deploy/mutate shared data. Ambiguous or bigger than one station →
-   `hands_ask` rather than guessing.
+   investigation are always safe; for building, stay **reversible**: commit to your own branch and
+   push it (hands#86 — `git push` is yours to run now), never merge/deploy/mutate shared data.
+   Ambiguous or bigger than one station → `hands_ask` rather than guessing.
 5. **Does a craft cover this?** Check the ticket against the roster's `covers` lines (in your
    instructions, or `hands craft ls` for the full list). One craft covers it → `hands craft brief
    <slug> --ticket <id>` (cite your ticket id if you have one — feeds the dashboard's per-craft
@@ -194,8 +194,9 @@ yours mid-day.
   the pass.
 - **When the loop stops** (the principal cancels, or `/loop` stop), stop the Monitor:
   `TaskStop` it if you have its task id, else `pkill -f "tail -F -n0 .*<id>.notify"`.
-- **Never push, merge, deploy, or mutate shared state autonomously.** Reply, do reversible
-  in-workspace work, or escalate — that's the whole menu.
+- **Push your own branch freely (hands#86); never merge, deploy, or mutate shared state
+  autonomously.** Reply, do reversible in-workspace work and ship it on your own branch, or
+  escalate — that's the whole menu. Opening the PR and merging it are still the expo/human's call.
 - **Don't hijack a pane the principal is actively using** — if they start giving you real work
   here, stop the loop (and its Monitor).
 - Be terse. You're a station, not a narrator.

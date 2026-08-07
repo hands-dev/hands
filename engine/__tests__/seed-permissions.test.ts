@@ -2,7 +2,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mergeStationSettings, seedStationPermissions, stationSettings } from "../src/seed-permissions.js";
+import {
+  mergeStationSettings,
+  pushPermissionStale,
+  PUSH_RULE,
+  reconcileStationPushPermission,
+  seedStationPermissions,
+  stationSettings,
+} from "../src/seed-permissions.js";
 
 let dir: string;
 
@@ -106,13 +113,14 @@ describe("the grant itself", () => {
     }
   });
 
-  it("does not hand a station blanket git — push and reset must not ride in on a prefix", () => {
+  it("does not hand a station blanket git — only push is granted, reset must not ride in on a prefix (hands#86)", () => {
     expect(allow.allow).not.toContain("Bash(git *)");
-    expect(allow.deny).toContain("Bash(git push *)");
+    expect(allow.allow).toContain("Bash(git push *)");
+    expect(allow.deny).not.toContain("Bash(git push *)");
     expect(allow.deny).toContain("Bash(git reset --hard *)");
   });
 
-  it("leaves Edit and Write prompting — a station proposes, a human ships", () => {
+  it("leaves Edit and Write prompting — a station ships its own branch, a human still merges", () => {
     expect(allow.allow).not.toContain("Edit");
     expect(allow.allow).not.toContain("Write");
     expect(allow.deny).toContain("Bash(gh pr merge *)");
@@ -121,5 +129,62 @@ describe("the grant itself", () => {
   it("denies the tools that would let a station restructure the line", () => {
     expect(allow.deny).toContain("mcp__plugin_hands_hands__hands_scale");
     expect(allow.deny).toContain("mcp__plugin_hands_hands__hands_station_remove");
+  });
+});
+
+describe("pushPermissionStale / reconcileStationPushPermission — hands#86 catch-up for already-provisioned seats", () => {
+  it("a freshly seeded station is never stale", () => {
+    seedStationPermissions(dir);
+    expect(pushPermissionStale(dir)).toBe(false);
+  });
+
+  it("a station with no settings file at all is not 'stale' — that's seedStationPermissions' job", () => {
+    expect(pushPermissionStale(dir)).toBe(false);
+    expect(reconcileStationPushPermission(dir)).toEqual({ path: settingsFile(), changed: false });
+    expect(fs.existsSync(settingsFile())).toBe(false); // reconcile never creates the file
+  });
+
+  it("flags the pre-hands#86 shape: push present in deny, absent from allow", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsFile(),
+      JSON.stringify({ permissions: { allow: ["Read", "HandTuned"], deny: [PUSH_RULE, "Bash(git reset --hard *)"] } }),
+    );
+    expect(pushPermissionStale(dir)).toBe(true);
+  });
+
+  it("reconciles: drops push from deny, adds it to allow, leaves everything else untouched", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsFile(),
+      JSON.stringify({
+        permissions: { allow: ["Read", "HandTuned"], deny: [PUSH_RULE, "Bash(git reset --hard *)"] },
+        theme: "custom:hand-rolled",
+      }),
+    );
+
+    const res = reconcileStationPushPermission(dir);
+    expect(res.changed).toBe(true);
+
+    const after = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(after.permissions.allow).toEqual(["Read", "HandTuned", PUSH_RULE]);
+    expect(after.permissions.deny).toEqual(["Bash(git reset --hard *)"]);
+    expect(after.theme).toBe("custom:hand-rolled"); // untouched top-level key
+    expect(pushPermissionStale(dir)).toBe(false);
+  });
+
+  it("is a no-op (changed:false) once already reconciled", () => {
+    seedStationPermissions(dir); // current policy already has push in allow, not deny
+    const res = reconcileStationPushPermission(dir);
+    expect(res.changed).toBe(false);
+  });
+
+  it("still adds push to allow even if it was simply absent from both lists (no deny entry at all)", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(settingsFile(), JSON.stringify({ permissions: { allow: ["Read"], deny: [] } }));
+    expect(pushPermissionStale(dir)).toBe(true);
+    reconcileStationPushPermission(dir);
+    const after = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(after.permissions.allow).toContain(PUSH_RULE);
   });
 });
