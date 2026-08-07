@@ -10,6 +10,7 @@
  *   hands books <url>         attach the books (durable journal) to this repo's config
  *   hands craft ls             the craft roster — scope, covers, distilled, pending notes
  *   hands craft sync           materialize crafts as real Agent types + Skills (one-call dispatch)
+ *   hands craft sweep-headers  drop retired "last held: DATE by AGENT" ownership clauses (hands#167)
  *   hands craft promote <s>    move a personal craft to the repo-shared tier
  *   hands craft localize <s>   move a shared craft back to the personal tier
  *   hands craft distill [<s>]  list a craft's unfolded book/skill notes (mise already applies
@@ -81,10 +82,13 @@ import {
   buildFoldContext,
   composeChit,
   craftAgentPath,
+  craftKnown,
   listCrafts,
   materializeCraftAgents,
+  nearestCraftSlugs,
   parseCraftHeader,
   readCraftFileCapped,
+  sweepHeldSeatHeader,
 } from "./crafts.js";
 import {
   booksMcpEntry,
@@ -324,8 +328,21 @@ function cmdCraft(argv: string[]): void {
       for (const c of roster) {
         const distilled = c.distilled ? `distilled ${c.distilled}` : "never distilled";
         const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)` : "";
-        const synced = fs.existsSync(craftAgentPath(cwd, c.slug)) ? "" : ", not yet synced here";
+        // "brief-only" (not "not yet synced") — a personal or freshly-founded craft is fully
+        // dispatchable right now via `hands craft brief`; it's only the one-call Agent-tool path
+        // that needs `hands craft sync` first. The old wording read as "not available" and
+        // suppressed dispatch (hands#167).
+        const synced = fs.existsSync(craftAgentPath(cwd, c.slug)) ? "" : ", brief-only here";
         out(`${c.slug}\t[${c.scope}${synced}]\t${c.covers ?? "no covers stated"}\t${distilled}${pending}`);
+      }
+      const orphans = store.orphanCraftBriefSlugs(roster.map((c) => c.slug));
+      if (orphans.length > 0) {
+        out("");
+        out(
+          `${orphans.length} slug(s) have recorded dispatches but no matching craft file — likely phantom ` +
+            "briefs from a mistyped/stale name (hands#165), not real usage:",
+        );
+        for (const o of orphans) out(`  "${o.slug}" — ${o.count} brief(s)`);
       }
       return;
     }
@@ -406,6 +423,29 @@ function cmdCraft(argv: string[]): void {
       return;
     }
 
+    if (sub === "sweep-headers") {
+      // hands#167: books founded before the sub-agent dispatch model still carry a `last held:
+      // DATE by AGENT` header clause from the retired per-station-ownership model — a generalist
+      // reading it reasonably concludes the craft belongs to someone else and skips dispatching
+      // it. Mechanical, header-line-only rewrite; body prose ("belongs to another station") needs
+      // a model's judgment and isn't touched here.
+      const roster = listCrafts(store, cfg);
+      let changed = 0;
+      for (const c of roster) {
+        const files = craftFiles(c.slug, process.env, process.cwd());
+        const raw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
+        if (!raw) continue;
+        const swept = sweepHeldSeatHeader(raw);
+        if (!swept.changed) continue;
+        fs.writeFileSync(files.book, swept.content);
+        out(`✔ swept "${c.slug}" (${files.scope}) — dropped the held-seat ownership clause from its header`);
+        changed++;
+      }
+      if (changed === 0) out("no craft headers carry held-seat language — nothing to sweep");
+      else out(`\n${changed} book(s) updated — commit any that live in the shared tier.`);
+      return;
+    }
+
     if (sub === "distill") {
       const only = argv[1] && !argv[1].startsWith("--") ? argv[1] : null;
       const slugs = only ? [only] : store.pendingCraftSlugs();
@@ -446,8 +486,24 @@ function cmdCraft(argv: string[]): void {
         );
       }
       const mode = strOpt(argv, "--mode") === "execute" ? "execute" : "plan";
+      // NB: `--cwd` is the EXECUTE-lease/brief-record key (which worktree the sub-agent edits
+      // in) — the craft's own book/mise/skill always resolve against this command's real
+      // process.cwd() (unchanged from before hands#165), same as `craftFiles(slug!)` did.
       const cwd = strOpt(argv, "--cwd") ?? process.cwd();
       const files = craftFiles(slug!);
+      const { known, slugs } = craftKnown(files.slug, cfg);
+      if (!known) {
+        const nearest = nearestCraftSlugs(files.slug, slugs);
+        fail(
+          `unknown craft "${files.slug}" — no book found for it` +
+            (slugs.length === 0
+              ? " (no crafts founded yet — /hands:crafts surveys a repo for the ones worth establishing)"
+              : nearest.length > 0
+                ? `. Closest on the roster: ${nearest.join(", ")}`
+                : "") +
+            " — `hands craft ls` for the full roster. Not recording a dispatch for it.",
+        );
+      }
       if (mode === "execute") {
         const open = store.openExecuteBrief(files.slug, cwd);
         if (open) {
@@ -544,7 +600,7 @@ function cmdCraft(argv: string[]): void {
       return;
     }
 
-    fail("usage: hands craft <ls|sync|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]");
+    fail("usage: hands craft <ls|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]");
   } finally {
     store.close();
   }

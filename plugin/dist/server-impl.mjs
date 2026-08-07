@@ -8366,6 +8366,37 @@ var init_store = __esm({
         return result;
       }
       /**
+       * `craft_briefs` rows whose `craft_slug` matches no currently-founded craft — dispatches that
+       * never carried a real book/mise/skill because the name was wrong (hands#165: a mistyped or
+       * stale slug used to succeed silently and write one of these). `knownSlugs` is the caller's
+       * current roster (a filesystem read `Store` doesn't do itself); this is a pure DB-vs-list diff.
+       * Never trimmed or auto-deleted — this only makes them visible, on the theory that a human who
+       * finds a genuine reason to purge history should do it deliberately, not have it happen quietly.
+       */
+      orphanCraftBriefSlugs(knownSlugs) {
+        const known = new Set(knownSlugs);
+        const rows = this.db.prepare("SELECT craft_slug, COUNT(*) as cnt FROM craft_briefs GROUP BY craft_slug").all();
+        return rows.filter((r) => !known.has(r.craft_slug)).map((r) => ({ slug: r.craft_slug, count: r.cnt }));
+      }
+      /**
+       * Dispatch-rate visibility (hands#168): of the tickets that finished in the window, how many
+       * carried at least one craft dispatch. `knownSlugs` filters out orphan/phantom briefs
+       * (orphanCraftBriefSlugs) so a mistyped slug can never inflate this the way it inflated the
+       * `craft_briefs` table itself pre-hands#165 — an empty `knownSlugs` correctly reports 0 rather
+       * than joining against nothing.
+       */
+      craftDispatchRate(sinceMs, knownSlugs) {
+        const finished = this.db.prepare("SELECT COUNT(*) as n FROM tasks WHERE finished_at IS NOT NULL AND finished_at >= ?").get(sinceMs);
+        if (knownSlugs.length === 0) return { ticketsFinished: finished.n, ticketsWithCraftBrief: 0 };
+        const placeholders = knownSlugs.map(() => "?").join(",");
+        const withCraft = this.db.prepare(
+          `SELECT COUNT(DISTINCT t.id) as n FROM tasks t
+         JOIN craft_briefs cb ON cb.ticket_id = t.id
+         WHERE t.finished_at IS NOT NULL AND t.finished_at >= ? AND cb.craft_slug IN (${placeholders})`
+        ).get(sinceMs, ...knownSlugs);
+        return { ticketsFinished: finished.n, ticketsWithCraftBrief: withCraft.n };
+      }
+      /**
        * Token usage per craft, from subagent_samples — written on every sub-agent finish but never
        * read anywhere until now. Only attributes calls where agent_type is literally "craft-<slug>"
        * (the fast/synced dispatch path); the "not yet synced" fallback dispatches as
@@ -10234,10 +10265,14 @@ function personalCraftsDir(config2, env = process.env, cwd = process.cwd()) {
 }
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
-  const slug = sanitizeSegment(craft, "unnamed");
+  const raw = sanitizeSegment(craft, "unnamed");
   const shared = sharedCraftsDir(config2, cwd);
+  const personal = personalCraftsDir(config2, env, cwd);
+  const bookExists = (slug2) => shared !== null && fs14.existsSync(path15.join(shared, `${slug2}.md`)) || fs14.existsSync(path15.join(personal, `${slug2}.md`));
+  const stripped = raw.startsWith("craft-") ? raw.slice("craft-".length) : null;
+  const slug = stripped && !bookExists(raw) && bookExists(stripped) ? stripped : raw;
   const scope = shared && fs14.existsSync(path15.join(shared, `${slug}.md`)) ? "shared" : "personal";
-  const dir = scope === "shared" && shared ? shared : personalCraftsDir(config2, env, cwd);
+  const dir = scope === "shared" && shared ? shared : personal;
   return {
     dir,
     slug,
@@ -10533,7 +10568,7 @@ function materializeCraftAgents(config2, targetDir, env = process.env, cwd = pro
   }
   return { written, removed };
 }
-function formatRosterContext(entries, targetDir) {
+function formatRosterContext(entries, targetDir, dispatchRate) {
   if (entries.length === 0) {
     return "\n\nNo crafts founded yet. Crafts are dispatched as sub-agents, not held \u2014 found one via /hands:crafts only for a durable, recurring beat.";
   }
@@ -10541,14 +10576,17 @@ function formatRosterContext(entries, targetDir) {
     const staleness = e.distilled ? "" : " (never distilled)";
     const pending = e.pendingNotes ? ` \xB7 ${e.pendingNotes} pending note(s)` : "";
     const ready = fs15.existsSync(craftAgentPath(targetDir, e.slug));
-    return `- craft-${e.slug} [${e.scope}${ready ? "" : ", not yet synced"}] \u2014 ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
+    return `- ${e.slug} [${e.scope}${ready ? "" : ", brief-only"}] \u2014 ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
   });
   const cap = 1500;
   let body = lines.join("\n");
   const points = Array.from(body);
   if (points.length > cap) body = `${points.slice(0, cap).join("")}
 \u2026(see hands craft ls for the rest)`;
-  return "\n\n## Crafts available (dispatch as sub-agents \u2014 don't do their work yourself)\n" + body + '\nDispatch a synced craft: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) \u2014 it briefs and equips itself. "not yet synced" \u2192 fall back to `hands craft brief <slug>` yourself (add `--ticket <id>` if you\'re working one), paste the printed chit into a general-purpose Agent\'s prompt instead. `hands craft ls` gives the full roster on demand.';
+  const rate = dispatchRate && dispatchRate.ticketsFinished > 0 ? `
+Dispatch rate (7d): ${dispatchRate.ticketsWithCraftBrief} of ${dispatchRate.ticketsFinished} finished ticket(s) went through a craft.` : "";
+  return "\n\n## Crafts available (dispatch as sub-agents \u2014 don't do their work yourself)\n" + body + `
+Synced: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) \u2014 e.g. "craft-${entries[0].slug}" for the first one above; it briefs and equips itself. "brief-only" \u2192 run \`hands craft brief <slug>\` yourself \u2014 the BARE slug shown above, no \`craft-\` prefix (add \`--ticket <id>\` if you're working one), then paste the printed chit into a general-purpose Agent's prompt. \`hands craft ls\` gives the full roster on demand.` + rate;
 }
 function parseCraftNoteBlock(text) {
   let last = null;
@@ -35545,8 +35583,14 @@ function presentMessage(row) {
     createdAt: new Date(row.created_at).toISOString()
   };
 }
-function craftRosterContext(config2, store, env = process.env, cwd = process.cwd()) {
-  return formatRosterContext(listCrafts(store, config2, env, cwd), cwd);
+var DISPATCH_RATE_WINDOW_MS = 7 * 24 * 60 * 6e4;
+function craftRosterContext(config2, store, env = process.env, cwd = process.cwd(), now = Date.now()) {
+  const roster = listCrafts(store, config2, env, cwd);
+  const rate = store.craftDispatchRate(
+    now - DISPATCH_RATE_WINDOW_MS,
+    roster.map((c) => c.slug)
+  );
+  return formatRosterContext(roster, cwd, rate);
 }
 function buildServer(store, agentId, config2) {
   const cfg = config2 ?? loadConfig();

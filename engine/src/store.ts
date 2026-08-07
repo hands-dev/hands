@@ -1974,6 +1974,45 @@ export class Store {
   }
 
   /**
+   * `craft_briefs` rows whose `craft_slug` matches no currently-founded craft — dispatches that
+   * never carried a real book/mise/skill because the name was wrong (hands#165: a mistyped or
+   * stale slug used to succeed silently and write one of these). `knownSlugs` is the caller's
+   * current roster (a filesystem read `Store` doesn't do itself); this is a pure DB-vs-list diff.
+   * Never trimmed or auto-deleted — this only makes them visible, on the theory that a human who
+   * finds a genuine reason to purge history should do it deliberately, not have it happen quietly.
+   */
+  orphanCraftBriefSlugs(knownSlugs: string[]): Array<{ slug: string; count: number }> {
+    const known = new Set(knownSlugs);
+    const rows = this.db
+      .prepare("SELECT craft_slug, COUNT(*) as cnt FROM craft_briefs GROUP BY craft_slug")
+      .all() as Array<{ craft_slug: string; cnt: number }>;
+    return rows.filter((r) => !known.has(r.craft_slug)).map((r) => ({ slug: r.craft_slug, count: r.cnt }));
+  }
+
+  /**
+   * Dispatch-rate visibility (hands#168): of the tickets that finished in the window, how many
+   * carried at least one craft dispatch. `knownSlugs` filters out orphan/phantom briefs
+   * (orphanCraftBriefSlugs) so a mistyped slug can never inflate this the way it inflated the
+   * `craft_briefs` table itself pre-hands#165 — an empty `knownSlugs` correctly reports 0 rather
+   * than joining against nothing.
+   */
+  craftDispatchRate(sinceMs: number, knownSlugs: string[]): { ticketsFinished: number; ticketsWithCraftBrief: number } {
+    const finished = this.db
+      .prepare("SELECT COUNT(*) as n FROM tasks WHERE finished_at IS NOT NULL AND finished_at >= ?")
+      .get(sinceMs) as { n: number };
+    if (knownSlugs.length === 0) return { ticketsFinished: finished.n, ticketsWithCraftBrief: 0 };
+    const placeholders = knownSlugs.map(() => "?").join(",");
+    const withCraft = this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT t.id) as n FROM tasks t
+         JOIN craft_briefs cb ON cb.ticket_id = t.id
+         WHERE t.finished_at IS NOT NULL AND t.finished_at >= ? AND cb.craft_slug IN (${placeholders})`,
+      )
+      .get(sinceMs, ...knownSlugs) as { n: number };
+    return { ticketsFinished: finished.n, ticketsWithCraftBrief: withCraft.n };
+  }
+
+  /**
    * Token usage per craft, from subagent_samples — written on every sub-agent finish but never
    * read anywhere until now. Only attributes calls where agent_type is literally "craft-<slug>"
    * (the fast/synced dispatch path); the "not yet synced" fallback dispatches as

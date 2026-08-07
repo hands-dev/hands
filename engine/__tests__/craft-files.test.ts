@@ -10,12 +10,15 @@ import {
   applyPendingMiseNotes,
   composeChit,
   craftAgentPath,
+  craftKnown,
   craftSkillPath,
   formatRosterContext,
   listCrafts,
   materializeCraftAgents,
+  nearestCraftSlugs,
   parseCraftHeader,
   parseCraftNoteBlock,
+  sweepHeldSeatHeader,
   upsertMiseLine,
 } from "../src/crafts.js";
 import { resetRepoInfoCache } from "../src/paths.js";
@@ -90,6 +93,29 @@ describe("craftFiles", () => {
     expect(files.scope).toBe("personal");
   });
 
+  it("accepts a `craft-`-prefixed name as an alias for a real bare slug (hands#165)", () => {
+    const files = craftFiles("fleet-runtime", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: hosts\n");
+
+    const aliased = craftFiles("craft-fleet-runtime", env);
+    expect(aliased.slug).toBe("fleet-runtime");
+    expect(aliased.book).toBe(files.book);
+  });
+
+  it("does NOT strip the `craft-` prefix when nothing resolves either way — founding a new craft is unaffected", () => {
+    const files = craftFiles("craft-mystery", env);
+    expect(files.slug).toBe("craft-mystery");
+  });
+
+  it("does NOT strip the `craft-` prefix when a craft is genuinely founded under that literal name", () => {
+    const prefixed = craftFiles("craft-fleet-runtime", env);
+    fs.mkdirSync(prefixed.dir, { recursive: true });
+    fs.writeFileSync(prefixed.book, "> covers: a craft literally named with the prefix\n");
+    // the bare slug "fleet-runtime" does NOT exist here — only the prefixed one does
+    expect(craftFiles("craft-fleet-runtime", env).slug).toBe("craft-fleet-runtime");
+  });
+
   it("crafts.sharedDir config overrides the default .hands/crafts location", () => {
     const repo = fs.realpathSync(fs.mkdtempSync(path.join(home, "repo-")));
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
@@ -103,6 +129,82 @@ describe("craftFiles", () => {
     const files = craftFiles("saucier", { ...env, HANDS_NO_REPO_CONFIG: undefined }, repo);
     expect(files.scope).toBe("shared");
     expect(files.dir).toBe(customDir);
+  });
+});
+
+describe("craftKnown + nearestCraftSlugs — hands#165: `hands craft brief` must refuse an unknown slug loudly", () => {
+  it("known:false and the full roster for a slug with no book file anywhere", () => {
+    const store = new Store({ env });
+    const founded = craftFiles("fleet-runtime", env);
+    fs.mkdirSync(founded.dir, { recursive: true });
+    fs.writeFileSync(founded.book, "> covers: hosts\n");
+
+    const result = craftKnown("craft-fleet-runtime", loadConfig({ env }), env); // the raw injected-roster form, unresolved
+    expect(result.known).toBe(false);
+    expect(result.slugs).toEqual(["fleet-runtime"]);
+    store.close();
+  });
+
+  it("known:true once resolved through craftFiles' alias (the real dispatch path)", () => {
+    const store = new Store({ env });
+    const founded = craftFiles("fleet-runtime", env);
+    fs.mkdirSync(founded.dir, { recursive: true });
+    fs.writeFileSync(founded.book, "> covers: hosts\n");
+
+    const resolved = craftFiles("craft-fleet-runtime", env); // cli.ts resolves before calling craftKnown
+    const result = craftKnown(resolved.slug, loadConfig({ env }), env);
+    expect(result.known).toBe(true);
+    store.close();
+  });
+
+  it("an empty roster reports known:false with an empty suggestion list, not a throw", () => {
+    const store = new Store({ env });
+    expect(craftKnown("anything", loadConfig({ env }), env)).toEqual({ known: false, slugs: [] });
+    store.close();
+  });
+
+  it("nearestCraftSlugs ranks the closest typo fix first", () => {
+    const known = ["fleet-runtime", "fleet-hosts", "fleet-api"];
+    expect(nearestCraftSlugs("fleet-runtim", known, 1)).toEqual(["fleet-runtime"]);
+    expect(nearestCraftSlugs("fleet-host", known, 1)).toEqual(["fleet-hosts"]);
+  });
+
+  it("nearestCraftSlugs respects the limit", () => {
+    expect(nearestCraftSlugs("x", ["a", "b", "c", "d"], 2)).toHaveLength(2);
+  });
+});
+
+describe("sweepHeldSeatHeader — hands#167: drop the retired per-station-ownership clause", () => {
+  it("rewrites 'last held: DATE by AGENT' to 'distilled: DATE', keeping the timestamp", () => {
+    const result = sweepHeldSeatHeader("> covers: app.py · last held: 2026-08-06 by station-2\nbody\n");
+    expect(result.changed).toBe(true);
+    expect(result.content).toBe("> covers: app.py · distilled: 2026-08-06\nbody\n");
+    expect(result.content).not.toContain("station-2");
+    expect(result.content).not.toContain("held");
+  });
+
+  it("rewrites 'last held: DATE' with no agent clause too", () => {
+    const result = sweepHeldSeatHeader("> covers: app.py · last held: 2026-08-06\n");
+    expect(result.content).toBe("> covers: app.py · distilled: 2026-08-06\n");
+  });
+
+  it("is a no-op on a book that already uses the current 'distilled:' header", () => {
+    const input = "> covers: app.py · distilled: 2026-08-01 from 4 learnings\nbody\n";
+    const result = sweepHeldSeatHeader(input);
+    expect(result.changed).toBe(false);
+    expect(result.content).toBe(input);
+  });
+
+  it("is a no-op on a charter stub with no distilled/held clause at all", () => {
+    const input = "> covers: app.py · founded: 2026-08-04\n";
+    const result = sweepHeldSeatHeader(input);
+    expect(result.changed).toBe(false);
+  });
+
+  it("leaves the rest of the book's body untouched, only the header clause", () => {
+    const input = "> covers: app.py · last held: 2026-08-06 by station-2\n\n## A section\nstation-2 wrote this fact.\n";
+    const result = sweepHeldSeatHeader(input);
+    expect(result.content).toContain("station-2 wrote this fact."); // body prose is NOT swept
   });
 });
 
@@ -166,7 +268,7 @@ describe("craftRosterContext (roster injection, not full content — hands#81/#9
       `> covers: sauces, stocks · distilled: 2026-08-01 from 3 learnings\n${"x".repeat(5000)}`,
     );
     const ctx = craftRosterContext(loadConfig({ env }), store, env);
-    expect(ctx).toContain("craft-saucier [personal, not yet synced] — sauces, stocks");
+    expect(ctx).toContain("saucier [personal, brief-only] — sauces, stocks");
     expect(ctx.length).toBeLessThan(2000); // roster summary, not the 5000-char book itself
     store.close();
   });
@@ -177,6 +279,24 @@ describe("craftRosterContext (roster injection, not full content — hands#81/#9
     fs.mkdirSync(files.dir, { recursive: true });
     fs.writeFileSync(files.book, "> covers: fish\nsome content");
     expect(craftRosterContext(loadConfig({ env }), store, env)).toContain("(never distilled)");
+    store.close();
+  });
+
+  it("surfaces the dispatch rate (hands#168) once tickets have finished, silent when none have", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: sauces\n");
+
+    const before = craftRosterContext(loadConfig({ env }), store, env, undefined, 10_000);
+    expect(before).not.toContain("Dispatch rate");
+
+    const id = store.createTask({ createdBy: "expo", title: "t", now: 1000 });
+    store.updateTaskState({ id, state: "returned", result: "r", now: 2000 });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: id, now: 2000 });
+
+    const after = craftRosterContext(loadConfig({ env }), store, env, undefined, 10_000);
+    expect(after).toContain("Dispatch rate (7d): 1 of 1 finished ticket(s) went through a craft.");
     store.close();
   });
 });
@@ -408,6 +528,70 @@ describe("Store.craftUsageStats — dispatch aggregation (hands#136-dashboard)",
   });
 });
 
+describe("Store.orphanCraftBriefSlugs — phantom dispatches from an unknown slug (hands#165/#168)", () => {
+  it("flags a slug with recorded briefs that isn't on the known roster, and counts it", () => {
+    const store = new Store({ env });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1" });
+    store.createCraftBrief({ craftSlug: "craft-fleet-runtime", mode: "plan", openedBy: "station-2" }); // phantom
+    store.createCraftBrief({ craftSlug: "craft-fleet-runtime", mode: "plan", openedBy: "station-2" }); // phantom
+    expect(store.orphanCraftBriefSlugs(["saucier"])).toEqual([{ slug: "craft-fleet-runtime", count: 2 }]);
+    store.close();
+  });
+
+  it("is empty when every recorded brief matches the known roster", () => {
+    const store = new Store({ env });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1" });
+    expect(store.orphanCraftBriefSlugs(["saucier", "poissonnier"])).toEqual([]);
+    store.close();
+  });
+
+  it("is empty with no craft_briefs rows at all", () => {
+    const store = new Store({ env });
+    expect(store.orphanCraftBriefSlugs(["saucier"])).toEqual([]);
+    store.close();
+  });
+});
+
+describe("Store.craftDispatchRate — visibility for underuse (hands#168)", () => {
+  it("counts finished tickets in the window, and how many carried a KNOWN craft's brief", () => {
+    const store = new Store({ env });
+    const a = store.createTask({ createdBy: "expo", title: "a", now: 1000 });
+    const b = store.createTask({ createdBy: "expo", title: "b", now: 1000 });
+    const c = store.createTask({ createdBy: "expo", title: "c", now: 1000 }); // no craft brief at all
+    store.updateTaskState({ id: a, state: "returned", result: "r", now: 2000 });
+    store.updateTaskState({ id: b, state: "returned", result: "r", now: 2000 });
+    store.updateTaskState({ id: c, state: "returned", result: "r", now: 2000 });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: a });
+    store.createCraftBrief({ craftSlug: "craft-fleet-runtime", mode: "plan", openedBy: "station-2", ticketId: b }); // phantom slug
+
+    const rate = store.craftDispatchRate(0, ["saucier"]); // "craft-fleet-runtime" is NOT known
+    expect(rate.ticketsFinished).toBe(3);
+    expect(rate.ticketsWithCraftBrief).toBe(1); // only ticket a's brief matches a known slug
+    store.close();
+  });
+
+  it("excludes tickets that finished before the window", () => {
+    const store = new Store({ env });
+    const old = store.createTask({ createdBy: "expo", title: "old", now: 1000 });
+    store.updateTaskState({ id: old, state: "done", now: 2000 });
+    const recent = store.createTask({ createdBy: "expo", title: "recent", now: 5000 });
+    store.updateTaskState({ id: recent, state: "done", now: 6000 });
+
+    const rate = store.craftDispatchRate(5000, ["saucier"]);
+    expect(rate.ticketsFinished).toBe(1);
+    store.close();
+  });
+
+  it("an empty known-slug list reports 0 dispatched, never joins against nothing", () => {
+    const store = new Store({ env });
+    const a = store.createTask({ createdBy: "expo", title: "a", now: 1000 });
+    store.updateTaskState({ id: a, state: "returned", result: "r", now: 2000 });
+    const rate = store.craftDispatchRate(0, []);
+    expect(rate).toEqual({ ticketsFinished: 1, ticketsWithCraftBrief: 0 });
+    store.close();
+  });
+});
+
 describe("Store.craftTokenUsage — subagent_samples aggregation (hands#136-dashboard)", () => {
   it("sums output tokens per craft, keyed by slug (agent_type prefix stripped)", () => {
     const store = new Store({ env });
@@ -538,7 +722,7 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     expect(fs.existsSync(path.dirname(craftSkillPath(target, "saucier")))).toBe(false);
   });
 
-  it("the roster context's synced/not-yet-synced flag tracks whether THAT target dir has been materialized", () => {
+  it("the roster context's synced/brief-only flag tracks whether THAT target dir has been materialized", () => {
     const files = craftFiles("saucier", env);
     fs.mkdirSync(files.dir, { recursive: true });
     fs.writeFileSync(files.book, "> covers: sauces\n");
@@ -549,14 +733,14 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     const target = fs.mkdtempSync(path.join(home, "target-"));
 
     const before = formatRosterContext(listCrafts(store, cfg, env), target);
-    expect(before).toContain("craft-saucier [personal, not yet synced]");
+    expect(before).toContain("saucier [personal, brief-only]");
 
     materializeCraftAgents(cfg, target, env);
     const after = formatRosterContext(listCrafts(store, cfg, env), target);
     // the craft's own line drops the annotation once synced — the static help text below it
-    // still mentions the phrase generically, so assert the specific line, not "anywhere at all".
-    expect(after).toMatch(/craft-saucier \[personal\] —/);
-    expect(after).not.toContain("craft-saucier [personal, not yet synced]");
+    // still mentions "craft-<slug>" generically, so assert the specific line, not "anywhere at all".
+    expect(after).toMatch(/- saucier \[personal\] —/);
+    expect(after).not.toContain("saucier [personal, brief-only]");
 
     store.close();
   });
