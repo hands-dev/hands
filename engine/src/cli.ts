@@ -4,6 +4,7 @@
  *
  *   hands [<project>]         open the pass (expo) here, or in a registered kitchen
  *   hands [<project>] station-N  open a station's seat [--without-bypass]
+ *   hands [<project>] sous    open a sous session (hands#87/#93) — no worktree, runs where invoked
  *   hands go <project> [...]  explicit form (scripts / names that collide with subcommands)
  *   hands register [path]     enroll a kitchen so it resolves by name
  *   hands init                per-repo config scaffold
@@ -48,6 +49,7 @@ import {
   addStations,
   launch,
   launchCommand,
+  type LaunchMode,
   type LaunchPlan,
   listStations,
   ProvisionError,
@@ -1175,7 +1177,7 @@ function cmdDoctor(argv: string[]): void {
  */
 function launchAt(
   dir: string,
-  mode: "expo" | "station",
+  mode: LaunchMode,
   id: string,
   model?: string | null,
   opts?: { withoutBypass?: boolean },
@@ -1243,11 +1245,25 @@ function tryLaunch(cmd: string | undefined, rest: string[]): boolean {
     return true;
   }
 
-  // `hands ampersand [station-2]` → someone else's kitchen.
+  // `hands sous` → a sous session for the current kitchen (hands#87/#93). No
+  // worktree, no provisioning — runs wherever it's invoked, same as it always
+  // could via `HANDS_ID=sous claude ...`. Requires being inside the repo so
+  // it resolves the same bus (coordinationDir) as the expo/stations it talks
+  // to; deliberately NOT repoRoot like expo's own bare launch, since sous has
+  // no fixed home to normalize to.
+  if (cmd === "sous") {
+    const info = repoInfo(process.cwd());
+    if (!info) fail(`not inside a git repo — use \`hands <project> sous\``);
+    launchAt(process.cwd(), "sous", "sous", undefined, opts);
+    return true;
+  }
+
+  // `hands ampersand [station-2|sous]` → someone else's kitchen.
   const project = resolveProject(cmd);
   if (!project) return false;
   const seat = rest[0];
   if (seat && STATION_ID.test(seat)) launchStation(project.repoRoot, seat, opts);
+  else if (seat === "sous") launchAt(project.repoRoot, "sous", "sous", undefined, opts);
   else launchAt(project.repoRoot, "expo", "expo", undefined, opts);
   return true;
 }
@@ -1373,6 +1389,7 @@ async function main(): Promise<void> {
         out("");
         out("  hands [<project>]         open the pass (expo) here, or in <project>");
         out("  hands [<project>] station-N  open a station's seat");
+        out("  hands [<project>] sous    open a sous session — no worktree, runs where invoked");
         out("  hands go <project> [station-N]  same, explicit (for scripts / name collisions)");
         out("  hands register [path]     enroll a kitchen so it resolves by name");
         out("  hands ls                  registered kitchens");

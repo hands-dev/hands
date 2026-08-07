@@ -24187,7 +24187,9 @@ function branchExists(cwd, branch) {
   }
 }
 function launchSkill(mode) {
-  return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  if (mode === "expo") return "/loop /hands:expo";
+  if (mode === "sous") return "/loop /hands:sous";
+  return "/loop /hands:station";
 }
 function launchArgs(target, mode, opts) {
   const args = [];
@@ -50700,13 +50702,24 @@ ${input.body}`, [agentId, ...recipients]);
         multiSelect: input.multiSelect,
         priorityRef: input.priority ?? null
       });
+      let wokeSous = false;
+      let sousWarning;
       if (cfg.sous.enabled) {
         try {
-          deliverWake(["sous"], { from: agentId, subject: "escalation" });
+          const result = deliverWake(["sous"], { from: agentId, subject: "escalation" });
+          wokeSous = result.notified.includes("sous");
         } catch {
         }
+        if (inboxMonitorAlive("sous") === false) {
+          sousWarning = "sous.enabled is true but no inbox monitor is tailing sous.notify \u2014 this escalation was recorded but nothing is running /loop /hands:sous to see it";
+        }
       }
-      return asToolResult({ ok: true, id: input.id, wokeSous: cfg.sous.enabled });
+      return asToolResult({
+        ok: true,
+        id: input.id,
+        wokeSous,
+        ...sousWarning ? { warning: sousWarning } : {}
+      });
     }
   );
   server.registerTool(
@@ -52938,10 +52951,17 @@ function tryLaunch(cmd, rest) {
     launchStation(info.repoRoot, cmd, opts);
     return true;
   }
+  if (cmd === "sous") {
+    const info = repoInfo(process.cwd());
+    if (!info) fail(`not inside a git repo \u2014 use \`hands <project> sous\``);
+    launchAt(process.cwd(), "sous", "sous", void 0, opts);
+    return true;
+  }
   const project = resolveProject2(cmd);
   if (!project) return false;
   const seat = rest[0];
   if (seat && STATION_ID2.test(seat)) launchStation(project.repoRoot, seat, opts);
+  else if (seat === "sous") launchAt(project.repoRoot, "sous", "sous", void 0, opts);
   else launchAt(project.repoRoot, "expo", "expo", void 0, opts);
   return true;
 }
@@ -53057,6 +53077,7 @@ async function main2() {
         out2("");
         out2("  hands [<project>]         open the pass (expo) here, or in <project>");
         out2("  hands [<project>] station-N  open a station's seat");
+        out2("  hands [<project>] sous    open a sous session \u2014 no worktree, runs where invoked");
         out2("  hands go <project> [station-N]  same, explicit (for scripts / name collisions)");
         out2("  hands register [path]     enroll a kitchen so it resolves by name");
         out2("  hands ls                  registered kitchens");

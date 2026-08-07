@@ -347,6 +347,21 @@ describe("hands_escalate wakes sous when configured (hands#87/#171 phase b)", ()
     expect(notifyLines("sous")).toHaveLength(1);
   });
 
+  it("warns when sous.enabled is true but no inbox monitor is tailing sous.notify (hands#93)", async () => {
+    // The realistic default in any environment where nobody has run /loop /hands:sous —
+    // exactly the bug #93 fixes: wokeSous used to report the config flag, not this.
+    const withSous = { ...DEFAULT_CONFIG, sous: { enabled: true } };
+    const expo = await connect("expo", withSous);
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const w1 = await connect("station-1", withSous);
+    const ask = await call(w1, "hands_ask", { question: "ship it?" });
+    const res = await call(expo, "hands_escalate", { id: ask.body.id as number, recommendation: "yes" });
+    // The .notify write itself still succeeds — wokeSous stays true (hands#173's
+    // distinction: did the write fail vs is anyone reading it are separate questions).
+    expect(res.body.wokeSous).toBe(true);
+    expect(String(res.body.warning)).toContain("no inbox monitor is tailing sous.notify");
+  });
+
   it("hands_answer accepts by:'sous' and records provenance", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });

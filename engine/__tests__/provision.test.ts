@@ -180,6 +180,14 @@ describe("station provisioning (manual launcher)", () => {
     expect(cmd).not.toContain("/hands:station");
   });
 
+  it("launchCommand emits the sous loop in sous mode (hands#87/#93)", () => {
+    const cmd = launchCommand({ id: "sous", dir: "/tmp/w" }, "sous");
+    expect(cmd).toContain("/loop /hands:sous");
+    expect(cmd).not.toContain("/hands:station");
+    expect(cmd).not.toContain("/hands:expo");
+    expect(cmd).toContain("HANDS_ID=sous");
+  });
+
   it("omits --model when none is given, so the expo inherits the principal's default", () => {
     expect(launchCommand({ id: "expo", dir: "/tmp/w" }, "expo")).not.toContain("--model");
     expect(launchCommand({ id: "station-1", dir: "/tmp/w", model: null })).not.toContain("--model");

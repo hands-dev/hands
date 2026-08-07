@@ -718,14 +718,32 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       // first escalation hop — a real bus wake, same cost as today's
       // expo→principal desktop ping, not an added one. Best-effort: this
       // wake must never turn an already-recorded escalation into an error.
+      let wokeSous = false;
+      let sousWarning: string | undefined;
       if (cfg.sous.enabled) {
         try {
-          deliverWake(["sous"], { from: agentId, subject: "escalation" });
+          const result = deliverWake(["sous"], { from: agentId, subject: "escalation" });
+          wokeSous = result.notified.includes("sous");
         } catch {
           // the escalation itself is already recorded above
         }
+        // hands#173/#183 shape, one layer up: a successful .notify write
+        // doesn't mean anyone's reading it. wokeSous above already reflects
+        // the write itself; this additionally checks whether a Monitor is
+        // even armed on sous.notify, so "sous.enabled but nobody ran
+        // /loop /hands:sous" surfaces loudly instead of reading as delivered.
+        if (inboxMonitorAlive("sous") === false) {
+          sousWarning =
+            "sous.enabled is true but no inbox monitor is tailing sous.notify — this escalation was " +
+            "recorded but nothing is running /loop /hands:sous to see it";
+        }
       }
-      return asToolResult({ ok: true, id: input.id, wokeSous: cfg.sous.enabled });
+      return asToolResult({
+        ok: true,
+        id: input.id,
+        wokeSous,
+        ...(sousWarning ? { warning: sousWarning } : {}),
+      });
     },
   );
 
