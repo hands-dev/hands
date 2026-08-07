@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runDoctor } from "../src/doctor.js";
 import { addStations } from "../src/provision.js";
 import { pidPath, resetRepoInfoCache } from "../src/paths.js";
+import { openJournal, syncPush } from "../src/remote.js";
+import { resetConfigCache } from "../src/config.js";
 
 let root: string;
 let repo: string;
@@ -383,5 +385,93 @@ describe("session checks — hands#147 / #152", () => {
     expect(report.checks.find((x) => x.name === "station-1.identity")).toBeUndefined();
     expect(report.checks.find((x) => x.name === "station-1.duplicate")).toBeUndefined();
     expect(report.checks.find((x) => x.name === "sessions")?.severity).toBe("ok");
+  });
+});
+
+describe("journal mirror (hands#181) — a broken clone looks healthy at every other layer", () => {
+  function bareRemote(name: string): string {
+    const dir = path.join(root, name);
+    fs.mkdirSync(dir, { recursive: true });
+    execFileSync("git", ["init", "-q", "--bare", "-b", "main", dir]);
+    return dir;
+  }
+
+  /** Give a bare remote its OWN independent commit — otherwise it's just empty, and an empty
+   * remote has nothing to diverge from (checkOriginCompatible treats that as safe by design). */
+  function seedUnrelatedHistory(remote: string): void {
+    const work = fs.mkdtempSync(path.join(root, "seed-"));
+    execFileSync("git", ["clone", "-q", remote, work], { stdio: "ignore" });
+    execFileSync("git", ["-C", work, "checkout", "-q", "-B", "main"], { stdio: "ignore" });
+    fs.writeFileSync(path.join(work, "unrelated.txt"), "not the same history\n");
+    execFileSync("git", ["-C", work, "add", "-A"], { stdio: "ignore" });
+    execFileSync(
+      "git",
+      ["-C", work, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "unrelated"],
+      { stdio: "ignore" },
+    );
+    execFileSync("git", ["-C", work, "push", "-q", "origin", "main"], { stdio: "ignore" });
+  }
+
+  /** loadConfig() reads hands.config.json off disk — write it there, not just in memory. */
+  function writeRemoteConfig(url: string) {
+    fs.writeFileSync(
+      path.join(repo, "hands.config.json"),
+      JSON.stringify({ ...CONFIG, remote: { url, handle: "michael", project: null } }, null, 2),
+    );
+    resetConfigCache();
+  }
+
+  it("passes cleanly with the default local-only origin", () => {
+    writeConfig();
+    const report = runDoctor({ cwd: repo, env });
+    expect(check("journal.mirror", report)?.severity).toBe("ok");
+    expect(check("journal.remote", report)).toBeUndefined();
+  });
+
+  it("FAILS with the refusal reason when remote.url advanced onto an unrelated history", () => {
+    const remoteA = bareRemote("remote-a.git");
+    writeRemoteConfig(remoteA);
+    // real, pushed history under remoteA
+    const j = openJournal({ env, cwd: repo });
+    if (!j) throw new Error("journal did not open");
+    j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+
+    // remote.url now points at a second, unrelated remote — same shape as
+    // `hands books <url>` re-pointing an already-bootstrapped kitchen, or a
+    // hand-edited config
+    const remoteB = bareRemote("remote-b.git");
+    seedUnrelatedHistory(remoteB);
+    writeRemoteConfig(remoteB);
+    const report = runDoctor({ cwd: repo, env });
+    const mismatch = check("journal.remote", report);
+    expect(mismatch?.severity).toBe("fail");
+    expect(mismatch?.detail).toContain(remoteB);
+    expect(mismatch?.detail).toContain("no merge base");
+
+    // the clone itself is untouched — still wired to remoteA, events intact
+    expect(execFileSync("git", ["-C", j.dir, "remote", "get-url", "origin"], { encoding: "utf8" }).trim()).toBe(
+      remoteA,
+    );
+  });
+
+  it("recovers (no more fail) once remote.url is pointed back at the compatible origin", () => {
+    const remoteA = bareRemote("remote-a.git");
+    writeRemoteConfig(remoteA);
+    const j = openJournal({ env, cwd: repo });
+    if (!j) throw new Error("journal did not open");
+    j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+
+    const remoteB = bareRemote("remote-b.git");
+    seedUnrelatedHistory(remoteB);
+    writeRemoteConfig(remoteB);
+    runDoctor({ cwd: repo, env }); // records the refusal
+
+    // repointed back to the ORIGINAL, still-compatible remote
+    writeRemoteConfig(remoteA);
+    const clean = runDoctor({ cwd: repo, env });
+    expect(check("journal.remote", clean)).toBeUndefined();
+    expect(check("journal.mirror", clean)?.severity).toBe("ok");
   });
 });

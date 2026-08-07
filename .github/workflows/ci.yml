@@ -50,3 +50,52 @@ jobs:
       # bundle-freshness gate: a PR that changed src/ without `npm run
       # bundle` fails here instead of forcing a rebase dance after the fact.
       - run: npm run test:run
+
+  # sync-installer.yml's smoke-test is the same install.sh run, but it only
+  # fires on push to main (it needs a cross-repo secret to vendor into
+  # hands-website) — no PR-time signal at all. hands#151 (a standalone
+  # install silently shipping no dashboard assets) would have sailed through
+  # that gap: `hands version` still worked, only `hands serve` was broken.
+  # This job duplicates just the local, secret-free part so a regression here
+  # fails the PR, not a post-merge push.
+  installer-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+
+      - name: Lint the installer
+        run: |
+          sh -n install.sh
+          if command -v shellcheck >/dev/null 2>&1; then
+            shellcheck -s sh install.sh || true
+          fi
+
+      - name: Install from the COMMITTED bundle and verify the dashboard actually renders
+        run: |
+          set -eux
+          HANDS_BASE="file://$PWD/plugin/dist" HANDS_PREFIX="$RUNNER_TEMP/hands-smoke" sh install.sh
+          "$RUNNER_TEMP/hands-smoke/bin/hands" version
+          "$RUNNER_TEMP/hands-smoke/bin/hands" --help >/dev/null
+          # hands#151: assets/ must ship alongside lib/, and `hands serve` must
+          # actually serve them (a 200 HTML shell whose assets 404 is the bug).
+          test -f "$RUNNER_TEMP/hands-smoke/lib/assets/dashboard.js"
+          test -f "$RUNNER_TEMP/hands-smoke/lib/assets/dashboard.css"
+          export HANDS_HOME="$RUNNER_TEMP/hands-smoke-home"
+          HANDS_PORT=41999 "$RUNNER_TEMP/hands-smoke/bin/hands" serve --no-open &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true' EXIT
+          for _ in $(seq 1 20); do
+            curl -fsS -o /dev/null http://127.0.0.1:41999/ && break
+            sleep 0.5
+          done
+          shell_status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41999/)
+          js_status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41999/assets/dashboard.js)
+          css_status=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:41999/assets/dashboard.css)
+          [ "$shell_status" = "200" ] || { echo "::error::dashboard shell returned $shell_status"; exit 1; }
+          [ "$js_status" = "200" ] || { echo "::error::assets/dashboard.js returned $js_status"; exit 1; }
+          [ "$css_status" = "200" ] || { echo "::error::assets/dashboard.css returned $css_status"; exit 1; }

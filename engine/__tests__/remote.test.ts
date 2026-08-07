@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { coordinationDir } from "../src/paths.js";
 import { readPriorities } from "../src/priorities.js";
 import {
+  checkOriginCompatible,
   ensureLocalBooksOrigin,
   ensureRepo,
   type JournalEvent,
@@ -17,6 +18,7 @@ import {
   projectFromOrigin,
   readEvents,
   readOtherCrafts,
+  readRemoteMismatch,
   readSyncStatus,
   replayInto,
   sanitizeSegment,
@@ -315,6 +317,110 @@ describe("ensureLocalBooksOrigin (hands#129 — books are load-bearing, local by
     expect(syncPull(dir2).ok).toBe(true);
     expect(readEvents(dir2, j!.project, "michael").length).toBeGreaterThanOrEqual(12);
     store.close();
+  });
+});
+
+describe("origin repoint safety (hands#181 — a clone attached to a new remote must never orphan silently)", () => {
+  it("refuses to repoint onto a remote with no shared history, and leaves the old origin working", () => {
+    const remoteA = bareRemote("remote-a.git");
+    const dir = path.join(root, "clone-under-test");
+    expect(ensureRepo(dir, remoteA)).toBe(true);
+    const j = { dir, project: "proj", handle: "michael" };
+    fs.mkdirSync(path.join(dir, "journal", "proj", "michael", "log"), { recursive: true });
+    fs.appendFileSync(
+      path.join(dir, "journal", "proj", "michael", "log", "2026-08-01.ndjson"),
+      `${JSON.stringify({ v: 1, ts: 1, type: "message", data: { id: 1 } })}\n`,
+    );
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+
+    // a second, completely unrelated remote with its own independent history
+    const remoteB = bareRemote("remote-b.git");
+    seedRemote(remoteB, "other.txt", "unrelated content");
+
+    expect(ensureRepo(dir, remoteB)).toBe(false);
+    // origin was NOT changed — still remoteA, and the events are intact
+    expect(execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf8" }).trim()).toBe(
+      remoteA,
+    );
+    expect(readEvents(dir, "proj", "michael")).toHaveLength(1);
+
+    const mismatch = readRemoteMismatch(dir);
+    expect(mismatch?.url).toBe(remoteB);
+    expect(mismatch?.reason).toContain("no common ancestor");
+  });
+
+  it("allows repointing when there is no local history yet — nothing to lose", () => {
+    const remoteA = bareRemote("remote-a.git");
+    const remoteB = bareRemote("remote-b.git");
+    seedRemote(remoteB, "other.txt", "unrelated content");
+    const dir = path.join(root, "fresh-clone");
+    expect(ensureRepo(dir, remoteA)).toBe(true); // inits, no commits made
+    expect(ensureRepo(dir, remoteB)).toBe(true); // no local HEAD yet -> safe to repoint
+    expect(execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf8" }).trim()).toBe(
+      remoteB,
+    );
+  });
+
+  it("treats an empty remote (no main yet) as safe to repoint onto — nothing to conflict with", () => {
+    const remoteA = bareRemote("remote-a.git");
+    const dir = path.join(root, "clone-empty-target");
+    ensureRepo(dir, remoteA);
+    const j = { dir, project: "p", handle: "h" };
+    fs.mkdirSync(path.join(dir, "journal", "p", "h", "log"), { recursive: true });
+    fs.appendFileSync(
+      path.join(dir, "journal", "p", "h", "log", "2026-08-01.ndjson"),
+      `${JSON.stringify({ v: 1, ts: 1, type: "message", data: {} })}\n`,
+    );
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+
+    const emptyRemote = bareRemote("remote-empty.git"); // freshly init'd, zero commits
+    const compat = checkOriginCompatible(dir, emptyRemote);
+    expect(compat.ok).toBe(true);
+    expect(compat.unverified).toBe(true);
+    expect(ensureRepo(dir, emptyRemote)).toBe(true);
+    expect(execFileSync("git", ["-C", dir, "remote", "get-url", "origin"], { encoding: "utf8" }).trim()).toBe(
+      emptyRemote,
+    );
+  });
+
+  it("clears a stale mismatch once repointed back to a compatible origin", () => {
+    const remoteA = bareRemote("remote-a.git");
+    const dir = path.join(root, "clone-recovers");
+    ensureRepo(dir, remoteA);
+    const j = { dir, project: "p", handle: "h" };
+    fs.mkdirSync(path.join(dir, "journal", "p", "h", "log"), { recursive: true });
+    fs.appendFileSync(
+      path.join(dir, "journal", "p", "h", "log", "2026-08-01.ndjson"),
+      `${JSON.stringify({ v: 1, ts: 1, type: "message", data: {} })}\n`,
+    );
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+
+    const remoteB = bareRemote("remote-b.git");
+    seedRemote(remoteB, "other.txt", "unrelated");
+    expect(ensureRepo(dir, remoteB)).toBe(false);
+    expect(readRemoteMismatch(dir)).not.toBeNull();
+
+    // back to the original, still-compatible url — the stale refusal record clears
+    expect(ensureRepo(dir, remoteA)).toBe(true);
+    expect(readRemoteMismatch(dir)).toBeNull();
+  });
+
+  it("sets upstream tracking once origin/main is known, so a plain `git pull` works (suggestion 3)", () => {
+    const remote = bareRemote("origin.git");
+    const j = journalAt("michael", remote);
+    j.append("message", { id: 1, from: "a", to: "b", body: "x", at: 1 });
+    expect(syncPush(j, { force: true }).status).toBe("pushed");
+
+    const dir2 = path.join(root, "second-clone-upstream");
+    expect(ensureRepo(dir2, remote)).toBe(true);
+    expect(syncPull(dir2).ok).toBe(true); // fetches origin/main into the local ref cache
+    expect(ensureRepo(dir2, remote)).toBe(true); // re-affirm, now that origin/main is known locally
+    const upstream = execFileSync(
+      "git",
+      ["-C", dir2, "rev-parse", "--abbrev-ref", "main@{upstream}"],
+      { encoding: "utf8" },
+    ).trim();
+    expect(upstream).toBe("origin/main");
   });
 });
 

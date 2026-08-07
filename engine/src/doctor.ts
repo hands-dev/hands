@@ -2,10 +2,11 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { CONFIG_BASENAME, type HandsConfig, loadConfig } from "./config.js";
+import { mirrorHealth } from "./journal-read.js";
 import { coordinationDir, dbPath, pidPath, repoInfo } from "./paths.js";
 import { listStations } from "./provision.js";
 import { pruneMissing, resolveProject } from "./projects.js";
-import { personalCraftsDir, sharedCraftsDir } from "./remote.js";
+import { openJournal, personalCraftsDir, readRemoteMismatch, sharedCraftsDir } from "./remote.js";
 import { reconcileStationShipPermissions, seedStationPermissions, shipPermissionsStale } from "./seed-permissions.js";
 import {
   contestedIds,
@@ -187,6 +188,35 @@ export function runDoctor(opts?: {
       ? { name: "coordination", severity: "ok", detail: coord }
       : { name: "coordination", severity: "warn", detail: `missing: ${coord}` },
   );
+
+  // ── books mirror (hands#181) ──────────────────────────────────────────────
+  // A mirror that can't sync looks IDENTICAL to a healthy one from every other
+  // layer: appends still write locally, `hands_digest_note` still reports
+  // success. This is the one place that actually looks at whether the local
+  // clone and its remote can still reach each other.
+  if (cfg) {
+    const journal = openJournal({ cwd: info.repoRoot, config: cfg, env });
+    if (journal) {
+      const mismatch = readRemoteMismatch(journal.dir);
+      if (mismatch) {
+        checks.push({
+          name: "journal.remote",
+          severity: "fail",
+          detail:
+            `remote.url is now ${mismatch.url}, but the local books clone's history shares no ` +
+            `merge base with it — still wired to the OLD origin to avoid orphaning local events ` +
+            `(refused ${new Date(mismatch.at).toISOString()}). This needs a human decision, not an ` +
+            "auto-fix — see hands#181 for the recovery shape.",
+        });
+      }
+      const mirror = mirrorHealth(journal.dir, journal.url);
+      if (mirror.problem) {
+        checks.push({ name: "journal.mirror", severity: "fail", detail: mirror.problem });
+      } else if (!mismatch) {
+        checks.push({ name: "journal.mirror", severity: "ok", detail: "in sync" });
+      }
+    }
+  }
 
   // ── dashboard server (hands#77/#82) ───────────────────────────────────────
   // No pidfile at all just means the dashboard isn't running right now — not an error, nothing

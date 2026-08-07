@@ -24613,6 +24613,41 @@ function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
     return null;
   }
 }
+function checkOriginCompatible(dir, url2) {
+  const currentUrl = tryGit(dir, ["remote", "get-url", "origin"]);
+  if (!currentUrl || currentUrl === url2) return { ok: true };
+  const head = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
+  if (!head) return { ok: true };
+  if (tryGit(dir, ["fetch", "-q", url2, "main"]) === null) return { ok: true, unverified: true };
+  if (tryGit(dir, ["merge-base", "HEAD", "FETCH_HEAD"])) return { ok: true };
+  return {
+    ok: false,
+    reason: `${dir}'s current history and ${url2}'s main branch share no common ancestor \u2014 repointing origin would silently orphan every local commit (past journal events). Recovery: adopt the remote's history, then re-append the orphaned per-handle event logs from the current clone (back it up first) before it's replaced \u2014 see hands#181.`
+  };
+}
+function remoteMismatchPath(dir) {
+  return path15.join(dir, ".git", "hands-remote-mismatch");
+}
+function writeRemoteMismatch(dir, url2, reason) {
+  try {
+    fs14.writeFileSync(remoteMismatchPath(dir), `${JSON.stringify({ url: url2, reason, at: Date.now() })}
+`);
+  } catch {
+  }
+}
+function clearRemoteMismatch(dir) {
+  try {
+    fs14.rmSync(remoteMismatchPath(dir), { force: true });
+  } catch {
+  }
+}
+function readRemoteMismatch(dir) {
+  try {
+    return JSON.parse(fs14.readFileSync(remoteMismatchPath(dir), "utf8"));
+  } catch {
+    return null;
+  }
+}
 function ensureRepo(dir, url2) {
   try {
     fs14.mkdirSync(dir, { recursive: true, mode: 448 });
@@ -24621,11 +24656,22 @@ function ensureRepo(dir, url2) {
       git5(dir, ["config", "user.name", "hands"]);
       git5(dir, ["config", "user.email", "hands@localhost"]);
     }
-    if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
+    const existing = tryGit(dir, ["remote", "get-url", "origin"]);
+    if (existing === null) {
       git5(dir, ["remote", "add", "origin", url2]);
-    } else {
+      clearRemoteMismatch(dir);
+    } else if (existing !== url2) {
+      const compat = checkOriginCompatible(dir, url2);
+      if (!compat.ok) {
+        writeRemoteMismatch(dir, url2, compat.reason ?? "no merge base");
+        return false;
+      }
+      clearRemoteMismatch(dir);
       git5(dir, ["remote", "set-url", "origin", url2]);
+    } else {
+      clearRemoteMismatch(dir);
     }
+    tryGit(dir, ["branch", "--set-upstream-to=origin/main", "main"]);
     return true;
   } catch {
     return false;
@@ -24833,6 +24879,7 @@ function openJournal(options) {
   if (!url2) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url2);
+  const wiredUrl = tryGit(dir, ["remote", "get-url", "origin"]) ?? url2;
   const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
   const agentId = options?.agentId ?? null;
@@ -24841,7 +24888,7 @@ function openJournal(options) {
     dir,
     project,
     handle,
-    url: url2,
+    url: wiredUrl,
     agentId,
     append(type, data) {
       if (type === "cursor") return;
@@ -25932,6 +25979,7 @@ var init_tokens = __esm({
 // src/serve.ts
 var serve_exports = {};
 __export(serve_exports, {
+  ServeError: () => ServeError,
   kitchenName: () => kitchenName,
   serve: () => serve,
   snapshotKey: () => snapshotKey
@@ -25982,14 +26030,17 @@ function shellHtml(kitchen) {
 <script type="module" src="/assets/dashboard.js"></script></body></html>
 `;
 }
-function defaultAssetsDir() {
+function assetsDirCandidates() {
   const here = path20.dirname(fileURLToPath2(import.meta.url));
   return [
     path20.join(here, "assets"),
-    // plugin/dist/server-impl.mjs → sibling assets/
+    // plugin/dist/server-impl.mjs, or a standalone install's lib/ → sibling assets/
     path20.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs20.existsSync(d)) ?? null;
+  ];
+}
+function defaultAssetsDir() {
+  return assetsDirCandidates().find((d) => fs20.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -26002,6 +26053,12 @@ function serve(opts) {
   const tickMs = opts?.tickMs ?? 1e3;
   const booksTickMs = opts?.booksTickMs ?? 6e4;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
+  if (!assetsDir || !fs20.existsSync(assetsDir)) {
+    const checked = opts?.assetsDir ? [opts.assetsDir] : assetsDirCandidates();
+    throw new ServeError(
+      `no dashboard assets found (checked: ${checked.join(", ")}) \u2014 this install is missing plugin/dist/assets/. Standalone install: re-run the installer (curl -fsSL https://hands-cc.dev/install.sh | sh). Source checkout: run \`npm run bundle\` first.`
+    );
+  }
   const fileFeedbackFn = opts?.fileFeedback ?? ((args) => fileFeedback({ ...args, gh: opts?.feedbackGh }));
   const runChatTurnFn = opts?.chatTurn ?? runChatTurn;
   const hasAgentSdkInstalledFn = opts?.chatAvailable ?? hasAgentSdkInstalled;
@@ -26430,7 +26487,7 @@ function serve(opts) {
     });
   });
 }
-var ASSETS, MAX_FEEDBACK_BODY_BYTES, MAX_FEEDBACK_TITLE_BYTES, FEEDBACK_RATE_LIMIT_MAX, FEEDBACK_RATE_LIMIT_WINDOW_MS, MAX_CHAT_PROMPT_BYTES, CHAT_RATE_LIMIT_MAX, CHAT_RATE_LIMIT_WINDOW_MS;
+var ASSETS, MAX_FEEDBACK_BODY_BYTES, MAX_FEEDBACK_TITLE_BYTES, FEEDBACK_RATE_LIMIT_MAX, FEEDBACK_RATE_LIMIT_WINDOW_MS, MAX_CHAT_PROMPT_BYTES, CHAT_RATE_LIMIT_MAX, CHAT_RATE_LIMIT_WINDOW_MS, ServeError;
 var init_serve = __esm({
   "src/serve.ts"() {
     "use strict";
@@ -26468,6 +26525,8 @@ var init_serve = __esm({
     MAX_CHAT_PROMPT_BYTES = 1e5;
     CHAT_RATE_LIMIT_MAX = 20;
     CHAT_RATE_LIMIT_WINDOW_MS = 6e4;
+    ServeError = class extends Error {
+    };
   }
 });
 
@@ -51329,14 +51388,14 @@ function idleMs(cwd, now = Date.now(), home) {
 
 // src/doctor.ts
 init_config();
+import { execFileSync as execFileSync11 } from "node:child_process";
+import * as fs25 from "node:fs";
+import * as path24 from "node:path";
 init_paths();
 init_provision();
 init_projects();
 init_remote();
 init_seed_permissions();
-import { execFileSync as execFileSync11 } from "node:child_process";
-import * as fs25 from "node:fs";
-import * as path24 from "node:path";
 
 // src/sessions.ts
 import { execFileSync as execFileSync10 } from "node:child_process";
@@ -51565,6 +51624,25 @@ function runDoctor(opts) {
   checks.push(
     fs25.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
   );
+  if (cfg) {
+    const journal = openJournal({ cwd: info.repoRoot, config: cfg, env });
+    if (journal) {
+      const mismatch = readRemoteMismatch(journal.dir);
+      if (mismatch) {
+        checks.push({
+          name: "journal.remote",
+          severity: "fail",
+          detail: `remote.url is now ${mismatch.url}, but the local books clone's history shares no merge base with it \u2014 still wired to the OLD origin to avoid orphaning local events (refused ${new Date(mismatch.at).toISOString()}). This needs a human decision, not an auto-fix \u2014 see hands#181 for the recovery shape.`
+        });
+      }
+      const mirror = mirrorHealth(journal.dir, journal.url);
+      if (mirror.problem) {
+        checks.push({ name: "journal.mirror", severity: "fail", detail: mirror.problem });
+      } else if (!mismatch) {
+        checks.push({ name: "journal.mirror", severity: "ok", detail: "in sync" });
+      }
+    }
+  }
   const pid = pidPath(env, info.repoRoot);
   if (fs25.existsSync(pid)) {
     const raw = fs25.readFileSync(pid, "utf8").trim();
@@ -52012,6 +52090,16 @@ function cmdBooks(argv) {
       }
     }
     return;
+  }
+  const dir = journalDir();
+  if (fs28.existsSync(path27.join(dir, ".git"))) {
+    const compat = checkOriginCompatible(dir, url2);
+    if (!compat.ok) {
+      fail(compat.reason ?? `${dir} and ${url2} share no common history \u2014 refusing to repoint`);
+    }
+    if (compat.unverified) {
+      out2(`  (could not verify ${url2}'s history is compatible with the existing local clone \u2014 proceeding anyway)`);
+    }
   }
   const hi = argv.indexOf("--handle");
   const handleArg = hi !== -1 ? argv[hi + 1] : argv.find((a) => a.startsWith("--handle="))?.slice("--handle=".length);
@@ -52804,8 +52892,14 @@ async function main2() {
         return;
       case "serve":
       case "dashboard": {
-        const { serve: serve2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
-        const handle = await serve2();
+        const { serve: serve2, ServeError: ServeError2 } = await Promise.resolve().then(() => (init_serve(), serve_exports));
+        let handle;
+        try {
+          handle = await serve2();
+        } catch (err) {
+          if (err instanceof ServeError2) fail(err.message);
+          throw err;
+        }
         out2(`hands dashboard \u2192 ${handle.url}
 (Ctrl-C to stop)`);
         const shutdown = () => {

@@ -65,9 +65,11 @@ import { assessReadiness } from "./attest.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
+  checkOriginCompatible,
   craftFiles,
   ensureLocalBooksOrigin,
   githubUsername,
+  journalDir,
   listProjects,
   openJournal,
   personalCraftsDir,
@@ -238,6 +240,23 @@ function cmdBooks(argv: string[]): void {
       }
     }
     return;
+  }
+
+  // hands#181: a clone may already exist under the OLD url (or the local
+  // bootstrap origin) with real history. Check compatibility BEFORE writing
+  // anything — refusing here, with immediate feedback, beats writing a config
+  // that silently orphans the local mirror the next time something opens the
+  // journal. ensureRepo() carries the same guard as a backstop for a
+  // hand-edited config, but this is the fast, honest path.
+  const dir = journalDir();
+  if (fs.existsSync(path.join(dir, ".git"))) {
+    const compat = checkOriginCompatible(dir, url);
+    if (!compat.ok) {
+      fail(compat.reason ?? `${dir} and ${url} share no common history — refusing to repoint`);
+    }
+    if (compat.unverified) {
+      out(`  (could not verify ${url}'s history is compatible with the existing local clone — proceeding anyway)`);
+    }
   }
 
   const hi = argv.indexOf("--handle");
@@ -1290,8 +1309,14 @@ async function main(): Promise<void> {
         return;
       case "serve":
       case "dashboard": {
-        const { serve } = await import("./serve.js");
-        const handle = await serve();
+        const { serve, ServeError } = await import("./serve.js");
+        let handle: Awaited<ReturnType<typeof serve>>;
+        try {
+          handle = await serve();
+        } catch (err) {
+          if (err instanceof ServeError) fail(err.message);
+          throw err;
+        }
         out(`hands dashboard → ${handle.url}\n(Ctrl-C to stop)`);
         // Ctrl-C/a kill has no handler by default, so close() (SSE clients, timers, the DB
         // handle, the pidfile) never ran — this repo's dashboard skill and `hands doctor` now

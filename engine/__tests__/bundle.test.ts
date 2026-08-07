@@ -44,6 +44,7 @@ describe("committed plugin bundles", () => {
       "books-server.mjs",
       "assets/dashboard.js",
       "assets/dashboard.css",
+      "assets/MANIFEST.txt",
     ];
     for (const file of files) {
       const fresh = fs.readFileSync(path.join(tmp, file), "utf8");

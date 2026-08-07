@@ -214,14 +214,19 @@ function shellHtml(kitchen: string): string {
 `;
 }
 
-function defaultAssetsDir(): string | null {
+/** Thrown by serve() instead of starting a server that provably cannot render (hands#151). */
+export class ServeError extends Error {}
+
+function assetsDirCandidates(): string[] {
   const here = path.dirname(fileURLToPath(import.meta.url));
-  return (
-    [
-      path.join(here, "assets"), // plugin/dist/server-impl.mjs → sibling assets/
-      path.join(here, "..", "..", "plugin", "dist", "assets"), // engine/src (tsx) + engine/dist (tsc)
-    ].find((d) => fs.existsSync(d)) ?? null
-  );
+  return [
+    path.join(here, "assets"), // plugin/dist/server-impl.mjs, or a standalone install's lib/ → sibling assets/
+    path.join(here, "..", "..", "plugin", "dist", "assets"), // engine/src (tsx) + engine/dist (tsc)
+  ];
+}
+
+function defaultAssetsDir(): string | null {
+  return assetsDirCandidates().find((d) => fs.existsSync(d)) ?? null;
 }
 
 /**
@@ -275,6 +280,19 @@ export function serve(opts?: {
   const tickMs = opts?.tickMs ?? 1000;
   const booksTickMs = opts?.booksTickMs ?? 60_000;
   const assetsDir = opts?.assetsDir ?? defaultAssetsDir();
+  // Refuse rather than serve a 200 HTML shell that provably cannot render —
+  // every asset it references would 404, and nothing upstream of the browser
+  // (the API health probe included) would ever notice (hands#151: a
+  // standalone install shipped no assets/ dir at all). Fail before the Store
+  // opens or the pidfile is written, so this never looks like a live server.
+  if (!assetsDir || !fs.existsSync(assetsDir)) {
+    const checked = opts?.assetsDir ? [opts.assetsDir] : assetsDirCandidates();
+    throw new ServeError(
+      `no dashboard assets found (checked: ${checked.join(", ")}) — this install is missing ` +
+        "plugin/dist/assets/. Standalone install: re-run the installer (curl -fsSL " +
+        "https://hands-cc.dev/install.sh | sh). Source checkout: run `npm run bundle` first.",
+    );
+  }
   const fileFeedbackFn =
     opts?.fileFeedback ?? ((args: { body: string; title?: string; cwd?: string }) =>
       fileFeedback({ ...args, gh: opts?.feedbackGh }));

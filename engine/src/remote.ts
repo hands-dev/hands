@@ -236,10 +236,87 @@ export function ensureLocalBooksOrigin(
   }
 }
 
+export interface OriginCompatibility {
+  ok: boolean;
+  /** the check itself couldn't run (offline/auth/no such ref yet) — ok stays true, but say so */
+  unverified?: boolean;
+  reason?: string;
+}
+
+/**
+ * Whether repointing `dir`'s origin to `url` is safe — i.e., `dir`'s current
+ * HEAD (if any) shares a merge-base with `url`'s `main`, so push/pull can
+ * actually converge (hands#181). A fresh/empty clone or a same-url no-op has
+ * nothing to diverge from, so those always report ok; so does a URL whose
+ * `main` doesn't exist yet or can't be reached — there's nothing to conflict
+ * with, or nothing more we can learn from here.
+ */
+export function checkOriginCompatible(dir: string, url: string): OriginCompatibility {
+  const currentUrl = tryGit(dir, ["remote", "get-url", "origin"]);
+  if (!currentUrl || currentUrl === url) return { ok: true };
+  const head = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
+  if (!head) return { ok: true }; // nothing local to lose
+
+  // Fetch the CANDIDATE remote by URL, into FETCH_HEAD — never touches the
+  // configured origin, so a rejected repoint mutates nothing.
+  if (tryGit(dir, ["fetch", "-q", url, "main"]) === null) return { ok: true, unverified: true };
+  if (tryGit(dir, ["merge-base", "HEAD", "FETCH_HEAD"])) return { ok: true };
+  return {
+    ok: false,
+    reason:
+      `${dir}'s current history and ${url}'s main branch share no common ancestor — ` +
+      "repointing origin would silently orphan every local commit (past journal events). " +
+      "Recovery: adopt the remote's history, then re-append the orphaned per-handle event " +
+      "logs from the current clone (back it up first) before it's replaced — see hands#181.",
+  };
+}
+
+function remoteMismatchPath(dir: string): string {
+  return path.join(dir, ".git", "hands-remote-mismatch");
+}
+
+function writeRemoteMismatch(dir: string, url: string, reason: string): void {
+  try {
+    fs.writeFileSync(remoteMismatchPath(dir), `${JSON.stringify({ url, reason, at: Date.now() })}\n`);
+  } catch {
+    // observability only
+  }
+}
+
+function clearRemoteMismatch(dir: string): void {
+  try {
+    fs.rmSync(remoteMismatchPath(dir), { force: true });
+  } catch {
+    // fine — nothing to clear
+  }
+}
+
+export interface RemoteMismatch {
+  url: string;
+  reason: string;
+  at: number;
+}
+
+/** Set (and cleared) by ensureRepo — a refused repoint `hands doctor` should surface. */
+export function readRemoteMismatch(dir: string): RemoteMismatch | null {
+  try {
+    return JSON.parse(fs.readFileSync(remoteMismatchPath(dir), "utf8")) as RemoteMismatch;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Make sure `dir` is a git work tree wired to `url`. `git init` + remote-add
  * (not clone) so it works identically for an empty remote, an existing one,
  * and a dir that already has unpushed local commits.
+ *
+ * Repointing an EXISTING origin to a different `url` first checks
+ * compatibility (hands#181) — a divergent history is left wired to whatever
+ * it already had (the known-working remote) rather than silently orphaned,
+ * and the refusal is recorded for `hands doctor` to surface. This only ever
+ * costs a network fetch on an actual URL change, never on the steady-state
+ * no-op that runs on every bus action.
  */
 export function ensureRepo(dir: string, url: string): boolean {
   try {
@@ -249,11 +326,27 @@ export function ensureRepo(dir: string, url: string): boolean {
       git(dir, ["config", "user.name", "hands"]);
       git(dir, ["config", "user.email", "hands@localhost"]);
     }
-    if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
+    const existing = tryGit(dir, ["remote", "get-url", "origin"]);
+    if (existing === null) {
       git(dir, ["remote", "add", "origin", url]);
-    } else {
+      clearRemoteMismatch(dir);
+    } else if (existing !== url) {
+      const compat = checkOriginCompatible(dir, url);
+      if (!compat.ok) {
+        writeRemoteMismatch(dir, url, compat.reason ?? "no merge base");
+        return false; // origin left exactly as it was
+      }
+      clearRemoteMismatch(dir);
       git(dir, ["remote", "set-url", "origin", url]);
+    } else {
+      // already correctly wired to `url` — any past refusal (about some OTHER
+      // url) is moot now, e.g. reverting remote.url back after a refused repoint
+      clearRemoteMismatch(dir);
     }
+    // hands#181 suggestion 3: so a human's plain `git pull` in this dir works
+    // too, not just this file's own explicit-ref sync path. Best-effort — a
+    // brand-new remote may not have `main` yet.
+    tryGit(dir, ["branch", "--set-upstream-to=origin/main", "main"]);
     return true;
   } catch {
     return false;
@@ -600,6 +693,11 @@ export function openJournal(options?: {
   if (!url) return null;
   const dir = journalDir(env, cwd);
   ensureRepo(dir, url); // best-effort — appends work even if git wiring failed
+  // The actually-wired origin, not the aspirational `url` — ensureRepo leaves
+  // the OLD origin in place when a repoint was refused as incompatible
+  // (hands#181), so callers (mirrorHealth, `hands books` display) must read
+  // reality back rather than assume the write took.
+  const wiredUrl = tryGit(dir, ["remote", "get-url", "origin"]) ?? url;
   const project = resolveProject(config, cwd);
   const handle = resolveHandle(config);
   const agentId = options?.agentId ?? null;
@@ -608,7 +706,7 @@ export function openJournal(options?: {
     dir,
     project,
     handle,
-    url,
+    url: wiredUrl,
     agentId,
     append(type, data) {
       // `cursor` fires on every inbox drain that has messages — pure local
