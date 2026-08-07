@@ -4,13 +4,13 @@
     "name": "Michael Phillips"
   },
   "metadata": {
-    "description": "Hands — extra hands for your repo: expo/station multi-agent orchestration for Claude Code."
+    "description": "Hands — a French kitchen brigade for coding agents: expo/station multi-agent orchestration for Claude Code."
   },
   "plugins": [
     {
       "name": "hands",
       "source": "./plugin",
-      "description": "Hands — extra hands for your repo: expo/station multi-agent orchestration for Claude Code."
+      "description": "Hands — a French kitchen brigade for coding agents: expo/station multi-agent orchestration for Claude Code."
     }
   ]
 }

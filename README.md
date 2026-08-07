@@ -2,7 +2,7 @@
 
 **[hands-cc.dev](https://hands-cc.dev)**
 
-**Extra hands for your repo.** An expo/station agent fleet for Claude Code, run like a kitchen:
+**A French kitchen brigade for coding agents.** An expo/station agent fleet for Claude Code, run like a kitchen:
 the repo's main checkout is the **expo** — the expeditor at the pass, all of the context and none
 of the cooking. **Stations** are autonomous Claude instances that know exactly two things: their
 **focus** (an evolving specialization) and the **ticket** at hand. The principal — you — is the
