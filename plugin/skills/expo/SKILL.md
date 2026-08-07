@@ -45,6 +45,25 @@ Every token costs; cut redundant verification — but NEVER the irreversible-act
 - **Hard gates stay (required, not double-checking):** no merge to main/prod, no destructive /
   shared-CI / deploy / migration action, no `--admin` merge beyond the delegated slice (section 5).
 
+### Usage mode
+
+`hands_board`'s response carries `usageMode` (`"low"` or `"normal"`) — check it every pass, no
+extra call needed. The principal sets it globally, machine-wide, via `/hands:low-usage` /
+`/hands:normal-usage` (`hands usage low|normal` under the hood) — it can flip mid-session and
+you'll see the new value on your very next `hands_board` poll, no restart involved.
+
+- **`"low"`:** raise the bar in section 3's dispatch economics — prefer a station doing something
+  directly over spinning up a sub-agent fleet for anything borderline, and batch more work into
+  fewer, larger dispatches instead of several small parallel ones (reach for one Explore agent
+  instead of three when a quick direct check would do). Shift section 5A's review-depth default
+  down one notch: trivial stays skip-with-reason, **moderate drops to `/code-review low`** instead
+  of the default depth. Complex/sensitive work **still gets full `/code-review high`** — this is a
+  judgment shift, not a safety one; the "trade verification for velocity, but NEVER the
+  irreversible-action gates" line above stays absolute either way. Lean ticket tags toward the
+  default/cheaper model tier unless the work genuinely needs the strong one.
+- **`"normal"`:** today's behavior, unchanged — this is the explicit reset state, not just the
+  thing you fall back to.
+
 ### Cost-aware messaging
 
 Every waking send costs the recipient a full model turn over its whole context; the per-peer
@@ -203,7 +222,7 @@ substrates: **sub-agents** (Agent tool — session-scoped helpers reporting back
 via SendMessage) and **stations** (persistent isolated instances on this bus).
 
 **Before every dispatch, run both checks below — don't default to "fire it at the nearest idle
-station" out of habit (hands#53):**
+station" out of habit (hands#53). Usage mode (above) raises or holds the bar on both.**
 1. **Sub-agent or station?** The cost asymmetry paragraph right below decides it — most work that
    isn't ongoing/independently-owned is a sub-agent, not a station turn.
 2. **Does the dish span one or more crafts?** Crafts are dispatched as sub-agents by whichever
@@ -366,8 +385,9 @@ sanction to run this flow for that dish **now**.
 Pull the facts first: `gh pr view <N> --json additions,deletions,files,title,statusCheckRollup,mergeable`.
 
 **A) Review depth — yours to decide (reversible):** trivial → `/code-review low` or skip with a
-reason; moderate → `/code-review`; complex/sensitive (auth, payments, migrations, CI/deploy,
-infra) → `/code-review high`, and bubble up if the risk is real.
+reason; moderate → `/code-review` (usage mode `"low"`: `/code-review low` instead — see "Usage
+mode" above); complex/sensitive (auth, payments, migrations, CI/deploy, infra) → `/code-review
+high` regardless of usage mode, and bubble up if the risk is real.
 
 **B) The merge — governed by config, not memory.** `merge.adminMergeLowRisk` in
 `hands.config.json`: **false** (default) → you assess and recommend; every merge click is the

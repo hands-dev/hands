@@ -198,12 +198,35 @@ describe("composeChit + parseCraftNoteBlock (the dispatch/return round trip)", (
         expires_at: Date.now() + 1000,
       },
       "app.py order routes",
+      "normal",
     );
     expect(chit).toContain('brief #4711, mode: plan');
     expect(chit).toContain("Covers: app.py order routes");
     expect(chit).toContain("hands craft mise 4711");
     expect(chit).toContain("```craft-note");
     expect(chit).toContain("PLAN MODE: read, reason, propose");
+    expect(chit).not.toContain("Usage mode:"); // "normal" is silent — no line at all
+  });
+
+  it("usageMode 'low' adds a terse-instruction line; 'normal' stays silent", () => {
+    const brief = {
+      id: 1,
+      craft_slug: "ordering-api",
+      mode: "plan" as const,
+      cwd: null,
+      opened_by: "expo",
+      task: null,
+      ticket_id: null,
+      picked_up_at: null,
+      noted_at: null,
+      created_at: Date.now(),
+      expires_at: Date.now() + 1000,
+    };
+    const low = composeChit(brief, null, "low");
+    expect(low).toContain("Usage mode: low");
+    expect(low).toContain("keep this terse");
+    const normal = composeChit(brief, null, "normal");
+    expect(normal).not.toContain("Usage mode:");
   });
 
   it("round-trips a real craft-note block: typed entries, spillover, nothing-new", () => {
@@ -478,6 +501,10 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     expect(skillBody).toContain("hands craft mise <briefId>");
     expect(skillBody).toContain("Always taste before plating.");
     expect(skillBody).toContain("```craft-note");
+    // Points at the LIVE usageMode in its own chit/mise output, not a snapshotted value
+    // (Skill/Agent discovery is fixed at session start — baking a mode in here would go stale).
+    expect(agentBody).toContain("Usage mode: low");
+    expect(skillBody).toContain("usageMode");
   });
 
   it("a craft with no skill.md yet still generates, with a founding-message placeholder", () => {

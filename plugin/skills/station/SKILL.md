@@ -76,6 +76,9 @@ chatty behavior is visible.
    of whether the notify tail was alive — but the sooner you catch it, the shorter the gap.
 2. **Drain the inbox:** `hands_receive({ wait_seconds: 2 })`. Genuinely empty → **yield**, say
    nothing.
+   - **Check the usage mode while you're at it:** a plain `hands_board()` call (cheap, no `full`
+     needed) returns `usageMode` — `"low"` or `"normal"`, set globally by the principal via
+     `/hands:low-usage`/`/hands:normal-usage`. It shapes step 5's craft-dispatch judgment below.
 3. **Handle each message — concisely, as this station:**
    - **A question from the expo you can answer** from your own context → reply with
      `hands_send({ to: "expo", body: <answer> })`. Answer only what you actually know.
@@ -108,6 +111,9 @@ chatty behavior is visible.
    ticket, one station, one branch; don't split into per-craft tickets just because the work spans
    crafts. None covers it → do it generically, that's still your job too. Read-only ("plan mode")
    for now — that's the whole menu; execute-mode craft dispatch isn't wired up yet.
+   - **Usage mode `"low"` (step 2):** batch multiple covered slices into one craft brief instead of
+     one-per-slice wherever they don't conflict, and for a slice small enough that a fresh
+     sub-agent context is clear overkill, do it generically in-pane instead of dispatching.
 6. **Set your lane label.** `hands_focus({ focus: "<short label>" })` — what you're currently on
    ("auth migration", "ENG-1476"), shown on the board/rail. This is NOT a craft assignment; you
    hold no craft.

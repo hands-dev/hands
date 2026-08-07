@@ -8646,6 +8646,9 @@ function merge2(base, layer) {
     crafts: {
       sharedDir: layer.crafts?.sharedDir !== void 0 ? layer.crafts.sharedDir : base.crafts.sharedDir
     },
+    usage: {
+      mode: layer.usage?.mode === "low" || layer.usage?.mode === "normal" ? layer.usage.mode : base.usage.mode
+    },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll }
   };
@@ -8678,6 +8681,14 @@ function loadConfig(options) {
   cache.set(key, cfg);
   return cfg;
 }
+function currentUsageMode(cwd = process.cwd(), env = process.env) {
+  const repoFile = repoConfigPath(cwd, env);
+  const repoMode = repoFile ? readJson(repoFile)?.usage?.mode : void 0;
+  if (repoMode === "low" || repoMode === "normal") return repoMode;
+  const userMode = readJson(userConfigPath(env))?.usage?.mode;
+  if (userMode === "low" || userMode === "normal") return userMode;
+  return DEFAULT_CONFIG.usage.mode;
+}
 var DEFAULT_CONFIG, CONFIG_BASENAME, cache;
 var init_config = __esm({
   "src/config.ts"() {
@@ -8699,6 +8710,7 @@ var init_config = __esm({
       },
       remote: { url: null, handle: null, project: null },
       crafts: { sharedDir: null },
+      usage: { mode: "normal" },
       merge: { adminMergeLowRisk: false },
       gh: { poll: true }
     };
@@ -9761,7 +9773,7 @@ You are the **${entry.slug}** craft, dispatched for one ticket-slice \u2014 not 
 1. Run \`hands craft brief ${entry.slug} --task "<one line \u2014 what you were asked to do>"\` first
    \u2014 add \`--ticket <id>\` too if the caller's prompt names a ticket id you're working. This
    registers the dispatch and PRINTS a chit \u2014 the first line names your \`briefId\`, note it,
-   you need it below.
+   you need it below. The chit may say \`Usage mode: low\` \u2014 honor it if so.
 2. Invoke \`Skill({ skill: "craft-${entry.slug}" })\` \u2014 your operating manual. It tells you how to
    pull your current book/mise (\`hands craft mise <briefId>\`, from step 1) before you start.
 3. Do the work the caller's prompt describes.
@@ -9778,7 +9790,9 @@ description: Operating manual for the ${entry.slug} craft (${entry.covers ?? "no
 
 **First**, before anything else: run \`hands craft mise <briefId>\` (the id \`hands craft brief\`
 printed) \u2014 prints your current book/mise as JSON, the sibling craft roster, and a read-in command
-if you're stale. Trust what it tells you before re-deriving anything yourself.
+if you're stale. Trust what it tells you before re-deriving anything yourself. It also carries the
+current \`usageMode\` \u2014 when \`"low"\`, keep your own work terse: skip optional exploration, prefer
+the cheapest sufficient approach, don't gold-plate.
 
 ## Procedures
 
@@ -35284,7 +35298,9 @@ function buildServer(store, agentId, config2) {
         stateHash: computeStateHash(store, now),
         peers,
         recentJournal: journal,
-        collisions: board.collisions
+        collisions: board.collisions,
+        // Fresh every call, not the closure `cfg` — see currentUsageMode's own doc comment for why.
+        usageMode: currentUsageMode()
       };
       if (!input.full) return asToolResult(base);
       const activeTasks = store.listTasks({ active: true }).map((t) => ({

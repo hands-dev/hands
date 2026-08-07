@@ -18,6 +18,11 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-wake-"));
   env = { HANDS_HOME: home };
   process.env.HANDS_HOME = home; // notify() reads process.env
+  // currentUsageMode() (hands_board's usageMode field) also reads ambient process.env/cwd
+  // directly, same as notify() above — isolate it from this checkout's own real
+  // hands.config.json (HANDS_NO_REPO_CONFIG) and point its user-layer read at `home`.
+  process.env.HANDS_TEST_HOME = home;
+  process.env.HANDS_NO_REPO_CONFIG = "1";
   stores = [];
   cleanups = [];
 });
@@ -26,6 +31,8 @@ afterEach(async () => {
   for (const c of cleanups) await c();
   for (const s of stores) s.close();
   delete process.env.HANDS_HOME;
+  delete process.env.HANDS_TEST_HOME;
+  delete process.env.HANDS_NO_REPO_CONFIG;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -148,6 +155,17 @@ describe("board stateHash + full bundle", () => {
     expect(res.body.priorities).toMatchObject({ set: false });
     const plain = await call(expo, "hands_board", {});
     expect(plain.body.activeTasks).toBeUndefined();
+  });
+
+  it("carries the current usageMode, freshly read every call — not frozen at connect time", async () => {
+    const expo = await connect("expo");
+    expect((await call(expo, "hands_board", {})).body.usageMode).toBe("normal");
+
+    // Flip it AFTER the server/connection already exists — this is the whole point of
+    // currentUsageMode() being uncached: a long-lived MCP connection must still see it.
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".claude", "hands.config.json"), JSON.stringify({ usage: { mode: "low" } }));
+    expect((await call(expo, "hands_board", {})).body.usageMode).toBe("low");
   });
 
   it("computeStateHash is directly stable for a fixed now", () => {

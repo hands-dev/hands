@@ -1,9 +1,22 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../src/config.js";
+import { currentUsageMode, DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../src/config.js";
 import { writeCredentials, type HandsCredentials } from "../src/credentials.js";
+
+function git(cwd: string, args: string[]): void {
+  execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+}
+
+/** A real git repo (currentUsageMode's repo-layer check needs repoInfo() to resolve). */
+function makeRepo(root: string): string {
+  const dir = fs.mkdtempSync(path.join(root, "repo-"));
+  git(dir, ["init", "-q", "-b", "main"]);
+  git(dir, ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "x"]);
+  return dir;
+}
 
 let home: string;
 let env: NodeJS.ProcessEnv;
@@ -94,5 +107,56 @@ describe("loadConfig — stations.theming (hands#104)", () => {
     expect(cfg.stations.theming).toBe(false);
     // nothing else about stations should differ from defaults
     expect({ ...cfg.stations, theming: true }).toEqual(DEFAULT_CONFIG.stations);
+  });
+});
+
+describe("loadConfig — usage.mode (/hands:low-usage)", () => {
+  it("defaults to normal", () => {
+    expect(loadConfig({ cwd: home, env }).usage.mode).toBe("normal");
+  });
+
+  it("a user-level hands.config.json sets it, machine-wide", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".claude", "hands.config.json"), JSON.stringify({ usage: { mode: "low" } }));
+    resetConfigCache();
+    const cfg = loadConfig({ cwd: home, env });
+    expect(cfg.usage.mode).toBe("low");
+    // nothing else about the config should differ from defaults
+    expect({ ...cfg, usage: DEFAULT_CONFIG.usage }).toEqual(DEFAULT_CONFIG);
+  });
+
+  it("ignores an invalid mode string rather than trusting it through", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, ".claude", "hands.config.json"),
+      JSON.stringify({ usage: { mode: "extremely-low" } }),
+    );
+    resetConfigCache();
+    expect(loadConfig({ cwd: home, env }).usage.mode).toBe("normal");
+  });
+});
+
+describe("currentUsageMode — deliberately UNCACHED (hot toggle, unlike loadConfig)", () => {
+  it("defaults to normal with no config files at all", () => {
+    expect(currentUsageMode(home, env)).toBe("normal");
+  });
+
+  it("reflects a user-config change made AFTER a prior read in the same process — no stale cache", () => {
+    expect(currentUsageMode(home, env)).toBe("normal");
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".claude", "hands.config.json"), JSON.stringify({ usage: { mode: "low" } }));
+    // No resetConfigCache() call — this is the whole point: currentUsageMode never cached in the
+    // first place, unlike loadConfig(), which is why hands_board can propagate a toggle mid-session.
+    expect(currentUsageMode(home, env)).toBe("low");
+  });
+
+  it("a repo's own hands.config.json overrides the user-level global setting", () => {
+    fs.mkdirSync(path.join(home, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(home, ".claude", "hands.config.json"), JSON.stringify({ usage: { mode: "low" } }));
+    const repo = makeRepo(home);
+    fs.writeFileSync(path.join(repo, "hands.config.json"), JSON.stringify({ usage: { mode: "normal" } }));
+    // repo-config layering needs HANDS_NO_REPO_CONFIG unset — this describe block's own env, not
+    // the outer suite's default (see the top-of-file comment on why that flag exists).
+    expect(currentUsageMode(repo, { HANDS_TEST_HOME: home })).toBe("normal");
   });
 });
