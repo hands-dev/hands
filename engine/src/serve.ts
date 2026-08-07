@@ -90,6 +90,11 @@ export type DashboardPayload = Snapshot & {
   >;
   /** this agent's own message history (peer-filtered), keyed by agent id — the Roles pages */
   agentMessages: Record<string, SnapshotMessage[]>;
+  /** craft dispatches tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used" */
+  craftBriefsByTicket: Record<
+    number,
+    Array<{ slug: string; mode: string; openedBy: string; at: number; completed: boolean }>
+  >;
 };
 
 export interface ServeHandle {
@@ -268,7 +273,10 @@ export function serve(opts?: {
       // the pane did in that window rides along).
       const costs: Record<number, number> = {};
       const now = Date.now();
-      for (const t of store.listTasks({ limit: 40 })) {
+      // 300 — matches snapshot.ts's own raised cap (the Chits log's full window), not an
+      // independent choice; older tickets outside the sampler's 7-day transcript retention just
+      // won't get a cost entry, same "approximation, not exact accounting" caveat as always.
+      for (const t of store.listTasks({ limit: 300 })) {
         if (!t.assignee || t.started_at == null) continue;
         costs[t.id] = sampler.usageBetween(t.assignee, t.started_at, t.finished_at ?? now).out;
       }
@@ -351,12 +359,30 @@ export function serve(opts?: {
     return result;
   };
 
+  const buildCraftBriefsByTicket = (): DashboardPayload["craftBriefsByTicket"] => {
+    const result: DashboardPayload["craftBriefsByTicket"] = {};
+    for (const brief of store.listCraftBriefsWithTicket()) {
+      const ticketId = brief.ticket_id;
+      if (ticketId == null) continue; // narrows for TS; the query itself already filters this
+      const list = result[ticketId] ?? (result[ticketId] = []);
+      list.push({
+        slug: brief.craft_slug,
+        mode: brief.mode,
+        openedBy: brief.opened_by,
+        at: brief.created_at,
+        completed: brief.noted_at != null,
+      });
+    }
+    return result;
+  };
+
   const payload = (): { json: string; key: string } => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     const craftRoster = buildCraftRoster();
     const agentIds = snapshot.agents.map((a) => a.id);
     const contextUsage = buildContextUsage(agentIds);
     const agentMessages = buildAgentMessages(agentIds);
+    const craftBriefsByTicket = buildCraftBriefsByTicket();
     return {
       json: JSON.stringify({
         ...snapshot,
@@ -371,6 +397,7 @@ export function serve(opts?: {
         taskCosts,
         contextUsage,
         agentMessages,
+        craftBriefsByTicket,
       }),
       key:
         snapshotKey(snapshot) +
@@ -381,7 +408,8 @@ export function serve(opts?: {
         JSON.stringify(tokens?.totals24h ?? null) +
         JSON.stringify(taskCosts) +
         JSON.stringify(contextUsage) +
-        JSON.stringify(agentMessages),
+        JSON.stringify(agentMessages) +
+        JSON.stringify(craftBriefsByTicket),
     };
   };
 
