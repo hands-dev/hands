@@ -60,6 +60,7 @@ import { runDoctor } from "./doctor.js";
 import { claimWorktree, releaseWorktree } from "./worktree-lock.js";
 import { quiesce, watchersFor } from "./watchers.js";
 import { readJournal, readPreviousPage } from "./journal-read.js";
+import { assessReadiness } from "./attest.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
@@ -1025,6 +1026,65 @@ function cmdJournal(argv: string[]): void {
   }
 }
 
+/**
+ * `hands attest [--json]` — a station declares itself clean and ready (hands#157).
+ *
+ * Machine-checked, not asserted: this re-derives every fact. A station cannot
+ * attest by saying so, which is what stops "attested" degrading into "said so".
+ * Declining is a first-class outcome — a station that reports "14 uncommitted
+ * files I don't recognise" is giving the expo better information than any
+ * outside inspection could.
+ */
+function cmdAttest(argv: string[]): void {
+  const info = repoInfo(process.cwd());
+  if (!info) fail("not inside a git repo");
+  const agentId = resolveAgentId({ cwd: process.cwd() });
+  if (!/^station-\d+$/.test(agentId)) {
+    fail(`only stations attest — this resolves as "${agentId}". The expo checks its own checkout in /hands:line-check.`);
+  }
+
+  const store = new Store();
+  try {
+    const stranded = store
+      .listTasks({ assignee: agentId, state: "in_progress" })
+      .map((t) => `#${t.id}`);
+
+    const readiness = assessReadiness({
+      worktree: process.cwd(),
+      agentId,
+      strandedTickets: flag(argv, "--assume-working") ? [] : stranded,
+      offline: flag(argv, "--offline"),
+    });
+
+    store.setAttestation({
+      agentId,
+      ok: readiness.ok,
+      reason: readiness.reason,
+      headSha: readiness.headSha,
+      originSha: readiness.originSha,
+      lockPid: readiness.lockPid,
+      details: readiness.checks,
+    });
+
+    if (flag(argv, "--json")) {
+      out(JSON.stringify(readiness, null, 2));
+      return;
+    }
+    for (const c of readiness.checks) out(`${c.ok ? "\u2714" : "\u2718"} ${c.name.padEnd(10)} ${c.detail}`);
+    out("");
+    if (readiness.ok) {
+      out(`\u2714 ${agentId} attested clean and ready — the expo can dispatch to it`);
+      return;
+    }
+    out(`\u2718 ${agentId} is NOT ready. Recorded, with the reason, so the expo can see it.`);
+    out("  Get clean with /hands:ready. Never discard work that has no other copy —");
+    out("  staying unattested and saying why is better than losing something.");
+    process.exit(1);
+  } finally {
+    store.close();
+  }
+}
+
 function cmdDoctor(argv: string[]): void {
   const report = runDoctor({ fix: argv.includes("--fix") });
   for (const c of report.checks) {
@@ -1203,6 +1263,8 @@ async function main(): Promise<void> {
         return cmdClaim(rest);
       case "journal":
         return cmdJournal(rest);
+      case "attest":
+        return cmdAttest(rest);
       case "monitors":
       case "quiesce":
         return cmdMonitors(rest);
@@ -1233,6 +1295,7 @@ async function main(): Promise<void> {
         out("  hands logs <station-N>    what a station is actually doing (its own transcript)");
         out("  hands restart <station-N>  recycle a wedged station");
         out("  hands claim [--evict]     take exclusive ownership of this station worktree");
+        out("  hands attest              declare this station clean and ready (station-only)");
         out("  hands monitors [<station>] [--clear]  what a station has armed; --clear stops strays");
         out("  hands journal read [--previous]  read the books back - last shift page");
         out("  hands version             which build is running (and whether two installs disagree)");

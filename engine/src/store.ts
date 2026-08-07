@@ -76,6 +76,18 @@ export interface QuestionRow {
   updated_at: number;
 }
 
+export interface AttestationRow {
+  agent_id: string;
+  /** 1 = clean and ready, 0 = declined */
+  ok: number;
+  reason: string | null;
+  head_sha: string | null;
+  origin_sha: string | null;
+  lock_pid: number | null;
+  details: string | null;
+  at: number;
+}
+
 export interface TaskRow {
   id: number;
   created_by: string;
@@ -465,6 +477,23 @@ export class Store {
         holder     TEXT NOT NULL,
         expires_at INTEGER NOT NULL
       );
+
+      -- Station readiness (hands#157). A station attests about ITSELF: clean
+      -- and ready. The expo does not inspect or clean other worktrees; it reads
+      -- these. head_sha and origin_sha are what make the record expire by
+      -- EVENT rather than by clock -- a stale attestation carrying a freshness
+      -- stamp is worse than none, which is the flaw #157 identified in
+      -- priorities reporting stale:false about a superseded picture.
+      CREATE TABLE IF NOT EXISTS attestations (
+        agent_id   TEXT PRIMARY KEY,
+        ok         INTEGER NOT NULL,       -- 1 = clean and ready, 0 = declined
+        reason     TEXT,                   -- the station's OWN words when declining
+        head_sha   TEXT,                   -- worktree HEAD at attestation time
+        origin_sha TEXT,                   -- origin/main at attestation time
+        lock_pid   INTEGER,                -- worktree lock holder, to spot handover
+        details    TEXT,                   -- JSON: the individual checks
+        at         INTEGER NOT NULL
+      );
     `);
 
     // Additive columns on agents (safe to run against a pre-Phase-1 DB).
@@ -583,6 +612,69 @@ export class Store {
    * not presence-windowed (unlike listPeers): an offline station's craft must
    * still resolve so its files inject correctly at the next connect.
    */
+  /**
+   * Record a station's self-attestation (hands#157).
+   *
+   * The station asserts about ITSELF; the expo reads. `ok:false` is a
+   * first-class outcome, not a failure to record — a station that says "14
+   * uncommitted files I don't recognise" is giving better information than any
+   * outside inspection could, and it is information only that station has.
+   */
+  setAttestation(input: {
+    agentId: string;
+    ok: boolean;
+    reason?: string | null;
+    headSha?: string | null;
+    originSha?: string | null;
+    lockPid?: number | null;
+    details?: unknown;
+    now?: number;
+  }): void {
+    this.withRetry(() =>
+      this.db
+        .prepare(
+          `INSERT INTO attestations (agent_id, ok, reason, head_sha, origin_sha, lock_pid, details, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(agent_id) DO UPDATE SET
+             ok = excluded.ok, reason = excluded.reason, head_sha = excluded.head_sha,
+             origin_sha = excluded.origin_sha, lock_pid = excluded.lock_pid,
+             details = excluded.details, at = excluded.at`,
+        )
+        .run(
+          input.agentId,
+          input.ok ? 1 : 0,
+          input.reason ?? null,
+          input.headSha ?? null,
+          input.originSha ?? null,
+          input.lockPid ?? null,
+          input.details === undefined ? null : JSON.stringify(input.details),
+          input.now ?? Date.now(),
+        ),
+    );
+    this.journal("attest", {
+      agent: input.agentId,
+      ok: input.ok,
+      reason: input.reason ?? null,
+      at: input.now ?? Date.now(),
+    });
+  }
+
+  getAttestation(agentId: string): AttestationRow | null {
+    const row = this.db
+      .prepare(`SELECT * FROM attestations WHERE agent_id = ?`)
+      .get(agentId) as unknown as AttestationRow | undefined;
+    return row ?? null;
+  }
+
+  allAttestations(): AttestationRow[] {
+    return this.db.prepare(`SELECT * FROM attestations`).all() as unknown as AttestationRow[];
+  }
+
+  /** Drop a station's attestation — used when an event invalidates it. */
+  clearAttestation(agentId: string): void {
+    this.withRetry(() => this.db.prepare(`DELETE FROM attestations WHERE agent_id = ?`).run(agentId));
+  }
+
   getFocus(agentId: string): string | null {
     const row = this.db
       .prepare(`SELECT focus FROM agents WHERE id = ?`)

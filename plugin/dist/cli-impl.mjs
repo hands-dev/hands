@@ -583,10 +583,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path27) {
-  if (!path27)
+function getElementAtPath(obj, path28) {
+  if (!path28)
     return obj;
-  return path27.reduce((acc, key) => acc?.[key], obj);
+  return path28.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -898,11 +898,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path27, issues) {
+function prefixIssues(path28, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path27);
+    iss.path.unshift(path28);
     return iss;
   });
 }
@@ -1144,7 +1144,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path27 = []) => {
+  const processError = (error49, path28 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1154,7 +1154,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path27, ...issue2.path];
+        const fullpath = [...path28, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1186,8 +1186,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path27 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path27) {
+  const path28 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path28) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13881,13 +13881,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path27 = ref.slice(1).split("/").filter(Boolean);
-  if (path27.length === 0) {
+  const path28 = ref.slice(1).split("/").filter(Boolean);
+  if (path28.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path27[0] === defsKey) {
-    const key = path27[1];
+  if (path28[0] === defsKey) {
+    const key = path28[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17850,8 +17850,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path27) {
-      let input = path27;
+    function removeDotSegments(path28) {
+      let input = path28;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18103,8 +18103,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path27, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path27 && path27 !== "/" ? path27 : void 0;
+        const [path28, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path28 && path28 !== "/" ? path28 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -21774,6 +21774,23 @@ var init_store = __esm({
         holder     TEXT NOT NULL,
         expires_at INTEGER NOT NULL
       );
+
+      -- Station readiness (hands#157). A station attests about ITSELF: clean
+      -- and ready. The expo does not inspect or clean other worktrees; it reads
+      -- these. head_sha and origin_sha are what make the record expire by
+      -- EVENT rather than by clock -- a stale attestation carrying a freshness
+      -- stamp is worse than none, which is the flaw #157 identified in
+      -- priorities reporting stale:false about a superseded picture.
+      CREATE TABLE IF NOT EXISTS attestations (
+        agent_id   TEXT PRIMARY KEY,
+        ok         INTEGER NOT NULL,       -- 1 = clean and ready, 0 = declined
+        reason     TEXT,                   -- the station's OWN words when declining
+        head_sha   TEXT,                   -- worktree HEAD at attestation time
+        origin_sha TEXT,                   -- origin/main at attestation time
+        lock_pid   INTEGER,                -- worktree lock holder, to spot handover
+        details    TEXT,                   -- JSON: the individual checks
+        at         INTEGER NOT NULL
+      );
     `);
         this.ensureColumn("agents", "branch", "TEXT");
         this.ensureColumn("agents", "activity", "TEXT");
@@ -21867,6 +21884,52 @@ var init_store = __esm({
        * not presence-windowed (unlike listPeers): an offline station's craft must
        * still resolve so its files inject correctly at the next connect.
        */
+      /**
+       * Record a station's self-attestation (hands#157).
+       *
+       * The station asserts about ITSELF; the expo reads. `ok:false` is a
+       * first-class outcome, not a failure to record — a station that says "14
+       * uncommitted files I don't recognise" is giving better information than any
+       * outside inspection could, and it is information only that station has.
+       */
+      setAttestation(input) {
+        this.withRetry(
+          () => this.db.prepare(
+            `INSERT INTO attestations (agent_id, ok, reason, head_sha, origin_sha, lock_pid, details, at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(agent_id) DO UPDATE SET
+             ok = excluded.ok, reason = excluded.reason, head_sha = excluded.head_sha,
+             origin_sha = excluded.origin_sha, lock_pid = excluded.lock_pid,
+             details = excluded.details, at = excluded.at`
+          ).run(
+            input.agentId,
+            input.ok ? 1 : 0,
+            input.reason ?? null,
+            input.headSha ?? null,
+            input.originSha ?? null,
+            input.lockPid ?? null,
+            input.details === void 0 ? null : JSON.stringify(input.details),
+            input.now ?? Date.now()
+          )
+        );
+        this.journal("attest", {
+          agent: input.agentId,
+          ok: input.ok,
+          reason: input.reason ?? null,
+          at: input.now ?? Date.now()
+        });
+      }
+      getAttestation(agentId) {
+        const row = this.db.prepare(`SELECT * FROM attestations WHERE agent_id = ?`).get(agentId);
+        return row ?? null;
+      }
+      allAttestations() {
+        return this.db.prepare(`SELECT * FROM attestations`).all();
+      }
+      /** Drop a station's attestation — used when an event invalidates it. */
+      clearAttestation(agentId) {
+        this.withRetry(() => this.db.prepare(`DELETE FROM attestations WHERE agent_id = ?`).run(agentId));
+      }
       getFocus(agentId) {
         const row = this.db.prepare(`SELECT focus FROM agents WHERE id = ?`).get(agentId);
         return row?.focus ?? null;
@@ -29162,7 +29225,7 @@ function convertStandardElicitationSchema(schema) {
 function isAnnotationOnlyJsonSchemaKeyword(key) {
   return ANNOTATION_ONLY_JSON_SCHEMA_KEYWORDS.has(key) || key.startsWith("x-");
 }
-function walkProperty(node, path27, vendor, unsupported) {
+function walkProperty(node, path28, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -29170,8 +29233,8 @@ function walkProperty(node, path27, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path27}.${key}`);
-  } else unsupported.push(`${path27}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path28}.${key}`);
+  } else unsupported.push(`${path28}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -29188,11 +29251,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema2, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path27 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path27}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path28 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path28}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path27 ? `${path27}.${key}` : key;
+    const childPath = path28 ? `${path28}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -29805,9 +29868,9 @@ var init_src_D_zzAWoS = __esm({
         });
         const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
         if (!parsed.success) for (const issue2 of parsed.error.issues) {
-          const path27 = issue2.path.map(String);
-          const key = path27.length > 0 ? path27.join(".") : "_meta";
-          if (path27.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+          const path28 = issue2.path.map(String);
+          const key = path28.length > 0 ? path28.join(".") : "_meta";
+          if (path28.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
           issues.push({
             key,
             problem: issue2.message
@@ -33962,8 +34025,8 @@ var init_ajvProvider_97rDpkRx = __esm({
         for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
         return ind;
       }
-      function removeDotSegments(path27) {
-        let input = path27;
+      function removeDotSegments(path28) {
+        let input = path28;
         const output = [];
         let nextSlash = -1;
         let len = 0;
@@ -34116,8 +34179,8 @@ var init_ajvProvider_97rDpkRx = __esm({
           wsComponent.secure = void 0;
         }
         if (wsComponent.resourceName) {
-          const [path27, query] = wsComponent.resourceName.split("?");
-          wsComponent.path = path27 && path27 !== "/" ? path27 : void 0;
+          const [path28, query] = wsComponent.resourceName.split("?");
+          wsComponent.path = path28 && path28 !== "/" ? path28 : void 0;
           wsComponent.query = query;
           wsComponent.resourceName = void 0;
         }
@@ -39136,7 +39199,7 @@ __export(init_exports, {
 });
 import * as fs27 from "node:fs";
 import * as os14 from "node:os";
-import * as path25 from "node:path";
+import * as path26 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -39170,7 +39233,7 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path25.join(info.repoRoot, CONFIG_BASENAME);
+      const configPath = path26.join(info.repoRoot, CONFIG_BASENAME);
       const entry = registerProject(info.repoRoot);
       if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
       if (fs27.existsSync(configPath)) {
@@ -39230,7 +39293,7 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import { execFileSync as execFileSync12, spawnSync } from "node:child_process";
+import { execFileSync as execFileSync13, spawnSync } from "node:child_process";
 import * as os15 from "node:os";
 
 // src/server.ts
@@ -39596,8 +39659,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path27, errorMaps, issueData } = params;
-  const fullPath = [...path27, ...issueData.path || []];
+  const { data, path: path28, errorMaps, issueData } = params;
+  const fullPath = [...path28, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -39712,11 +39775,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path27, key) {
+  constructor(parent, value, path28, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path27;
+    this._path = path28;
     this._key = key;
   }
   get path() {
@@ -43263,11 +43326,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path27) {
-  if (path27.length === 0) {
+function getDotPath(path28) {
+  if (path28.length === 0) {
     return "object root";
   }
-  return path27.reduce((acc, seg, index) => {
+  return path28.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -49408,7 +49471,7 @@ var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function mirrorHealth(dir, url2) {
   const isRemote = /^(https?:\/\/|git@|ssh:\/\/)/.test(url2 ?? "");
   if (!isRemote) return { behind: 0, ahead: 0, problem: null };
-  const git5 = (args) => {
+  const git6 = (args) => {
     try {
       return execFileSync6("git", args, {
         cwd: dir,
@@ -49420,7 +49483,7 @@ function mirrorHealth(dir, url2) {
       return null;
     }
   };
-  const upstream = git5(["rev-parse", "--abbrev-ref", "@{upstream}"]);
+  const upstream = git6(["rev-parse", "--abbrev-ref", "@{upstream}"]);
   if (!upstream) {
     return {
       behind: null,
@@ -49428,7 +49491,7 @@ function mirrorHealth(dir, url2) {
       problem: "the local books mirror has no upstream branch \u2014 it has never been able to pull. Fix: git -C <booksDir> branch --set-upstream-to=origin/main main"
     };
   }
-  const counts = git5(["rev-list", "--left-right", "--count", `HEAD...${upstream}`]);
+  const counts = git6(["rev-list", "--left-right", "--count", `HEAD...${upstream}`]);
   const [aheadRaw, behindRaw] = (counts ?? "").split(/\s+/);
   const ahead = Number.isFinite(Number(aheadRaw)) ? Number(aheadRaw) : null;
   const behind = Number.isFinite(Number(behindRaw)) ? Number(behindRaw) : null;
@@ -51133,16 +51196,97 @@ function releaseWorktree(worktree, pid = process.pid, env, cwd) {
   }
 }
 
-// src/version.ts
+// src/attest.ts
 import { execFileSync as execFileSync11 } from "node:child_process";
+import * as path24 from "node:path";
+function git5(cwd, args) {
+  try {
+    return execFileSync11("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15e3
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+function assessReadiness(opts) {
+  const { worktree, agentId } = opts;
+  const checks = [];
+  const status = git5(worktree, ["status", "--porcelain", "--untracked-files=all"]);
+  if (status === null) {
+    checks.push({ name: "worktree", ok: false, detail: `cannot read git status in ${worktree}` });
+  } else {
+    const dirty = status.split("\n").filter(Boolean);
+    checks.push({
+      name: "clean",
+      ok: dirty.length === 0,
+      detail: dirty.length === 0 ? "working tree clean" : `${dirty.length} uncommitted change(s) \u2014 commit to the station branch or stash with a named message; do NOT discard`
+    });
+  }
+  const stashes = git5(worktree, ["stash", "list"]);
+  const stashCount = stashes ? stashes.split("\n").filter(Boolean).length : 0;
+  checks.push({
+    name: "stashes",
+    ok: stashCount === 0,
+    detail: stashCount === 0 ? "no stashes" : `${stashCount} stash(es) \u2014 an unclaimed stash is a question for the expo, not garbage`
+  });
+  const stranded = opts.strandedTickets ?? [];
+  checks.push({
+    name: "tickets",
+    ok: stranded.length === 0,
+    detail: stranded.length === 0 ? "no half-made dishes" : `ticket(s) ${stranded.join(", ")} are in_progress with nobody working them`
+  });
+  const branch = git5(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const expected = `hands/${agentId}`;
+  checks.push({
+    name: "branch",
+    ok: branch === expected,
+    detail: branch === expected ? `on ${branch}` : `on ${branch ?? "?"} \u2014 expected ${expected}`
+  });
+  if (!opts.offline) git5(worktree, ["fetch", "--quiet", "origin"]);
+  const headSha2 = git5(worktree, ["rev-parse", "HEAD"]);
+  const originSha = git5(worktree, ["rev-parse", "origin/main"]);
+  const behind = originSha && headSha2 ? Number(git5(worktree, ["rev-list", "--count", `HEAD..${originSha}`]) ?? "0") : 0;
+  checks.push({
+    name: "synced",
+    ok: behind === 0,
+    detail: behind === 0 ? "up to date with origin/main" : `${behind} behind origin/main \u2014 rebase`
+  });
+  const lock = readLock(worktree);
+  checks.push({
+    name: "lock",
+    ok: lock !== null,
+    detail: lock ? `worktree held by pid ${lock.pid}` : "worktree not claimed \u2014 run `hands claim`"
+  });
+  const inbox = inboxMonitorAlive(agentId, opts.notifyPath);
+  checks.push({
+    name: "monitor",
+    ok: inbox === true,
+    detail: inbox === true ? "inbox monitor armed" : inbox === false ? "inbox monitor DEAD \u2014 this station cannot be woken" : "inbox monitor state unknown on this platform"
+  });
+  const failed = checks.filter((c) => !c.ok);
+  return {
+    ok: failed.length === 0,
+    checks,
+    reason: failed.length === 0 ? null : failed.map((c) => c.detail).join("; "),
+    headSha: headSha2,
+    originSha,
+    lockPid: lock?.pid ?? null
+  };
+}
+
+// src/version.ts
+import { execFileSync as execFileSync12 } from "node:child_process";
 import * as fs26 from "node:fs";
 import * as os13 from "node:os";
-import * as path24 from "node:path";
+import * as path25 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var STAMP_BASENAME = "BUILD.json";
 function classifyInstall(entry, home = os13.homedir()) {
   if (!entry) return "unknown";
-  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path24.join(home, ".hands", "lib"))) {
+  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path25.join(home, ".hands", "lib"))) {
     return "standalone";
   }
   if (/[/\\]plugins[/\\]cache[/\\]/.test(entry)) return "plugin";
@@ -51151,7 +51295,7 @@ function classifyInstall(entry, home = os13.homedir()) {
 }
 function readStamp(dir) {
   try {
-    const raw = fs26.readFileSync(path24.join(dir, STAMP_BASENAME), "utf8");
+    const raw = fs26.readFileSync(path25.join(dir, STAMP_BASENAME), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.version !== "string" || typeof parsed.builtAt !== "string") return null;
     return {
@@ -51165,7 +51309,7 @@ function readStamp(dir) {
 }
 function gitShort(cwd) {
   try {
-    return execFileSync11("git", ["rev-parse", "--short", "HEAD"], {
+    return execFileSync12("git", ["rev-parse", "--short", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -51178,7 +51322,7 @@ function gitShort(cwd) {
 function buildInfo(opts) {
   const entry = opts?.entry ?? process.argv[1] ?? fileURLToPath4(import.meta.url);
   const kind = classifyInstall(entry, opts?.home ?? os13.homedir());
-  const stamp = readStamp(path24.dirname(entry));
+  const stamp = readStamp(path25.dirname(entry));
   if (stamp) {
     return { version: stamp.version, commit: stamp.commit, builtAt: stamp.builtAt, kind, entry };
   }
@@ -51192,14 +51336,14 @@ function buildInfo(opts) {
 }
 function otherInstall(current, home = os13.homedir()) {
   if (current !== "standalone") {
-    const stamp = readStamp(path24.join(home, ".hands", "lib"));
+    const stamp = readStamp(path25.join(home, ".hands", "lib"));
     if (stamp) return { kind: "standalone", stamp };
   }
   if (current !== "plugin") {
-    const cacheRoot = path24.join(home, ".claude", "plugins", "cache", "hands", "hands");
+    const cacheRoot = path25.join(home, ".claude", "plugins", "cache", "hands", "hands");
     try {
       for (const dir of fs26.readdirSync(cacheRoot)) {
-        const stamp = readStamp(path24.join(cacheRoot, dir, "dist"));
+        const stamp = readStamp(path25.join(cacheRoot, dir, "dist"));
         if (stamp) return { kind: "plugin", stamp };
       }
     } catch {
@@ -51222,7 +51366,7 @@ init_crafts();
 init_mcp_install();
 init_store();
 import * as fs28 from "node:fs";
-import * as path26 from "node:path";
+import * as path27 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -51310,7 +51454,7 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path26.join(info.repoRoot, CONFIG_BASENAME);
+  const configPath = path27.join(info.repoRoot, CONFIG_BASENAME);
   if (!fs28.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
@@ -51376,7 +51520,7 @@ function cmdUsage(argv) {
     }
   }
   cfg.usage = { mode };
-  fs28.mkdirSync(path26.dirname(configPath), { recursive: true });
+  fs28.mkdirSync(path27.dirname(configPath), { recursive: true });
   fs28.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 usage mode: ${mode} (machine-wide \u2014 every repo; already-running panes pick it up on their next hands_board poll)`);
@@ -51414,15 +51558,15 @@ function cmdCraft(argv) {
       const personal = personalCraftsDir(cfg);
       const targetDir = sub === "promote" ? shared : personal;
       const sourceDir = sub === "promote" ? personal : shared;
-      if (sub === "promote" && fs28.existsSync(path26.join(shared, `${files.slug}.md`))) {
+      if (sub === "promote" && fs28.existsSync(path27.join(shared, `${files.slug}.md`))) {
         fail(`a shared craft named "${files.slug}" already exists \u2014 resolve manually, then localize or edit it directly`);
       }
       fs28.mkdirSync(targetDir, { recursive: true });
       const moved = [];
       for (const name of [`${files.slug}.md`, `${files.slug}.mise.md`, `${files.slug}.skill.md`]) {
-        const from = path26.join(sourceDir, name);
+        const from = path27.join(sourceDir, name);
         if (!fs28.existsSync(from)) continue;
-        fs28.copyFileSync(from, path26.join(targetDir, name));
+        fs28.copyFileSync(from, path27.join(targetDir, name));
         fs28.rmSync(from);
         moved.push(name);
       }
@@ -51430,14 +51574,14 @@ function cmdCraft(argv) {
       materializeCraftAgents(cfg, info.repoRoot, process.env, info.repoRoot);
       if (sub === "promote") {
         try {
-          execFileSync12("git", ["add", ...moved.map((m) => path26.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
+          execFileSync13("git", ["add", ...moved.map((m) => path27.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
         } catch {
         }
         out2(`\u2714 "${files.slug}" promoted to shared \u2014 staged at ${shared}, not committed`);
         out2(`  next: git commit -m "craft: promote ${files.slug} to shared" && open a PR`);
       } else {
         try {
-          execFileSync12("git", ["rm", "--cached", "-q", ...moved.map((m) => path26.join(shared, m))], {
+          execFileSync13("git", ["rm", "--cached", "-q", ...moved.map((m) => path27.join(shared, m))], {
             cwd: info.repoRoot,
             stdio: "ignore"
           });
@@ -51592,7 +51736,7 @@ function requireRemote() {
   if (!j) {
     fail("books are unavailable in this environment \u2014 git isn't working (run: hands doctor)");
   }
-  if (!fs28.existsSync(path26.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs28.existsSync(path27.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -51796,7 +51940,7 @@ function cmdRestart(argv) {
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
   const command = launchCommand({ id, dir, model }, "station");
   try {
-    execFileSync12("tmux", ["respawn-pane", "-k", "-t", id, command], {
+    execFileSync13("tmux", ["respawn-pane", "-k", "-t", id, command], {
       stdio: "ignore",
       timeout: 1e4
     });
@@ -51834,7 +51978,7 @@ function cmdLs() {
     return;
   }
   for (const p of projects) {
-    const configured = fs28.existsSync(path26.join(p.repoRoot, CONFIG_BASENAME));
+    const configured = fs28.existsSync(path27.join(p.repoRoot, CONFIG_BASENAME));
     let seats = "";
     try {
       if (configured) {
@@ -51943,6 +52087,49 @@ function cmdJournal(argv) {
     out2(page.text);
   }
 }
+function cmdAttest(argv) {
+  const info = repoInfo(process.cwd());
+  if (!info) fail("not inside a git repo");
+  const agentId = resolveAgentId({ cwd: process.cwd() });
+  if (!/^station-\d+$/.test(agentId)) {
+    fail(`only stations attest \u2014 this resolves as "${agentId}". The expo checks its own checkout in /hands:line-check.`);
+  }
+  const store = new Store();
+  try {
+    const stranded = store.listTasks({ assignee: agentId, state: "in_progress" }).map((t) => `#${t.id}`);
+    const readiness = assessReadiness({
+      worktree: process.cwd(),
+      agentId,
+      strandedTickets: flag(argv, "--assume-working") ? [] : stranded,
+      offline: flag(argv, "--offline")
+    });
+    store.setAttestation({
+      agentId,
+      ok: readiness.ok,
+      reason: readiness.reason,
+      headSha: readiness.headSha,
+      originSha: readiness.originSha,
+      lockPid: readiness.lockPid,
+      details: readiness.checks
+    });
+    if (flag(argv, "--json")) {
+      out2(JSON.stringify(readiness, null, 2));
+      return;
+    }
+    for (const c of readiness.checks) out2(`${c.ok ? "\u2714" : "\u2718"} ${c.name.padEnd(10)} ${c.detail}`);
+    out2("");
+    if (readiness.ok) {
+      out2(`\u2714 ${agentId} attested clean and ready \u2014 the expo can dispatch to it`);
+      return;
+    }
+    out2(`\u2718 ${agentId} is NOT ready. Recorded, with the reason, so the expo can see it.`);
+    out2("  Get clean with /hands:ready. Never discard work that has no other copy \u2014");
+    out2("  staying unattested and saying why is better than losing something.");
+    process.exit(1);
+  } finally {
+    store.close();
+  }
+}
 function cmdDoctor(argv) {
   const report = runDoctor({ fix: argv.includes("--fix") });
   for (const c of report.checks) {
@@ -51986,7 +52173,7 @@ function launchStationSeat(_repoRoot, id, dir, cfg) {
 function tryLaunch(cmd, rest) {
   if (!cmd) {
     const info = repoInfo(process.cwd());
-    if (!info || !fs28.existsSync(path26.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    if (!info || !fs28.existsSync(path27.join(info.repoRoot, CONFIG_BASENAME))) return false;
     launchAt(info.repoRoot, "expo", "expo");
     return true;
   }
@@ -52088,6 +52275,8 @@ async function main2() {
         return cmdClaim(rest);
       case "journal":
         return cmdJournal(rest);
+      case "attest":
+        return cmdAttest(rest);
       case "monitors":
       case "quiesce":
         return cmdMonitors(rest);
@@ -52115,6 +52304,7 @@ async function main2() {
         out2("  hands logs <station-N>    what a station is actually doing (its own transcript)");
         out2("  hands restart <station-N>  recycle a wedged station");
         out2("  hands claim [--evict]     take exclusive ownership of this station worktree");
+        out2("  hands attest              declare this station clean and ready (station-only)");
         out2("  hands monitors [<station>] [--clear]  what a station has armed; --clear stops strays");
         out2("  hands journal read [--previous]  read the books back - last shift page");
         out2("  hands version             which build is running (and whether two installs disagree)");
