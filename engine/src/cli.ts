@@ -812,22 +812,11 @@ function cmdRestart(argv: string[]): void {
   const synced = materializeCraftAgents(cfg, dir, process.env, repoRoot);
   if (synced.written.length > 0) out(`  synced ${synced.written.length} craft(s)`);
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
-  const command = launchCommand({ id, dir, model }, "station");
-  // tmux names each station's window by its id (see provision.ts), so a
-  // respawn targets the existing pane rather than piling up new ones.
-  try {
-    execFileSync("tmux", ["respawn-pane", "-k", "-t", id, command], {
-      stdio: "ignore",
-      timeout: 10_000,
-    });
-    out(`✔ ${id} restarted in its existing pane`);
-    return;
-  } catch {
-    // no such window, or no tmux — fall back to a normal launch
-  }
-  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, "station");
-  if (res.launched) out(`✔ ${id} relaunched (${res.launcher})`);
-  else out(`launcher unavailable — paste this into a terminal:\n\n  ${command}\n`);
+  // A restart is just a fresh launch in this terminal — there is no pane to
+  // respawn into, because hands does not own one.
+  const res = launch({ id, dir, model }, process.env, "station", { exec: true });
+  if (res.launched) process.exit(res.exitCode ?? 0);
+  out(`no terminal to attach — paste this into one:\n\n  ${launchCommand({ id, dir, model }, "station")}\n`);
 }
 
 /**
@@ -1105,15 +1094,14 @@ function cmdDoctor(argv: string[]): void {
  * choosing one for them would silently downgrade the pass).
  */
 function launchAt(dir: string, mode: "expo" | "station", id: string, model?: string): void {
-  const cfg = loadConfig({ cwd: dir });
-  const res = launch({ id, dir, model }, cfg.stations.launcher, process.env, mode);
-  if (res.launched) {
-    out(`✔ ${id} → ${dir} (${res.launcher})`);
-    return;
-  }
-  // `manual` is the zero-assumption fallback, not a failure: print the exact
-  // command so the principal can paste it into whatever terminal they use.
-  out(`launcher unavailable — paste this into a terminal:\n\n  ${launchCommand({ id, dir, model }, mode)}\n`);
+  out(`${id} → ${dir}`);
+  // Hand this terminal straight to the session. Blocks until it exits, and
+  // exits with its status — opening a seat IS running it, not scheduling it.
+  const res = launch({ id, dir, model }, process.env, mode, { exec: true });
+  if (res.launched) process.exit(res.exitCode ?? 0);
+  // No TTY to hand over (piped stdin, a script): print the exact command
+  // instead of failing. The only remaining non-exec path for a single seat.
+  out(`no terminal to attach — paste this into one:\n\n  ${launchCommand({ id, dir, model }, mode)}\n`);
 }
 
 /** Open a station seat by id within `repoRoot`, or fail naming what exists. */

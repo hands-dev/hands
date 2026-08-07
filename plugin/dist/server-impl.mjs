@@ -8738,7 +8738,6 @@ function merge2(base, layer) {
     stations: {
       model: stationsLayer?.model ?? base.stations.model,
       overrides,
-      launcher: stationsLayer?.launcher ?? base.stations.launcher,
       worktreeRoot: stationsLayer?.worktreeRoot !== void 0 ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,
       baseBranch: stationsLayer?.baseBranch !== void 0 ? stationsLayer.baseBranch : base.stations.baseBranch,
       allowScaling: stationsLayer?.allowScaling ?? base.stations.allowScaling,
@@ -8811,7 +8810,6 @@ var init_config = __esm({
       stations: {
         model: "sonnet",
         overrides: {},
-        launcher: "auto",
         worktreeRoot: null,
         baseBranch: null,
         allowScaling: true,
@@ -9415,13 +9413,14 @@ __export(provision_exports, {
   addStations: () => addStations,
   launch: () => launch,
   launchCommand: () => launchCommand,
+  launchSkill: () => launchSkill,
   listStations: () => listStations,
   removeStation: () => removeStation,
   scaleStations: () => scaleStations,
   stationBranch: () => stationBranch,
   stationRoot: () => stationRoot
 });
-import { execFileSync as execFileSync6, spawn } from "node:child_process";
+import { execFileSync as execFileSync6, spawnSync } from "node:child_process";
 import * as fs13 from "node:fs";
 import * as os7 from "node:os";
 import * as path13 from "node:path";
@@ -9488,59 +9487,26 @@ function branchExists(cwd, branch) {
     return false;
   }
 }
+function launchSkill(mode) {
+  return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+}
 function launchCommand(target, mode = "station") {
-  const skill = mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  const skill = launchSkill(mode);
   const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
   return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
 }
 function shellQuote(s) {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
 }
-function tmuxAvailable() {
-  try {
-    execFileSync6("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function launch(plan, launcher, env = process.env, launchMode = "station") {
-  const command = launchCommand(plan, launchMode);
-  const mode = launcher === "auto" ? env.TMUX || tmuxAvailable() ? "tmux" : "manual" : launcher;
-  if (mode === "tmux") {
-    try {
-      if (env.TMUX) {
-        execFileSync6("tmux", ["new-window", "-d", "-n", plan.id, command], {
-          stdio: "ignore",
-          timeout: 1e4
-        });
-      } else {
-        execFileSync6(
-          "tmux",
-          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
-          { stdio: "ignore", timeout: 1e4 }
-        );
-      }
-      return { launcher: "tmux", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  if (mode === "iterm") {
-    const script = `tell application "iTerm"
-  activate
-  set newWindow to (create window with default profile)
-  tell current session of newWindow to write text ${JSON.stringify(command)}
-end tell`;
-    try {
-      const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
-      child.unref();
-      return { launcher: "iterm", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  return { launcher: "manual", launched: false };
+function launch(plan, env = process.env, launchMode = "station", opts) {
+  if (!opts?.exec || !process.stdin.isTTY) return { launcher: "manual", launched: false };
+  const args = [...plan.model ? ["--model", plan.model] : [], launchSkill(launchMode)];
+  const res = spawnSync("claude", args, {
+    cwd: plan.dir,
+    stdio: "inherit",
+    env: { ...env, HANDS_ID: plan.id }
+  });
+  return { launcher: "exec", launched: true, exitCode: res.status ?? 1 };
 }
 function addStations(count, opts) {
   const cwd = opts?.cwd ?? process.cwd();
@@ -9581,7 +9547,7 @@ function addStations(count, opts) {
       sessionName = assignment.sessionName;
     }
     materializeCraftAgents(cfg, dir, opts?.env, cwd);
-    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
+    const res = launch({ id, dir, model }, opts?.env);
     plans.push({
       id,
       dir,
@@ -9614,10 +9580,6 @@ function removeStation(id, opts) {
   }
   try {
     execFileSync6("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
-  }
-  try {
-    execFileSync6("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
   } catch {
   }
   let removed = false;
@@ -36522,9 +36484,9 @@ async function main() {
 (Ctrl-C to stop)
 `);
     if (!process.argv.includes("--no-open") && process.platform === "darwin") {
-      const { spawn: spawn2 } = await import("node:child_process");
+      const { spawn } = await import("node:child_process");
       try {
-        spawn2("open", [handle.url], { detached: true, stdio: "ignore" }).unref();
+        spawn("open", [handle.url], { detached: true, stdio: "ignore" }).unref();
       } catch {
       }
     }

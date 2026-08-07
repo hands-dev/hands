@@ -43,7 +43,6 @@ beforeEach(() => {
     ...DEFAULT_CONFIG,
     stations: {
       ...DEFAULT_CONFIG.stations,
-      launcher: "manual",
       worktreeRoot: path.join(root, "managed"),
       overrides: { "station-2": "opus" }, // legacy key form — still honored per index
     },

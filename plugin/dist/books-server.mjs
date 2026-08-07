@@ -30326,7 +30326,7 @@ var ONLINE_WINDOW_MS = 15 * 6e4;
 var IDLE_THRESHOLD_MS = 3 * 6e4;
 
 // src/provision.ts
-import { execFileSync as execFileSync4, spawn } from "node:child_process";
+import { execFileSync as execFileSync4, spawnSync } from "node:child_process";
 import * as fs11 from "node:fs";
 import * as os6 from "node:os";
 import * as path13 from "node:path";

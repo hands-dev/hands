@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -39,8 +39,8 @@ export interface LaunchPlan {
   model: string;
   /** the exact command a human could paste into a fresh terminal */
   command: string;
-  /** how it was (or wasn't) started: tmux | iterm | manual */
-  launcher: "tmux" | "iterm" | "manual";
+  /** how it was (or wasn't) started: exec (this terminal) | manual (paste it) */
+  launcher: "exec" | "manual";
   launched: boolean;
   /**
    * hands#104 theming — undefined when `stations.theming` is off. `themeColor`
@@ -144,11 +144,16 @@ export type LaunchMode = "expo" | "station";
  * Defaults to `station` so existing callers are unaffected; `expo` is what the
  * `hands <project>` launcher uses to bring up a kitchen's pass.
  */
+/** The skill loop a session comes up in, shared by the exec and paste paths. */
+export function launchSkill(mode: LaunchMode): string {
+  return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+}
+
 export function launchCommand(
   target: { id: string; dir: string; model?: string },
   mode: LaunchMode = "station",
 ): string {
-  const skill = mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  const skill = launchSkill(mode);
   // No model → omit the flag entirely and inherit the principal's own default.
   // Stations get a configured tier (stations.model); the expo has no such
   // config field, and picking one on the principal's behalf would silently
@@ -161,69 +166,36 @@ function shellQuote(s: string): string {
   return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
 }
 
-function tmuxAvailable(): boolean {
-  try {
-    execFileSync("tmux", ["-V"], { stdio: "ignore", timeout: 5000 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
- * Start a station session via the configured launcher. Returns the effective
- * launcher + whether a session was actually spawned. `manual` never spawns —
- * it's the zero-assumption fallback where the human pastes the command.
+ * Start a station session. Returns how it was (or wasn't) started.
+ *
+ * `exec` hands THIS terminal to the session: `claude` replaces the foreground,
+ * stdio inherited, blocking until it exits. That is the only way a session is
+ * spawned — hands does not own a terminal multiplexer. A station's durability
+ * comes from state that outlives its process (the bus DB, the worktree, the
+ * resumable transcript), never from the pane it happens to be running in;
+ * parenting sessions to panes is what made a pane's death look like a station's.
+ *
+ * `manual` prints the command for the human to paste, and is the honest answer
+ * wherever exec-in-place is impossible: opening N seats at once (one terminal
+ * cannot host them all), a non-interactive stdin, or the MCP path, which has no
+ * terminal at all.
  */
 export function launch(
   plan: { id: string; dir: string; model?: string },
-  launcher: HandsConfig["stations"]["launcher"],
   env: NodeJS.ProcessEnv = process.env,
   launchMode: LaunchMode = "station",
-): { launcher: "tmux" | "iterm" | "manual"; launched: boolean } {
-  const command = launchCommand(plan, launchMode);
-  const mode =
-    launcher === "auto" ? (env.TMUX || tmuxAvailable() ? "tmux" : "manual") : launcher;
+  opts?: { exec?: boolean },
+): { launcher: "exec" | "manual"; launched: boolean; exitCode?: number } {
+  if (!opts?.exec || !process.stdin.isTTY) return { launcher: "manual", launched: false };
 
-  if (mode === "tmux") {
-    try {
-      if (env.TMUX) {
-        // inside a session → new window there
-        execFileSync("tmux", ["new-window", "-d", "-n", plan.id, command], {
-          stdio: "ignore",
-          timeout: 10_000,
-        });
-      } else {
-        // no session → dedicated detached session per station (idempotent-ish:
-        // a duplicate session name fails, which we surface)
-        execFileSync(
-          "tmux",
-          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
-          { stdio: "ignore", timeout: 10_000 },
-        );
-      }
-      return { launcher: "tmux", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-
-  if (mode === "iterm") {
-    const script = `tell application "iTerm"
-  activate
-  set newWindow to (create window with default profile)
-  tell current session of newWindow to write text ${JSON.stringify(command)}
-end tell`;
-    try {
-      const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
-      child.unref();
-      return { launcher: "iterm", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-
-  return { launcher: "manual", launched: false };
+  const args = [...(plan.model ? ["--model", plan.model] : []), launchSkill(launchMode)];
+  const res = spawnSync("claude", args, {
+    cwd: plan.dir,
+    stdio: "inherit",
+    env: { ...env, HANDS_ID: plan.id },
+  });
+  return { launcher: "exec", launched: true, exitCode: res.status ?? 1 };
 }
 
 /**
@@ -290,7 +262,9 @@ export function addStations(
     // needs `hands craft brief`/`mise` until a restart re-syncs.
     materializeCraftAgents(cfg, dir, opts?.env, cwd);
 
-    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
+    // Never exec here: `station add` can open several seats, and one terminal
+    // cannot host them all. Each is reported with its paste command.
+    const res = launch({ id, dir, model }, opts?.env);
     plans.push({
       id,
       dir,
@@ -345,13 +319,6 @@ export function removeStation(
   } catch {
     // no tail running — fine
   }
-  // A tmux session we created ourselves is ours to kill.
-  try {
-    execFileSync("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5000 });
-  } catch {
-    // not tmux-launched / already gone — fine
-  }
-
   let removed = false;
   if (fs.existsSync(dir)) {
     // Our own seeded permission file makes the worktree dirty, and newer git

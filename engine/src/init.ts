@@ -82,7 +82,6 @@ export async function runInit(argv: string[]): Promise<void> {
           stations: {
             model: "sonnet",
             overrides: {},
-            launcher: "auto",
             allowScaling: true,
           },
           merge: { adminMergeLowRisk: false },
