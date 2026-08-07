@@ -63,16 +63,17 @@ describe("assessReadiness — nothing left over", () => {
     expect(c?.detail).toContain("question for the expo");
   });
 
-  it("fails on a half-made dish — in_progress with nobody working it", () => {
-    const c = check(assess({ strandedTickets: ["#42"] }), "tickets");
-    expect(c?.ok).toBe(false);
+  it("a station's OWN in_progress ticket is work to resume, never a blocker", () => {
+    // /hands:last-call deliberately leaves work in_progress so a station knows
+    // where to start. Failing attestation for that would reject the close-out's
+    // handoff every morning — the ceremony-gets-disabled failure.
+    const c = check(assess({ resumingTickets: ["#42"] }), "tickets");
+    expect(c?.ok).toBe(true);
     expect(c?.detail).toContain("#42");
   });
 
-  it("an ASSIGNED ticket is not leftover — that is the menu", () => {
-    // /hands:last-call deliberately preps next-day work; treating it as dirty
-    // would make the close-out and the open-up fight every morning
-    expect(check(assess({ strandedTickets: [] }), "tickets")?.ok).toBe(true);
+  it("reports nothing to resume when there is nothing", () => {
+    expect(check(assess({ resumingTickets: [] }), "tickets")?.detail).toContain("no tickets");
   });
 });
 
