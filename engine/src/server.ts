@@ -39,6 +39,7 @@ import {
 } from "./remote.js";
 import { formatRosterContext, listCrafts } from "./crafts.js";
 import { type MessageRow, Store } from "./store.js";
+import { inboxMonitorAlive } from "./watchers.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
 
@@ -372,6 +373,11 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           // so cost ≈ wakes × context size. Spot the chatty hotspots here.
           wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
           wakes24h: wakes.get(p.id)?.last24h ?? 0,
+          // hands#133/#121: "idle" and "deaf" are indistinguishable without
+          // this. A station whose inbox tail died looks exactly like one with
+          // nothing to do — it simply never wakes again. null = couldn't look,
+          // which must not read as fine.
+          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id) : undefined,
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({

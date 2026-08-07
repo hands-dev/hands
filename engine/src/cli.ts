@@ -58,6 +58,7 @@ import { seedStationPermissions } from "./seed-permissions.js";
 import { idleMs, latestSessionId, recentActivity, transcriptDir } from "./station-logs.js";
 import { runDoctor } from "./doctor.js";
 import { claimWorktree, releaseWorktree } from "./worktree-lock.js";
+import { quiesce, watchersFor } from "./watchers.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
@@ -943,6 +944,49 @@ function cmdClaim(argv: string[]): void {
   );
 }
 
+/**
+ * `hands monitors [<station-N>] [--clear] [--all]` — what a station has armed,
+ * and stop it (hands#133).
+ *
+ * Stopping a station's `/loop` does NOT stop its watchers: they are detached
+ * and outlive the schedule. Five stations were "stopped" here and an hour later
+ * one still had two live watchers, including a poll loop on a run that could
+ * never complete — still able to wake, still spending quota.
+ */
+function cmdMonitors(argv: string[]): void {
+  const info = repoInfo(process.cwd());
+  if (!info) fail("not inside a git repo");
+  const cfg = loadConfig({ cwd: info.repoRoot });
+  const { words, flags } = parseArgs(argv, []);
+  const targets = words.filter((w) => /^station-\d+$/.test(w));
+  const stations = listStations(info.repoRoot, cfg).filter(
+    (s) => targets.length === 0 || targets.includes(s.id),
+  );
+  if (stations.length === 0) fail(targets.length ? `no such station: ${targets.join(", ")}` : "no stations open");
+
+  for (const station of stations) {
+    if (flags.has("--clear")) {
+      const res = quiesce(station.id, { worktree: station.dir, keepInbox: !flags.has("--all") });
+      if (!res.supported) {
+        out(`${station.id}: cannot inspect processes on this platform — nothing stopped`);
+        continue;
+      }
+      out(`${station.id}: stopped ${res.stopped.length}, kept ${res.kept.length}`);
+      for (const w of res.stopped) out(`    stopped pid ${w.pid}  ${w.command}`);
+      for (const w of res.kept) out(`    kept    pid ${w.pid}  ${w.command}${w.isInbox ? "  (wake signal — use --all to stop it too)" : ""}`);
+      continue;
+    }
+    const report = watchersFor(station.id, { worktree: station.dir });
+    if (report.watchers === null) {
+      out(`${station.id}: UNKNOWN — cannot inspect processes on this platform`);
+      continue;
+    }
+    const inbox = report.inboxAlive ? "inbox tail ALIVE" : "inbox tail DEAD — this station cannot be woken";
+    out(`${station.id}: ${report.watchers.length} watcher(s), ${inbox}`);
+    for (const w of report.watchers) out(`    pid ${w.pid}${w.isInbox ? " [inbox]" : ""}  ${w.command}`);
+  }
+}
+
 function cmdDoctor(argv: string[]): void {
   const report = runDoctor({ fix: argv.includes("--fix") });
   for (const c of report.checks) {
@@ -1119,6 +1163,9 @@ async function main(): Promise<void> {
         return cmdDoctor(rest);
       case "claim":
         return cmdClaim(rest);
+      case "monitors":
+      case "quiesce":
+        return cmdMonitors(rest);
       case "version":
       case "--version":
       case "-v":
@@ -1146,6 +1193,7 @@ async function main(): Promise<void> {
         out("  hands logs <station-N>    what a station is actually doing (its own transcript)");
         out("  hands restart <station-N>  recycle a wedged station");
         out("  hands claim [--evict]     take exclusive ownership of this station worktree");
+        out("  hands monitors [<station>] [--clear]  what a station has armed; --clear stops strays");
         out("  hands version             which build is running (and whether two installs disagree)");
         out("");
         out(`  hands init                scaffold ${CONFIG_BASENAME}`);
