@@ -73,6 +73,19 @@ export interface JournalRow {
   created_at: number;
 }
 
+/** One choice in a structured question — the shape a dialog renders as a button. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+  recommended?: boolean;
+}
+
+/** The structured half of an answer — `answer` (QuestionRow) stays the human-readable summary. */
+export interface AnswerOptions {
+  chosenLabels: string[];
+  freeText?: string;
+}
+
 export interface QuestionRow {
   id: number;
   asker: string;
@@ -93,6 +106,14 @@ export interface QuestionRow {
   outcome_note: string | null;
   /** when the outcome was recorded */
   outcome_at: number | null;
+  /** JSON: Array<{ label: string; description: string; recommended?: boolean }>, 2-4 items — null for a free-text question */
+  options: string | null;
+  /** 1 = the operator may pick more than one option, 0/null = single choice */
+  multi_select: number | null;
+  /** which client resolved it: dashboard | tui | cli | expo | null (legacy/unrecorded) */
+  answered_via: string | null;
+  /** JSON: { chosenLabels: string[]; freeText?: string } — the structured half of the answer; `answer` stays the human-readable summary */
+  answer_options: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -539,6 +560,13 @@ export class Store {
     this.ensureColumn("questions", "outcome", "TEXT");
     this.ensureColumn("questions", "outcome_note", "TEXT");
     this.ensureColumn("questions", "outcome_at", "INTEGER");
+
+    // Structured operator questions (hands#162, #84): options a question carries, and how it
+    // was answered. NULL options = renders exactly as a free-text question always has.
+    this.ensureColumn("questions", "options", "TEXT");
+    this.ensureColumn("questions", "multi_select", "INTEGER");
+    this.ensureColumn("questions", "answered_via", "TEXT");
+    this.ensureColumn("questions", "answer_options", "TEXT");
 
     // hands-owned session display name (hands#104) — see AgentRow.session_name.
     this.ensureColumn("agents", "session_name", "TEXT");
@@ -1205,15 +1233,24 @@ export class Store {
 
   // --- questions (worktree → expo escalation) ---
 
-  askQuestion(input: { asker: string; question: string; context?: string | null; now?: number }): number {
+  askQuestion(input: {
+    asker: string;
+    question: string;
+    context?: string | null;
+    options?: QuestionOption[] | null;
+    multiSelect?: boolean;
+    now?: number;
+  }): number {
     const now = input.now ?? Date.now();
+    const optionsJson = input.options?.length ? JSON.stringify(input.options) : null;
+    const multiSelect = input.multiSelect ? 1 : 0;
     const id = this.withRetry(() => {
       const result = this.db
         .prepare(
-          `INSERT INTO questions (asker, question, context, state, created_at, updated_at)
-           VALUES (?, ?, ?, 'open', ?, ?)`,
+          `INSERT INTO questions (asker, question, context, state, options, multi_select, created_at, updated_at)
+           VALUES (?, ?, ?, 'open', ?, ?, ?, ?)`,
         )
-        .run(input.asker, input.question, input.context ?? null, now, now);
+        .run(input.asker, input.question, input.context ?? null, optionsJson, multiSelect, now, now);
       return Number(result.lastInsertRowid);
     });
     this.journal("question.ask", {
@@ -1221,6 +1258,8 @@ export class Store {
       asker: input.asker,
       question: input.question,
       context: input.context ?? null,
+      options: optionsJson,
+      multiSelect,
       at: now,
     });
     return id;
@@ -1250,31 +1289,59 @@ export class Store {
       | undefined;
   }
 
+  /**
+   * Resolve a question — atomically. The UPDATE's own WHERE clause is the compare-and-set
+   * (hands#84/#162): once a dashboard click and a TUI answer can target the same escalated
+   * question, whichever write reaches SQLite first must win outright, and the second must be
+   * told it lost rather than silently overwriting the first (the same failure class as a send
+   * that reports delivered but wakes nobody). SQLite serializes writes at the file level, so
+   * this is correct across separate OS processes touching the same DB file, not just threads —
+   * no app-level locking needed. Mirrors updateTaskState's identical pattern above.
+   */
   answerQuestion(input: {
     id: number;
     answer: string;
     resolvedBy: "expo" | "human";
+    answeredVia?: "dashboard" | "tui" | "cli" | "expo" | null;
+    answerOptions?: AnswerOptions | null;
     priorityRef?: string | null;
     now?: number;
-  }): void {
+  }): { ok: true } | { ok: false; reason: "already-answered"; existing: QuestionRow } {
     const now = input.now ?? Date.now();
-    this.withRetry(() =>
+    const answerOptionsJson = input.answerOptions ? JSON.stringify(input.answerOptions) : null;
+    const result = this.withRetry(() =>
       this.db
         .prepare(
           `UPDATE questions
-           SET state = 'answered', answer = ?, resolved_by = ?,
+           SET state = 'answered', answer = ?, resolved_by = ?, answered_via = ?, answer_options = ?,
                priority_ref = COALESCE(?, priority_ref), updated_at = ?
-           WHERE id = ?`,
+           WHERE id = ? AND state != 'answered'`,
         )
-        .run(input.answer, input.resolvedBy, input.priorityRef ?? null, now, input.id),
-    );
+        .run(
+          input.answer,
+          input.resolvedBy,
+          input.answeredVia ?? null,
+          answerOptionsJson,
+          input.priorityRef ?? null,
+          now,
+          input.id,
+        ),
+    ) as { changes: number };
+    if (result.changes === 0) {
+      const existing = this.getQuestion(input.id);
+      if (!existing) throw new Error(`answerQuestion: no such question ${input.id}`);
+      return { ok: false, reason: "already-answered", existing };
+    }
     this.journal("question.answer", {
       id: input.id,
       answer: input.answer,
       by: input.resolvedBy,
+      answeredVia: input.answeredVia ?? null,
+      answerOptions: answerOptionsJson,
       priority: input.priorityRef ?? null,
       at: now,
     });
+    return { ok: true };
   }
 
   /**
@@ -1310,22 +1377,39 @@ export class Store {
     id: number;
     recommendation?: string | null;
     priorityRef?: string | null;
+    options?: QuestionOption[] | null;
+    multiSelect?: boolean;
     now?: number;
   }): void {
     const now = input.now ?? Date.now();
+    // COALESCE onto the existing options/multi_select: escalating doesn't need to repeat
+    // structure hands_ask already attached, only to set it when the expo is the one converting
+    // a prose recommendation into real choices for the first time.
+    const optionsJson = input.options?.length ? JSON.stringify(input.options) : null;
+    const multiSelect = input.multiSelect === undefined ? null : input.multiSelect ? 1 : 0;
     this.withRetry(() =>
       this.db
         .prepare(
           `UPDATE questions
            SET state = 'needs_human', recommendation = ?,
+               options = COALESCE(?, options), multi_select = COALESCE(?, multi_select),
                priority_ref = COALESCE(?, priority_ref), updated_at = ?
            WHERE id = ?`,
         )
-        .run(input.recommendation ?? null, input.priorityRef ?? null, now, input.id),
+        .run(
+          input.recommendation ?? null,
+          optionsJson,
+          multiSelect,
+          input.priorityRef ?? null,
+          now,
+          input.id,
+        ),
     );
     this.journal("question.escalate", {
       id: input.id,
       recommendation: input.recommendation ?? null,
+      options: optionsJson,
+      multiSelect,
       priority: input.priorityRef ?? null,
       at: now,
     });
@@ -2099,20 +2183,23 @@ export class Store {
         this.withRetry(() =>
           this.db
             .prepare(
-              `INSERT OR IGNORE INTO questions (id, asker, question, context, state, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'open', ?, ?)`,
+              `INSERT OR IGNORE INTO questions (id, asker, question, context, state, options, multi_select, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?)`,
             )
-            .run(f("id"), f("asker"), f("question"), f("context"), at, at),
+            .run(f("id"), f("asker"), f("question"), f("context"), f("options"), f("multiSelect"), at, at),
         );
         return true;
       case "question.answer":
+        // Same compare-and-set guard as Store.answerQuestion: a duplicate/late-arriving replay
+        // of an already-answered question must not clobber whichever answer landed first.
         this.withRetry(() =>
           this.db
             .prepare(
-              `UPDATE questions SET state = 'answered', answer = ?, resolved_by = ?,
-               priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`,
+              `UPDATE questions SET state = 'answered', answer = ?, resolved_by = ?, answered_via = ?,
+               answer_options = ?, priority_ref = COALESCE(?, priority_ref), updated_at = ?
+               WHERE id = ? AND state != 'answered'`,
             )
-            .run(f("answer"), f("by"), f("priority"), at, f("id")),
+            .run(f("answer"), f("by"), f("answeredVia"), f("answerOptions"), f("priority"), at, f("id")),
         );
         return true;
       case "question.escalate":
@@ -2120,9 +2207,10 @@ export class Store {
           this.db
             .prepare(
               `UPDATE questions SET state = 'needs_human', recommendation = ?,
+               options = COALESCE(?, options), multi_select = COALESCE(?, multi_select),
                priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`,
             )
-            .run(f("recommendation"), f("priority"), at, f("id")),
+            .run(f("recommendation"), f("options"), f("multiSelect"), f("priority"), at, f("id")),
         );
         return true;
       case "question.outcome":

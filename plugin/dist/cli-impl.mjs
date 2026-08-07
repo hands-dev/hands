@@ -21814,6 +21814,10 @@ var init_store = __esm({
         this.ensureColumn("questions", "outcome", "TEXT");
         this.ensureColumn("questions", "outcome_note", "TEXT");
         this.ensureColumn("questions", "outcome_at", "INTEGER");
+        this.ensureColumn("questions", "options", "TEXT");
+        this.ensureColumn("questions", "multi_select", "INTEGER");
+        this.ensureColumn("questions", "answered_via", "TEXT");
+        this.ensureColumn("questions", "answer_options", "TEXT");
         this.ensureColumn("agents", "session_name", "TEXT");
         this.ensureColumn("craft_briefs", "ticket_id", "INTEGER");
         this.ensureColumn("messages", "acked_at", "INTEGER");
@@ -22302,11 +22306,13 @@ var init_store = __esm({
       // --- questions (worktree → expo escalation) ---
       askQuestion(input) {
         const now = input.now ?? Date.now();
+        const optionsJson = input.options?.length ? JSON.stringify(input.options) : null;
+        const multiSelect = input.multiSelect ? 1 : 0;
         const id = this.withRetry(() => {
           const result = this.db.prepare(
-            `INSERT INTO questions (asker, question, context, state, created_at, updated_at)
-           VALUES (?, ?, ?, 'open', ?, ?)`
-          ).run(input.asker, input.question, input.context ?? null, now, now);
+            `INSERT INTO questions (asker, question, context, state, options, multi_select, created_at, updated_at)
+           VALUES (?, ?, ?, 'open', ?, ?, ?, ?)`
+          ).run(input.asker, input.question, input.context ?? null, optionsJson, multiSelect, now, now);
           return Number(result.lastInsertRowid);
         });
         this.journal("question.ask", {
@@ -22314,6 +22320,8 @@ var init_store = __esm({
           asker: input.asker,
           question: input.question,
           context: input.context ?? null,
+          options: optionsJson,
+          multiSelect,
           at: now
         });
         return id;
@@ -22336,23 +22344,49 @@ var init_store = __esm({
       getQuestion(id) {
         return this.db.prepare("SELECT * FROM questions WHERE id = ?").get(id);
       }
+      /**
+       * Resolve a question — atomically. The UPDATE's own WHERE clause is the compare-and-set
+       * (hands#84/#162): once a dashboard click and a TUI answer can target the same escalated
+       * question, whichever write reaches SQLite first must win outright, and the second must be
+       * told it lost rather than silently overwriting the first (the same failure class as a send
+       * that reports delivered but wakes nobody). SQLite serializes writes at the file level, so
+       * this is correct across separate OS processes touching the same DB file, not just threads —
+       * no app-level locking needed. Mirrors updateTaskState's identical pattern above.
+       */
       answerQuestion(input) {
         const now = input.now ?? Date.now();
-        this.withRetry(
+        const answerOptionsJson = input.answerOptions ? JSON.stringify(input.answerOptions) : null;
+        const result = this.withRetry(
           () => this.db.prepare(
             `UPDATE questions
-           SET state = 'answered', answer = ?, resolved_by = ?,
+           SET state = 'answered', answer = ?, resolved_by = ?, answered_via = ?, answer_options = ?,
                priority_ref = COALESCE(?, priority_ref), updated_at = ?
-           WHERE id = ?`
-          ).run(input.answer, input.resolvedBy, input.priorityRef ?? null, now, input.id)
+           WHERE id = ? AND state != 'answered'`
+          ).run(
+            input.answer,
+            input.resolvedBy,
+            input.answeredVia ?? null,
+            answerOptionsJson,
+            input.priorityRef ?? null,
+            now,
+            input.id
+          )
         );
+        if (result.changes === 0) {
+          const existing = this.getQuestion(input.id);
+          if (!existing) throw new Error(`answerQuestion: no such question ${input.id}`);
+          return { ok: false, reason: "already-answered", existing };
+        }
         this.journal("question.answer", {
           id: input.id,
           answer: input.answer,
           by: input.resolvedBy,
+          answeredVia: input.answeredVia ?? null,
+          answerOptions: answerOptionsJson,
           priority: input.priorityRef ?? null,
           at: now
         });
+        return { ok: true };
       }
       /**
        * Record the expo's hindsight verdict on a recommendation it made (self-audit):
@@ -22377,17 +22411,29 @@ var init_store = __esm({
       }
       escalateQuestion(input) {
         const now = input.now ?? Date.now();
+        const optionsJson = input.options?.length ? JSON.stringify(input.options) : null;
+        const multiSelect = input.multiSelect === void 0 ? null : input.multiSelect ? 1 : 0;
         this.withRetry(
           () => this.db.prepare(
             `UPDATE questions
            SET state = 'needs_human', recommendation = ?,
+               options = COALESCE(?, options), multi_select = COALESCE(?, multi_select),
                priority_ref = COALESCE(?, priority_ref), updated_at = ?
            WHERE id = ?`
-          ).run(input.recommendation ?? null, input.priorityRef ?? null, now, input.id)
+          ).run(
+            input.recommendation ?? null,
+            optionsJson,
+            multiSelect,
+            input.priorityRef ?? null,
+            now,
+            input.id
+          )
         );
         this.journal("question.escalate", {
           id: input.id,
           recommendation: input.recommendation ?? null,
+          options: optionsJson,
+          multiSelect,
           priority: input.priorityRef ?? null,
           at: now
         });
@@ -22956,25 +23002,27 @@ var init_store = __esm({
           case "question.ask":
             this.withRetry(
               () => this.db.prepare(
-                `INSERT OR IGNORE INTO questions (id, asker, question, context, state, created_at, updated_at)
-               VALUES (?, ?, ?, ?, 'open', ?, ?)`
-              ).run(f("id"), f("asker"), f("question"), f("context"), at, at)
+                `INSERT OR IGNORE INTO questions (id, asker, question, context, state, options, multi_select, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'open', ?, ?, ?, ?)`
+              ).run(f("id"), f("asker"), f("question"), f("context"), f("options"), f("multiSelect"), at, at)
             );
             return true;
           case "question.answer":
             this.withRetry(
               () => this.db.prepare(
-                `UPDATE questions SET state = 'answered', answer = ?, resolved_by = ?,
-               priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`
-              ).run(f("answer"), f("by"), f("priority"), at, f("id"))
+                `UPDATE questions SET state = 'answered', answer = ?, resolved_by = ?, answered_via = ?,
+               answer_options = ?, priority_ref = COALESCE(?, priority_ref), updated_at = ?
+               WHERE id = ? AND state != 'answered'`
+              ).run(f("answer"), f("by"), f("answeredVia"), f("answerOptions"), f("priority"), at, f("id"))
             );
             return true;
           case "question.escalate":
             this.withRetry(
               () => this.db.prepare(
                 `UPDATE questions SET state = 'needs_human', recommendation = ?,
+               options = COALESCE(?, options), multi_select = COALESCE(?, multi_select),
                priority_ref = COALESCE(?, priority_ref), updated_at = ? WHERE id = ?`
-              ).run(f("recommendation"), f("priority"), at, f("id"))
+              ).run(f("recommendation"), f("options"), f("multiSelect"), f("priority"), at, f("id"))
             );
             return true;
           case "question.outcome":
@@ -50293,20 +50341,34 @@ function buildServer(store, agentId, config2) {
       return asToolResult(pathsReport(agentId, cfg, store.getFocus(agentId)));
     }
   );
+  const questionOptionSchema = external_exports3.object({
+    label: external_exports3.string(),
+    description: external_exports3.string().describe("the trade-off \u2014 why you'd pick this one, or not"),
+    recommended: external_exports3.boolean().optional()
+  });
+  const questionOptionsSchema = external_exports3.array(questionOptionSchema).min(2).max(4).optional().describe("2-4 concrete choices, if this decomposes into one \u2014 omit for a genuinely open-ended question");
   server.registerTool(
     "hands_ask",
     {
       title: "Escalate an open question to the expo",
-      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them.`,
+      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them \u2014 structured, not just prose, when the decision cleanly decomposes into 2-4 choices.`,
       inputSchema: {
         question: external_exports3.string(),
-        context: external_exports3.string().optional().describe("what's blocked, options, your lean")
+        context: external_exports3.string().optional().describe("what's blocked, options, your lean"),
+        options: questionOptionsSchema,
+        multiSelect: external_exports3.boolean().optional().describe("true if more than one option can be chosen at once")
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     },
     async (input) => {
       store.touch(agentId);
-      const id = store.askQuestion({ asker: agentId, question: input.question, context: input.context ?? null });
+      const id = store.askQuestion({
+        asker: agentId,
+        question: input.question,
+        context: input.context ?? null,
+        options: input.options ?? null,
+        multiSelect: input.multiSelect
+      });
       deliverWake(["expo"], { from: agentId, subject: "question" });
       return asToolResult({ ok: true, id, routedTo: "expo" });
     }
@@ -50335,8 +50397,12 @@ function buildServer(store, agentId, config2) {
           state: q.state,
           answer: q.answer ?? void 0,
           resolvedBy: q.resolved_by ?? void 0,
+          answeredVia: q.answered_via ?? void 0,
+          answerOptions: q.answer_options ? JSON.parse(q.answer_options) : void 0,
           priority: q.priority_ref ?? void 0,
           recommendation: q.recommendation ?? void 0,
+          options: q.options ? JSON.parse(q.options) : void 0,
+          multiSelect: q.multi_select === 1,
           askedAt: new Date(q.created_at).toISOString()
         }))
       });
@@ -50346,11 +50412,13 @@ function buildServer(store, agentId, config2) {
     "hands_answer",
     {
       title: "Answer a question (resolve it)",
-      description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'expo' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
+      description: `Resolve a question and route the answer back to the asker. Set by='human' when relaying ${principal}'s decision, 'expo' when you (the expo) auto-resolved it. Cite which priority it mapped to. Pass chosenLabels for a structured question (matching its options' labels) or answer for free text \u2014 at least one is required. If the question was already answered by someone else (a race between two surfaces), this returns ok:false with what won rather than overwriting it \u2014 check for that before assuming your answer landed.`,
       inputSchema: {
         id: external_exports3.number().int(),
-        answer: external_exports3.string(),
+        answer: external_exports3.string().optional().describe("free-text answer \u2014 required unless chosenLabels is set"),
+        chosenLabels: external_exports3.array(external_exports3.string()).optional().describe("which option label(s) were picked, for a structured question"),
         by: external_exports3.enum(["expo", "human"]).optional(),
+        answeredVia: external_exports3.enum(["dashboard", "tui", "cli", "expo"]).optional().describe("which surface produced this answer \u2014 omit when by='expo'"),
         priority: external_exports3.string().optional().describe("the priority this maps to")
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
@@ -50359,12 +50427,31 @@ function buildServer(store, agentId, config2) {
       store.touch(agentId);
       const q = store.getQuestion(input.id);
       if (!q) return { ...asToolResult({ ok: false, error: "no such question" }), isError: true };
-      store.answerQuestion({
+      if (!input.answer && !input.chosenLabels?.length) {
+        return {
+          ...asToolResult({ ok: false, error: "pass answer or chosenLabels" }),
+          isError: true
+        };
+      }
+      const resolvedBy = input.by ?? "expo";
+      const displayAnswer = input.answer ?? input.chosenLabels.join("; ");
+      const result = store.answerQuestion({
         id: input.id,
-        answer: input.answer,
-        resolvedBy: input.by ?? "expo",
+        answer: displayAnswer,
+        resolvedBy,
+        answeredVia: input.answeredVia ?? (resolvedBy === "expo" ? "expo" : null),
+        answerOptions: input.chosenLabels?.length ? { chosenLabels: input.chosenLabels } : null,
         priorityRef: input.priority ?? null
       });
+      if (!result.ok) {
+        return asToolResult({
+          ok: false,
+          reason: "already-answered",
+          answer: result.existing.answer,
+          resolvedBy: result.existing.resolved_by,
+          answeredVia: result.existing.answered_via
+        });
+      }
       deliverWake([q.asker], { from: "expo", subject: "answer" });
       return asToolResult({ ok: true, id: input.id, asker: q.asker });
     }
@@ -50373,10 +50460,12 @@ function buildServer(store, agentId, config2) {
     "hands_escalate",
     {
       title: "Bubble a question up to the principal",
-      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). Include your recommendation and the priority it touches. Then present it to him and, once he decides, call hands_answer with by='human'.`,
+      description: `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane, and to /hands:questions). Include your recommendation and the priority it touches \u2014 pass options if the decision decomposes into 2-4 concrete choices, so every surface (dashboard, the AskUserQuestion dialog) can render real buttons instead of a paragraph. Then present it via the AskUserQuestion tool in this same turn (recommended option first, labelled), not just prose. Once he decides, call hands_answer with by='human'.`,
       inputSchema: {
         id: external_exports3.number().int(),
         recommendation: external_exports3.string().optional(),
+        options: questionOptionsSchema,
+        multiSelect: external_exports3.boolean().optional(),
         priority: external_exports3.string().optional()
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
@@ -50388,6 +50477,8 @@ function buildServer(store, agentId, config2) {
       store.escalateQuestion({
         id: input.id,
         recommendation: input.recommendation ?? null,
+        options: input.options ?? null,
+        multiSelect: input.multiSelect,
         priorityRef: input.priority ?? null
       });
       return asToolResult({ ok: true, id: input.id });
