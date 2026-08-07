@@ -272,6 +272,9 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
 
       if (markRead && messages.length > 0) {
         store.setCursor(agentId, messages[messages.length - 1]!.id);
+        // Read-receipt for the dashboard's ack/turnaround metric — a peek (mark_read: false)
+        // must never count as an ack, same as it doesn't advance the cursor above.
+        store.ackMessages(agentId, messages.map((m) => m.id));
       }
       return asToolResult({
         agent: agentId,

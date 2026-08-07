@@ -59,11 +59,21 @@ export interface SnapshotMessage {
   subject: string | null;
   body: string;
   at: number;
+  /** when the recipient's hands_receive first drained this — null = not yet (or a broadcast, never tracked) */
+  ackedAt: number | null;
 }
 
 /** Shared MessageRow → SnapshotMessage mapping — the global feed and any per-agent view use the same shape. */
 export function toSnapshotMessage(m: MessageRow): SnapshotMessage {
-  return { id: m.id, from: m.from_id, to: m.to_id ?? "*", subject: m.subject, body: m.body, at: m.created_at };
+  return {
+    id: m.id,
+    from: m.from_id,
+    to: m.to_id ?? "*",
+    subject: m.subject,
+    body: m.body,
+    at: m.created_at,
+    ackedAt: m.acked_at,
+  };
 }
 
 export interface SnapshotJournal {

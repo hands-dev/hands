@@ -191,6 +191,8 @@ export interface MessageRow {
   body: string;
   thread_id: string | null;
   created_at: number;
+  /** stamped on the recipient's first real `hands_receive` drain — null = not yet acked (or a broadcast, never tracked) */
+  acked_at: number | null;
 }
 
 export interface Peer extends AgentRow {
@@ -486,6 +488,10 @@ export class Store {
     // Optional ticket correlation for a craft dispatch (dashboard "for what ticket" stat) —
     // forward-looking only; a dispatch made before this column existed has no way to backfill it.
     this.ensureColumn("craft_briefs", "ticket_id", "INTEGER");
+
+    // Message ack/turnaround (dashboard chat-bubble checkmark) — stamped on the recipient's
+    // first real hands_receive drain. Directed messages only; see ackMessages().
+    this.ensureColumn("messages", "acked_at", "INTEGER");
   }
 
   private ensureColumn(table: string, column: string, ddl: string): void {
@@ -770,6 +776,25 @@ export class Store {
       .prepare(`SELECT * FROM messages ${where} ORDER BY id DESC LIMIT ?`)
       .all(...params) as unknown as MessageRow[];
     return rows.reverse();
+  }
+
+  /**
+   * Stamp the recipient's read-receipt time — the dashboard's message ack/turnaround metric
+   * (hands: chat bubble checkmark). Called from `hands_receive`'s real-drain path only; a peek
+   * (`mark_read: false`) must never ack. `to_id = ?` makes broadcast-exclusion automatic and
+   * free: a broadcast row has `to_id IS NULL`, which never equality-matches a real agent id in
+   * SQL, so passing a broadcast's id here is a safe no-op rather than something the caller must
+   * filter out itself. `COALESCE` makes this first-drain-wins — a replay of the same batch (e.g.
+   * after a crash) must never push an already-set ack time later.
+   */
+  ackMessages(agentId: string, messageIds: readonly number[], now = Date.now()): void {
+    if (messageIds.length === 0) return;
+    const placeholders = messageIds.map(() => "?").join(",");
+    this.withRetry(() =>
+      this.db
+        .prepare(`UPDATE messages SET acked_at = COALESCE(acked_at, ?) WHERE to_id = ? AND id IN (${placeholders})`)
+        .run(now, agentId, ...messageIds),
+    );
   }
 
   /**
