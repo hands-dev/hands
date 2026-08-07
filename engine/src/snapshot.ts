@@ -102,6 +102,13 @@ export interface Collision {
   detail: string;
 }
 
+/** One choice in a structured question — mirrors store.ts's QuestionOption. */
+export interface SnapshotQuestionOption {
+  label: string;
+  description: string;
+  recommended?: boolean;
+}
+
 export interface SnapshotQuestion {
   id: number;
   asker: string;
@@ -109,12 +116,17 @@ export interface SnapshotQuestion {
   state: string;
   answer: string | null;
   resolvedBy: string | null;
+  /** which client answered it: dashboard | tui | cli | expo | null */
+  answeredVia: string | null;
   recommendation: string | null;
   priority: string | null;
   /** expo hindsight self-audit: "validated" | "contradicted" | null (unassessed) */
   outcome: string | null;
   outcomeNote: string | null;
   outcomeAt: number | null;
+  /** 2-4 choices to render as buttons — null renders exactly as a free-text question always has */
+  options: SnapshotQuestionOption[] | null;
+  multiSelect: boolean;
   at: number;
 }
 
@@ -299,11 +311,14 @@ export function buildSnapshot(
     state: q.state,
     answer: q.answer,
     resolvedBy: q.resolved_by,
+    answeredVia: q.answered_via,
     recommendation: q.recommendation,
     priority: q.priority_ref,
     outcome: q.outcome,
     outcomeNote: q.outcome_note,
     outcomeAt: q.outcome_at,
+    options: q.options ? JSON.parse(q.options) : null,
+    multiSelect: q.multi_select === 1,
     at: q.created_at,
   }));
 
