@@ -37,12 +37,20 @@ import type { CraftBriefRow, CraftNoteRow, Store } from "./store.js";
  * distill the raw sections into curated prose, in place, never by appending.
  */
 
+/** Who marked a craft ready for execute-mode dispatch, and when — a judgment, not a mechanical fact (hands#92). */
+export interface CraftReadiness {
+  at: string;
+  by: string;
+}
+
 export interface CraftRosterEntry {
   slug: string;
   scope: CraftScope;
   covers: string | null;
   /** parsed from the book's header line; null = never distilled */
   distilled: string | null;
+  /** null = plan-mode only (default for every new craft, hands#92) */
+  ready: CraftReadiness | null;
   pendingNotes: number;
 }
 
@@ -50,14 +58,42 @@ const COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
 // Tolerates the pre-cutover header key too (hands#129-style parse tolerance) —
 // a craft distilled for the first time under this build rewrites it to `distilled:`.
 const DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
+const READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
 
-export function parseCraftHeader(bookContent: string | null): { covers: string | null; distilled: string | null } {
-  if (!bookContent) return { covers: null, distilled: null };
+export function parseCraftHeader(
+  bookContent: string | null,
+): { covers: string | null; distilled: string | null; ready: CraftReadiness | null } {
+  if (!bookContent) return { covers: null, distilled: null, ready: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
+  const readyMatch = READY_RE.exec(line);
   return {
     covers: COVERS_RE.exec(line)?.[1]?.trim() || null,
     distilled: DISTILLED_RE.exec(line)?.[1] ?? null,
+    ready: readyMatch ? { at: readyMatch[1]!, by: readyMatch[2]! } : null,
   };
+}
+
+const READY_CLAUSE_RE = /\s*·\s*ready:\s*\S+\s+by\s+\S+/;
+
+/**
+ * Stamp or revoke a craft's `ready` state on its book's header line — hands#92's sous-owned
+ * execute-mode gate. `ready: null` revokes (drop the clause, reverting to plan-mode-only, the
+ * default for every new craft); a real value adds/replaces it. This is deliberately a judgment
+ * recorded in the craft's own file, not a mechanical fact inferred from whether the craft has
+ * been synced/materialized — the principal was explicit that those are different things. Header-
+ * line only, same mechanical-edit shape as `sweepHeldSeatHeader` — never touches body prose.
+ */
+export function stampCraftReadiness(bookContent: string, ready: CraftReadiness | null): string {
+  const lines = bookContent.split("\n");
+  const idx = lines.findIndex((l) => l.trim().startsWith(">"));
+  if (idx === -1) {
+    // No header line at all — shouldn't happen for a real charter, but don't silently drop the
+    // stamp; prepend one rather than lose the caller's intent.
+    return ready ? `> ready: ${ready.at} by ${ready.by}\n${bookContent}` : bookContent;
+  }
+  const stripped = lines[idx]!.replace(READY_CLAUSE_RE, "");
+  lines[idx] = ready ? `${stripped} · ready: ${ready.at} by ${ready.by}` : stripped;
+  return lines.join("\n");
 }
 
 const HELD_SEAT_CLAUSE_RE = /·\s*last held:\s*(\S+)(?:\s+by\s+\S+)?/i;
@@ -112,6 +148,7 @@ interface CraftFileEntry {
   scope: CraftScope;
   covers: string | null;
   distilled: string | null;
+  ready: CraftReadiness | null;
 }
 
 /**
@@ -133,8 +170,8 @@ function listCraftFiles(
   ]) {
     for (const slug of listSlugsIn(dir)) {
       if (seen.has(slug) || !dir) continue;
-      const { covers, distilled } = parseCraftHeader(readFileSafe(path.join(dir, `${slug}.md`)));
-      seen.set(slug, { slug, scope, covers, distilled });
+      const { covers, distilled, ready } = parseCraftHeader(readFileSafe(path.join(dir, `${slug}.md`)));
+      seen.set(slug, { slug, scope, covers, distilled, ready });
     }
   }
   return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
@@ -203,7 +240,25 @@ export function craftSkillPath(targetDir: string, slug: string): string {
   return path.join(targetDir, ".claude", "skills", `craft-${slug}`, "SKILL.md");
 }
 
+/**
+ * hands#92: execute mode is gated on a JUDGMENT (the sous — or, until one runs, whoever operates
+ * `hands craft ready` by hand — has deemed this craft's book/mise solid enough to trust with real
+ * edits), not a mechanical fact like "has this been synced/materialized." `entry.ready` is that
+ * judgment, parsed straight from the craft's own header — a new craft with no book/mise maturity
+ * is plan-mode-only by construction (`ready` is null until someone stamps it), no exceptions.
+ */
 function generatedCraftAgent(entry: CraftFileEntry): string {
+  const clearedForExecute = entry.ready !== null;
+  const modeNote = clearedForExecute
+    ? `Cleared for EXECUTE mode — marked ready for service ${entry.ready!.at} by ${entry.ready!.by}. Edit, ` +
+      "write, and commit inside your caller's own worktree; never isolate into a fresh worktree yourself."
+    : "PLAN MODE ONLY — this craft hasn't been marked ready for service yet (no maturity judgment " +
+      `on file). Read, reason, propose. Do not edit, write, commit, or run mutating commands. \`hands ` +
+      `craft ready ${entry.slug}\` is how a craft graduates once its book/mise are solid — that call is ` +
+      "the sous's, not yours.";
+  const briefCmd = clearedForExecute
+    ? `hands craft brief ${entry.slug} --task "<one line — what you were asked to do>" --mode execute`
+    : `hands craft brief ${entry.slug} --task "<one line — what you were asked to do>"`;
   return `---
 name: craft-${entry.slug}
 description: ${entry.covers ?? entry.slug} — dispatch for any work in this craft's area (hands#81/#96). Generated by \`hands craft sync\` — do not hand-edit, edits are overwritten on the next sync.
@@ -211,13 +266,15 @@ description: ${entry.covers ?? entry.slug} — dispatch for any work in this cra
 
 You are the **${entry.slug}** craft, dispatched for one ticket-slice — not a generalist.
 
-1. Run \`hands craft brief ${entry.slug} --task "<one line — what you were asked to do>"\` first
+${modeNote}
+
+1. Run \`${briefCmd}\` first
    — add \`--ticket <id>\` too if the caller's prompt names a ticket id you're working. This
    registers the dispatch and PRINTS a chit — the first line names your \`briefId\`, note it,
    you need it below. The chit may say \`Usage mode: low\` — honor it if so.
 2. Invoke \`Skill({ skill: "craft-${entry.slug}" })\` — your operating manual. It tells you how to
    pull your current book/mise (\`hands craft mise <briefId>\`, from step 1) before you start.
-3. Do the work the caller's prompt describes.
+3. Do the work the caller's prompt describes${clearedForExecute ? "" : " — investigate and propose, don't implement"}.
 4. Before you return, emit the \`\`\`craft-note\`\`\` block your skill describes, last thing in your
    final message. \`nothing-new: true\` is a correct and welcome answer — never invent learnings.
 `;
@@ -253,12 +310,15 @@ nothing-new: true|false
 mise: <path/command — only if it differs from what hands craft mise told you>
 book: <a decision, fact, or gotcha>
 skill: <a procedure or check you settled on>
-friction: <the book/skill/mise was wrong, or a check was slow>
+friction: <this craft's OWN book/skill/mise was wrong, or a check was slow>
+refactor: <the CODE/domain had friction unrelated to this craft's materials — what would make future work here easier>
 spillover(<other-craft-slug>): <something you learned that belongs to a DIFFERENT craft>
 \`\`\`
 
-Zero or more mise/book/skill/friction/spillover lines, each one learning. "nothing-new: true" is
-correct and welcome — never invent learnings to fill the block.
+Zero or more mise/book/skill/friction/refactor/spillover lines, each one learning. "nothing-new:
+true" is correct and welcome — never invent learnings to fill the block. \`refactor\` is the
+principal's "what could have made this work easier, opportunities to refactor" ask (hands#92) —
+distinct from \`friction\`, which is about whether YOUR OWN book/skill/mise steered you wrong.
 `;
 }
 
@@ -335,6 +395,26 @@ export function materializeCraftAgents(
 export interface CraftDispatchRate {
   ticketsFinished: number;
   ticketsWithCraftBrief: number;
+  executeDispatches: number;
+  planDispatches: number;
+}
+
+/** Pending book/skill notes at or above this count are worth folding now rather than waiting for end-of-shift (hands#92). */
+export const FOLD_READY_THRESHOLD = 3;
+
+const WEEK_MS = 7 * 24 * 60 * 60_000;
+
+/**
+ * How many crafts' headers show a `distilled:` stamp inside the last `windowMs` — the operator-
+ * facing "is the learning loop actually closing" signal (hands#92/#168): a rising dispatch rate
+ * with a flat distilled-count means dispatches are happening but nothing is compounding.
+ */
+export function booksDistilledRecently(entries: CraftRosterEntry[], now: number, windowMs = WEEK_MS): number {
+  return entries.filter((e) => {
+    if (!e.distilled) return false;
+    const t = Date.parse(e.distilled);
+    return !Number.isNaN(t) && now - t <= windowMs && now - t >= 0;
+  }).length;
 }
 
 /**
@@ -358,6 +438,7 @@ export function formatRosterContext(
   entries: CraftRosterEntry[],
   targetDir: string,
   dispatchRate?: CraftDispatchRate,
+  now: number = Date.now(),
 ): string {
   if (entries.length === 0) {
     return (
@@ -368,29 +449,41 @@ export function formatRosterContext(
   const lines = entries.map((e) => {
     const staleness = e.distilled ? "" : " (never distilled)";
     const pending = e.pendingNotes ? ` · ${e.pendingNotes} pending note(s)` : "";
-    const ready = fs.existsSync(craftAgentPath(targetDir, e.slug));
+    const foldReady = e.pendingNotes >= FOLD_READY_THRESHOLD ? " · ready to fold" : "";
+    const synced = fs.existsSync(craftAgentPath(targetDir, e.slug));
     // "brief-only" (not "not yet synced" — hands#167): this craft is fully dispatchable right
     // now via `hands craft brief`, just not through the one-call Agent-tool path yet. The old
     // wording read as "unavailable" and a generalist reasonably chose not to dispatch at all.
-    return `- ${e.slug} [${e.scope}${ready ? "" : ", brief-only"}] — ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
+    // "plan-only" (hands#92): a JUDGMENT, not a mechanical fact — no one has marked this craft's
+    // book/mise solid enough to trust with real edits yet (`hands craft ready`, sous-owned).
+    const readyLabel = e.ready ? "" : ", plan-only";
+    return `- ${e.slug} [${e.scope}${synced ? "" : ", brief-only"}${readyLabel}] — ${e.covers ?? "no covers stated yet"}${staleness}${pending}${foldReady}`;
   });
   const cap = 1500;
   let body = lines.join("\n");
   const points = Array.from(body);
   if (points.length > cap) body = `${points.slice(0, cap).join("")}\n…(see hands craft ls for the rest)`;
+  const totalDispatches = dispatchRate ? dispatchRate.executeDispatches + dispatchRate.planDispatches : 0;
   const rate =
     dispatchRate && dispatchRate.ticketsFinished > 0
-      ? `\nDispatch rate (7d): ${dispatchRate.ticketsWithCraftBrief} of ${dispatchRate.ticketsFinished} finished ticket(s) went through a craft.`
+      ? `\nDispatch rate (7d): ${dispatchRate.ticketsWithCraftBrief} of ${dispatchRate.ticketsFinished} finished ticket(s) went through a craft` +
+        (totalDispatches > 0 ? ` (${dispatchRate.executeDispatches} execute, ${dispatchRate.planDispatches} plan).` : ".")
       : "";
+  const distilledCount = booksDistilledRecently(entries, now);
+  const distilledLine = `\n${distilledCount} book(s) distilled in the last 7 days.`;
   return (
     "\n\n## Crafts available (dispatch as sub-agents — don't do their work yourself)\n" +
     body +
     '\nSynced: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) — e.g. "craft-' +
-    `${entries[0]!.slug}" for the first one above; it briefs and equips itself. "brief-only" → run ` +
+    `${entries[0]!.slug}" for the first one above; it briefs and equips itself, execute-mode if ` +
+    'ready, plan-mode otherwise. "brief-only" → run ' +
     "`hands craft brief <slug>` yourself — the BARE slug shown above, no `craft-` prefix " +
-    "(add `--ticket <id>` if you're working one), then paste the printed chit into a " +
-    "general-purpose Agent's prompt. `hands craft ls` gives the full roster on demand." +
-    rate
+    "(add `--ticket <id>` if you're working one, `--mode execute` only if the craft is ready), " +
+    "then paste the printed chit into a general-purpose Agent's prompt. \"plan-only\" means read, " +
+    "reason, propose — review its diff before folding an execute-mode craft's work into your own " +
+    "branch, same bar as your own work. `hands craft ls` gives the full roster on demand." +
+    rate +
+    distilledLine
   );
 }
 
@@ -420,17 +513,18 @@ export function composeChit(brief: CraftBriefRow, covers: string | null, usageMo
     "mise: <path/command — one line, only if it differs from what you were told>",
     "book: <decision/fact/gotcha — one line>",
     "skill: <a procedure or check you settled on — one line>",
-    "friction: <the craft's book/skill/mise was wrong, or a check was slow — one line>",
+    "friction: <the craft's OWN book/skill/mise was wrong, or a check was slow — one line>",
+    "refactor: <the CODE/domain had friction unrelated to this craft's materials — what would make future work here easier>",
     "spillover(<other-craft-slug>): <something you learned that belongs to a DIFFERENT craft>",
     "```",
-    "Zero or more of mise/book/skill/friction/spillover lines, each is one learning. " +
+    "Zero or more of mise/book/skill/friction/refactor/spillover lines, each is one learning. " +
       '"nothing-new: true" is a correct and welcome answer — never invent learnings to fill the block.',
   ];
   return lines.filter((l): l is string => l !== null).join("\n");
 }
 
 export interface ParsedCraftNoteLine {
-  kind: "mise" | "book" | "skill" | "friction" | "spillover";
+  kind: "mise" | "book" | "skill" | "friction" | "refactor" | "spillover";
   body: string;
   spilloverCraft?: string;
 }
@@ -443,7 +537,7 @@ export interface ParsedCraftNote {
 }
 
 const NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
-const KV_RE = /^(mise|book|skill|friction):\s*(.+)$/;
+const KV_RE = /^(mise|book|skill|friction|refactor):\s*(.+)$/;
 const SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
 
 /** Pull the last ```craft-note``` block out of a finished sub-agent's transcript text. Mechanical, not a model call. */
@@ -541,6 +635,7 @@ export function appendRawNote(text: string | null, taggedLine: string): string {
 function formatRawTaggedLine(note: CraftNoteRow): string {
   if (note.kind === "book") return `[book] ${note.body}`;
   if (note.kind === "friction") return `[friction] ${note.body}`;
+  if (note.kind === "refactor") return `[refactor] ${note.body}`;
   if (note.kind === "spillover") return `[spillover · from ${note.spillover_craft ?? "unknown"}] ${note.body}`;
   return note.body; // skill — untagged, the file itself supplies the type
 }

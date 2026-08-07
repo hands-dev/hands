@@ -30334,6 +30334,7 @@ import * as path13 from "node:path";
 // src/crafts.ts
 import * as fs9 from "node:fs";
 import * as path10 from "node:path";
+var WEEK_MS = 7 * 24 * 60 * 6e4;
 
 // src/seed-permissions.ts
 import * as fs10 from "node:fs";

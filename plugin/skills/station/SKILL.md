@@ -132,8 +132,14 @@ chatty behavior is visible.
    crafts cover slices of it (a cross-cutting dish, hands#81) → one brief per slice, dispatched in
    parallel where they don't touch the same files, all converged in THIS worktree — keep it one
    ticket, one station, one branch; don't split into per-craft tickets just because the work spans
-   crafts. None covers it → do it generically, that's still your job too. Read-only ("plan mode")
-   for now — that's the whole menu; execute-mode craft dispatch isn't wired up yet.
+   crafts. None covers it → do it generically, that's still your job too.
+   - **Execute vs. plan mode (hands#92).** The roster marks each craft `ready` (execute — a synced
+     Agent dispatches with `--mode execute` automatically) or `plan-only` (read, reason, propose;
+     `hands craft ready` is how it graduates, once the sous — or whoever operates that call before
+     one exists — has judged its book/mise solid). **You review an execute-mode craft's diff before
+     folding it into your own branch, same bar as reviewing your own work** — it edited inside
+     YOUR worktree, you stay accountable for what ships. A plan-mode craft's return is a
+     recommendation you still implement yourself.
    - **Usage mode `"low"` (step 2):** batch multiple covered slices into one craft brief instead of
      one-per-slice wherever they don't conflict, and for a slice small enough that a fresh
      sub-agent context is clear overkill, do it generically in-pane instead of dispatching.

@@ -93,7 +93,7 @@ export function craftRosterContext(
     now - DISPATCH_RATE_WINDOW_MS,
     roster.map((c) => c.slug),
   );
-  return formatRosterContext(roster, cwd, rate);
+  return formatRosterContext(roster, cwd, rate, now);
 }
 
 export function buildServer(store: Store, agentId: string, config?: HandsConfig): McpServer {

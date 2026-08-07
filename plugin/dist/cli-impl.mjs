@@ -287,6 +287,9 @@ function isStation(id) {
 function isExpo(id) {
   return id === "expo";
 }
+function isSous(id) {
+  return id === "sous";
+}
 function resolveAgentRef(nameOrId) {
   return nameOrId.trim();
 }
@@ -21757,7 +21760,7 @@ var init_store = __esm({
         craft_slug      TEXT NOT NULL,
         brief_id        INTEGER,
         source_agent    TEXT NOT NULL,
-        kind            TEXT NOT NULL,     -- mise | book | skill | friction | spillover
+        kind            TEXT NOT NULL,     -- mise | book | skill | friction | spillover | refactor
         body            TEXT NOT NULL,
         spillover_craft TEXT,
         folded_at       INTEGER,           -- NULL = pending
@@ -22978,14 +22981,22 @@ var init_store = __esm({
        */
       craftDispatchRate(sinceMs, knownSlugs) {
         const finished = this.db.prepare("SELECT COUNT(*) as n FROM tasks WHERE finished_at IS NOT NULL AND finished_at >= ?").get(sinceMs);
-        if (knownSlugs.length === 0) return { ticketsFinished: finished.n, ticketsWithCraftBrief: 0 };
+        if (knownSlugs.length === 0) {
+          return { ticketsFinished: finished.n, ticketsWithCraftBrief: 0, executeDispatches: 0, planDispatches: 0 };
+        }
         const placeholders = knownSlugs.map(() => "?").join(",");
         const withCraft = this.db.prepare(
           `SELECT COUNT(DISTINCT t.id) as n FROM tasks t
          JOIN craft_briefs cb ON cb.ticket_id = t.id
          WHERE t.finished_at IS NOT NULL AND t.finished_at >= ? AND cb.craft_slug IN (${placeholders})`
         ).get(sinceMs, ...knownSlugs);
-        return { ticketsFinished: finished.n, ticketsWithCraftBrief: withCraft.n };
+        const modeRows = this.db.prepare(
+          `SELECT mode, COUNT(*) as cnt FROM craft_briefs
+         WHERE created_at >= ? AND craft_slug IN (${placeholders}) GROUP BY mode`
+        ).all(sinceMs, ...knownSlugs);
+        const executeDispatches = modeRows.find((r) => r.mode === "execute")?.cnt ?? 0;
+        const planDispatches = modeRows.find((r) => r.mode === "plan")?.cnt ?? 0;
+        return { ticketsFinished: finished.n, ticketsWithCraftBrief: withCraft.n, executeDispatches, planDispatches };
       }
       /**
        * Token usage per craft, from subagent_samples — written on every sub-agent finish but never
@@ -25161,12 +25172,25 @@ var init_remote = __esm({
 import * as fs15 from "node:fs";
 import * as path16 from "node:path";
 function parseCraftHeader(bookContent) {
-  if (!bookContent) return { covers: null, distilled: null };
+  if (!bookContent) return { covers: null, distilled: null, ready: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
+  const readyMatch = READY_RE.exec(line);
   return {
     covers: COVERS_RE.exec(line)?.[1]?.trim() || null,
-    distilled: DISTILLED_RE.exec(line)?.[1] ?? null
+    distilled: DISTILLED_RE.exec(line)?.[1] ?? null,
+    ready: readyMatch ? { at: readyMatch[1], by: readyMatch[2] } : null
   };
+}
+function stampCraftReadiness(bookContent, ready) {
+  const lines = bookContent.split("\n");
+  const idx = lines.findIndex((l) => l.trim().startsWith(">"));
+  if (idx === -1) {
+    return ready ? `> ready: ${ready.at} by ${ready.by}
+${bookContent}` : bookContent;
+  }
+  const stripped = lines[idx].replace(READY_CLAUSE_RE, "");
+  lines[idx] = ready ? `${stripped} \xB7 ready: ${ready.at} by ${ready.by}` : stripped;
+  return lines.join("\n");
 }
 function sweepHeldSeatHeader(bookContent) {
   if (!HELD_SEAT_CLAUSE_RE.test(bookContent)) return { content: bookContent, changed: false };
@@ -25207,8 +25231,8 @@ function listCraftFiles(config2, env = process.env, cwd = process.cwd()) {
   ]) {
     for (const slug of listSlugsIn(dir)) {
       if (seen.has(slug) || !dir) continue;
-      const { covers, distilled } = parseCraftHeader(readFileSafe(path16.join(dir, `${slug}.md`)));
-      seen.set(slug, { slug, scope, covers, distilled });
+      const { covers, distilled, ready } = parseCraftHeader(readFileSafe(path16.join(dir, `${slug}.md`)));
+      seen.set(slug, { slug, scope, covers, distilled, ready });
     }
   }
   return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
@@ -25246,6 +25270,9 @@ function craftSkillPath(targetDir, slug) {
   return path16.join(targetDir, ".claude", "skills", `craft-${slug}`, "SKILL.md");
 }
 function generatedCraftAgent(entry) {
+  const clearedForExecute = entry.ready !== null;
+  const modeNote = clearedForExecute ? `Cleared for EXECUTE mode \u2014 marked ready for service ${entry.ready.at} by ${entry.ready.by}. Edit, write, and commit inside your caller's own worktree; never isolate into a fresh worktree yourself.` : `PLAN MODE ONLY \u2014 this craft hasn't been marked ready for service yet (no maturity judgment on file). Read, reason, propose. Do not edit, write, commit, or run mutating commands. \`hands craft ready ${entry.slug}\` is how a craft graduates once its book/mise are solid \u2014 that call is the sous's, not yours.`;
+  const briefCmd = clearedForExecute ? `hands craft brief ${entry.slug} --task "<one line \u2014 what you were asked to do>" --mode execute` : `hands craft brief ${entry.slug} --task "<one line \u2014 what you were asked to do>"`;
   return `---
 name: craft-${entry.slug}
 description: ${entry.covers ?? entry.slug} \u2014 dispatch for any work in this craft's area (hands#81/#96). Generated by \`hands craft sync\` \u2014 do not hand-edit, edits are overwritten on the next sync.
@@ -25253,13 +25280,15 @@ description: ${entry.covers ?? entry.slug} \u2014 dispatch for any work in this 
 
 You are the **${entry.slug}** craft, dispatched for one ticket-slice \u2014 not a generalist.
 
-1. Run \`hands craft brief ${entry.slug} --task "<one line \u2014 what you were asked to do>"\` first
+${modeNote}
+
+1. Run \`${briefCmd}\` first
    \u2014 add \`--ticket <id>\` too if the caller's prompt names a ticket id you're working. This
    registers the dispatch and PRINTS a chit \u2014 the first line names your \`briefId\`, note it,
    you need it below. The chit may say \`Usage mode: low\` \u2014 honor it if so.
 2. Invoke \`Skill({ skill: "craft-${entry.slug}" })\` \u2014 your operating manual. It tells you how to
    pull your current book/mise (\`hands craft mise <briefId>\`, from step 1) before you start.
-3. Do the work the caller's prompt describes.
+3. Do the work the caller's prompt describes${clearedForExecute ? "" : " \u2014 investigate and propose, don't implement"}.
 4. Before you return, emit the \`\`\`craft-note\`\`\` block your skill describes, last thing in your
    final message. \`nothing-new: true\` is a correct and welcome answer \u2014 never invent learnings.
 `;
@@ -25292,12 +25321,15 @@ nothing-new: true|false
 mise: <path/command \u2014 only if it differs from what hands craft mise told you>
 book: <a decision, fact, or gotcha>
 skill: <a procedure or check you settled on>
-friction: <the book/skill/mise was wrong, or a check was slow>
+friction: <this craft's OWN book/skill/mise was wrong, or a check was slow>
+refactor: <the CODE/domain had friction unrelated to this craft's materials \u2014 what would make future work here easier>
 spillover(<other-craft-slug>): <something you learned that belongs to a DIFFERENT craft>
 \`\`\`
 
-Zero or more mise/book/skill/friction/spillover lines, each one learning. "nothing-new: true" is
-correct and welcome \u2014 never invent learnings to fill the block.
+Zero or more mise/book/skill/friction/refactor/spillover lines, each one learning. "nothing-new:
+true" is correct and welcome \u2014 never invent learnings to fill the block. \`refactor\` is the
+principal's "what could have made this work easier, opportunities to refactor" ask (hands#92) \u2014
+distinct from \`friction\`, which is about whether YOUR OWN book/skill/mise steered you wrong.
 `;
 }
 function materializeCraftAgents(config2, targetDir, env = process.env, cwd = process.cwd()) {
@@ -25342,25 +25374,38 @@ function materializeCraftAgents(config2, targetDir, env = process.env, cwd = pro
   }
   return { written, removed };
 }
-function formatRosterContext(entries, targetDir, dispatchRate) {
+function booksDistilledRecently(entries, now, windowMs = WEEK_MS) {
+  return entries.filter((e) => {
+    if (!e.distilled) return false;
+    const t = Date.parse(e.distilled);
+    return !Number.isNaN(t) && now - t <= windowMs && now - t >= 0;
+  }).length;
+}
+function formatRosterContext(entries, targetDir, dispatchRate, now = Date.now()) {
   if (entries.length === 0) {
     return "\n\nNo crafts founded yet. Crafts are dispatched as sub-agents, not held \u2014 found one via /hands:crafts only for a durable, recurring beat.";
   }
   const lines = entries.map((e) => {
     const staleness = e.distilled ? "" : " (never distilled)";
     const pending = e.pendingNotes ? ` \xB7 ${e.pendingNotes} pending note(s)` : "";
-    const ready = fs15.existsSync(craftAgentPath(targetDir, e.slug));
-    return `- ${e.slug} [${e.scope}${ready ? "" : ", brief-only"}] \u2014 ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
+    const foldReady = e.pendingNotes >= FOLD_READY_THRESHOLD ? " \xB7 ready to fold" : "";
+    const synced = fs15.existsSync(craftAgentPath(targetDir, e.slug));
+    const readyLabel = e.ready ? "" : ", plan-only";
+    return `- ${e.slug} [${e.scope}${synced ? "" : ", brief-only"}${readyLabel}] \u2014 ${e.covers ?? "no covers stated yet"}${staleness}${pending}${foldReady}`;
   });
   const cap = 1500;
   let body = lines.join("\n");
   const points = Array.from(body);
   if (points.length > cap) body = `${points.slice(0, cap).join("")}
 \u2026(see hands craft ls for the rest)`;
+  const totalDispatches = dispatchRate ? dispatchRate.executeDispatches + dispatchRate.planDispatches : 0;
   const rate = dispatchRate && dispatchRate.ticketsFinished > 0 ? `
-Dispatch rate (7d): ${dispatchRate.ticketsWithCraftBrief} of ${dispatchRate.ticketsFinished} finished ticket(s) went through a craft.` : "";
+Dispatch rate (7d): ${dispatchRate.ticketsWithCraftBrief} of ${dispatchRate.ticketsFinished} finished ticket(s) went through a craft` + (totalDispatches > 0 ? ` (${dispatchRate.executeDispatches} execute, ${dispatchRate.planDispatches} plan).` : ".") : "";
+  const distilledCount = booksDistilledRecently(entries, now);
+  const distilledLine = `
+${distilledCount} book(s) distilled in the last 7 days.`;
   return "\n\n## Crafts available (dispatch as sub-agents \u2014 don't do their work yourself)\n" + body + `
-Synced: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) \u2014 e.g. "craft-${entries[0].slug}" for the first one above; it briefs and equips itself. "brief-only" \u2192 run \`hands craft brief <slug>\` yourself \u2014 the BARE slug shown above, no \`craft-\` prefix (add \`--ticket <id>\` if you're working one), then paste the printed chit into a general-purpose Agent's prompt. \`hands craft ls\` gives the full roster on demand.` + rate;
+Synced: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) \u2014 e.g. "craft-${entries[0].slug}" for the first one above; it briefs and equips itself, execute-mode if ready, plan-mode otherwise. "brief-only" \u2192 run \`hands craft brief <slug>\` yourself \u2014 the BARE slug shown above, no \`craft-\` prefix (add \`--ticket <id>\` if you're working one, \`--mode execute\` only if the craft is ready), then paste the printed chit into a general-purpose Agent's prompt. "plan-only" means read, reason, propose \u2014 review its diff before folding an execute-mode craft's work into your own branch, same bar as your own work. \`hands craft ls\` gives the full roster on demand.` + rate + distilledLine;
 }
 function composeChit(brief, covers, usageMode) {
   const lines = [
@@ -25382,10 +25427,11 @@ function composeChit(brief, covers, usageMode) {
     "mise: <path/command \u2014 one line, only if it differs from what you were told>",
     "book: <decision/fact/gotcha \u2014 one line>",
     "skill: <a procedure or check you settled on \u2014 one line>",
-    "friction: <the craft's book/skill/mise was wrong, or a check was slow \u2014 one line>",
+    "friction: <the craft's OWN book/skill/mise was wrong, or a check was slow \u2014 one line>",
+    "refactor: <the CODE/domain had friction unrelated to this craft's materials \u2014 what would make future work here easier>",
     "spillover(<other-craft-slug>): <something you learned that belongs to a DIFFERENT craft>",
     "```",
-    'Zero or more of mise/book/skill/friction/spillover lines, each is one learning. "nothing-new: true" is a correct and welcome answer \u2014 never invent learnings to fill the block.'
+    'Zero or more of mise/book/skill/friction/refactor/spillover lines, each is one learning. "nothing-new: true" is a correct and welcome answer \u2014 never invent learnings to fill the block.'
   ];
   return lines.filter((l) => l !== null).join("\n");
 }
@@ -25470,6 +25516,7 @@ ${line}
 function formatRawTaggedLine(note) {
   if (note.kind === "book") return `[book] ${note.body}`;
   if (note.kind === "friction") return `[friction] ${note.body}`;
+  if (note.kind === "refactor") return `[refactor] ${note.body}`;
   if (note.kind === "spillover") return `[spillover \xB7 from ${note.spillover_craft ?? "unknown"}] ${note.body}`;
   return note.body;
 }
@@ -25528,16 +25575,20 @@ function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) 
     instructions: FOLD_INSTRUCTIONS
   };
 }
-var COVERS_RE, DISTILLED_RE, HELD_SEAT_CLAUSE_RE, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
+var COVERS_RE, DISTILLED_RE, READY_RE, READY_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
     init_remote();
     COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
     DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
+    READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
+    READY_CLAUSE_RE = /\s*·\s*ready:\s*\S+\s+by\s+\S+/;
     HELD_SEAT_CLAUSE_RE = /·\s*last held:\s*(\S+)(?:\s+by\s+\S+)?/i;
+    FOLD_READY_THRESHOLD = 3;
+    WEEK_MS = 7 * 24 * 60 * 6e4;
     NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
-    KV_RE = /^(mise|book|skill|friction):\s*(.+)$/;
+    KV_RE = /^(mise|book|skill|friction|refactor):\s*(.+)$/;
     SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
     MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
     RAW_NOTES_HEADING = "## Raw notes (unfolded)";
@@ -50259,7 +50310,7 @@ function craftRosterContext(config2, store, env = process.env, cwd = process.cwd
     now - DISPATCH_RATE_WINDOW_MS,
     roster.map((c) => c.slug)
   );
-  return formatRosterContext(roster, cwd, rate);
+  return formatRosterContext(roster, cwd, rate, now);
 }
 function buildServer(store, agentId, config2) {
   const cfg = config2 ?? loadConfig();
@@ -52268,10 +52319,15 @@ function cmdCraft(argv) {
       const cwd = process.cwd();
       for (const c of roster) {
         const distilled = c.distilled ? `distilled ${c.distilled}` : "never distilled";
-        const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)` : "";
+        const foldReady = c.pendingNotes >= FOLD_READY_THRESHOLD ? " \u2014 ready to fold" : "";
+        const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)${foldReady}` : "";
         const synced = fs28.existsSync(craftAgentPath(cwd, c.slug)) ? "" : ", brief-only here";
-        out2(`${c.slug}	[${c.scope}${synced}]	${c.covers ?? "no covers stated"}	${distilled}${pending}`);
+        const readiness = c.ready ? `ready (execute) \u2014 ${c.ready.at} by ${c.ready.by}` : "plan-mode only \u2014 not yet marked ready for service";
+        out2(`${c.slug}	[${c.scope}${synced}]	${readiness}	${c.covers ?? "no covers stated"}	${distilled}${pending}`);
       }
+      const distilledCount = booksDistilledRecently(roster, Date.now());
+      out2(`
+${distilledCount} book(s) distilled in the last 7 days.`);
       const orphans = store.orphanCraftBriefSlugs(roster.map((c) => c.slug));
       if (orphans.length > 0) {
         out2("");
@@ -52280,6 +52336,31 @@ function cmdCraft(argv) {
         );
         for (const o of orphans) out2(`  "${o.slug}" \u2014 ${o.count} brief(s)`);
       }
+      return;
+    }
+    if (sub === "ready" || sub === "unready") {
+      const slug = argv[1];
+      if (!slug) fail(`usage: hands craft ${sub} <slug>`);
+      const files = craftFiles(slug);
+      if (!fs28.existsSync(files.book)) {
+        fail(`unknown craft "${files.slug}" \u2014 no book found for it (\`hands craft ls\` for the roster)`);
+      }
+      const raw = fs28.readFileSync(files.book, "utf8");
+      if (sub === "unready") {
+        fs28.writeFileSync(files.book, stampCraftReadiness(raw, null));
+        out2(`\u2714 "${files.slug}" reverted to plan-mode only`);
+        return;
+      }
+      const agentId = resolveAgentId();
+      const at = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+      fs28.writeFileSync(files.book, stampCraftReadiness(raw, { at, by: agentId }));
+      out2(`\u2714 "${files.slug}" marked ready for service (execute mode) \u2014 ${at} by ${agentId}`);
+      if (!isSous(agentId)) {
+        out2(
+          `  note: this is the sous's call once a sous pane exists (hands#87/#171) \u2014 recorded as set by "${agentId}" for now, hand-operable until then.`
+        );
+      }
+      out2("  a synced Agent dispatch picks this up on the next `hands craft sync`; `hands craft brief --mode execute` works immediately.");
       return;
     }
     if (sub === "promote" || sub === "localize") {
@@ -52409,7 +52490,14 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
           `unknown craft "${files.slug}" \u2014 no book found for it` + (slugs.length === 0 ? " (no crafts founded yet \u2014 /hands:crafts surveys a repo for the ones worth establishing)" : nearest.length > 0 ? `. Closest on the roster: ${nearest.join(", ")}` : "") + " \u2014 `hands craft ls` for the full roster. Not recording a dispatch for it."
         );
       }
+      const bookRaw = fs28.existsSync(files.book) ? fs28.readFileSync(files.book, "utf8") : null;
+      const header = parseCraftHeader(bookRaw);
       if (mode === "execute") {
+        if (!header.ready) {
+          fail(
+            `"${files.slug}" is not ready for execute-mode dispatch \u2014 no readiness judgment on file (plan mode only). \`hands craft ready ${files.slug}\` is how a craft graduates, once its book/mise are solid \u2014 that call is the sous's (hands#87/#171), not this command's.`
+          );
+        }
         const open = store.openExecuteBrief(files.slug, cwd);
         if (open) {
           fail(
@@ -52429,8 +52517,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
         ticketId
       });
       const brief = store.getCraftBrief(briefId);
-      const bookRaw = fs28.existsSync(files.book) ? fs28.readFileSync(files.book, "utf8") : null;
-      out2(composeChit(brief, parseCraftHeader(bookRaw).covers, cfg.usage.mode));
+      out2(composeChit(brief, header.covers, cfg.usage.mode));
       return;
     }
     if (sub === "mise") {
@@ -52488,7 +52575,9 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       out2(`\u2714 folded "${files.slug}" through note #${through}, lease released`);
       return;
     }
-    fail("usage: hands craft <ls|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]");
+    fail(
+      "usage: hands craft <ls|ready|unready|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]"
+    );
   } finally {
     store.close();
   }

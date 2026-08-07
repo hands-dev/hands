@@ -8,7 +8,9 @@
  *   hands register [path]     enroll a kitchen so it resolves by name
  *   hands init                per-repo config scaffold
  *   hands books <url>         attach the books (durable journal) to this repo's config
- *   hands craft ls             the craft roster — scope, covers, distilled, pending notes
+ *   hands craft ls             the craft roster — scope, ready/plan-only, covers, distilled, notes
+ *   hands craft ready <s>      mark ready for service (execute mode) — sous-owned once one exists
+ *   hands craft unready <s>    revert to plan-mode only
  *   hands craft sync           materialize crafts as real Agent types + Skills (one-call dispatch)
  *   hands craft sweep-headers  drop retired "last held: DATE by AGENT" ownership clauses (hands#167)
  *   hands craft promote <s>    move a personal craft to the repo-shared tier
@@ -17,6 +19,7 @@
  *                              itself immediately on harvest — nothing to distill there)
  *   hands craft brief <s>      dispatch: open a brief, print the chit (for a general-purpose Agent)
  *                              [--ticket <id>] names the tasks.id it's for, for the dashboard
+ *                              [--mode execute] only if the craft is marked ready (hands craft ready)
  *   hands craft mise <id>      a craft sub-agent's first call: prints its book/mise/skill as JSON
  *   hands craft fold <s>       acquire the fold lease, print pending notes to distill (this also
  *                              catches up any mise notes that missed their immediate write)
@@ -41,7 +44,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import * as os from "node:os";
 import { CONFIG_BASENAME, loadConfig, userConfigPath } from "./config.js";
-import { resolveAgentId } from "./identity.js";
+import { isSous, resolveAgentId } from "./identity.js";
 import { dbPath, repoInfo } from "./paths.js";
 import { pathsReport } from "./server.js";
 import {
@@ -81,15 +84,18 @@ import {
   validateJournal,
 } from "./remote.js";
 import {
+  booksDistilledRecently,
   buildFoldContext,
   composeChit,
   craftAgentPath,
   craftKnown,
+  FOLD_READY_THRESHOLD,
   listCrafts,
   materializeCraftAgents,
   nearestCraftSlugs,
   parseCraftHeader,
   readCraftFileCapped,
+  stampCraftReadiness,
   sweepHeldSeatHeader,
 } from "./crafts.js";
 import {
@@ -346,14 +352,22 @@ function cmdCraft(argv: string[]): void {
       const cwd = process.cwd();
       for (const c of roster) {
         const distilled = c.distilled ? `distilled ${c.distilled}` : "never distilled";
-        const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)` : "";
+        const foldReady = c.pendingNotes >= FOLD_READY_THRESHOLD ? " — ready to fold" : "";
+        const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)${foldReady}` : "";
         // "brief-only" (not "not yet synced") — a personal or freshly-founded craft is fully
         // dispatchable right now via `hands craft brief`; it's only the one-call Agent-tool path
         // that needs `hands craft sync` first. The old wording read as "not available" and
         // suppressed dispatch (hands#167).
         const synced = fs.existsSync(craftAgentPath(cwd, c.slug)) ? "" : ", brief-only here";
-        out(`${c.slug}\t[${c.scope}${synced}]\t${c.covers ?? "no covers stated"}\t${distilled}${pending}`);
+        // hands#92: readiness is a JUDGMENT (hands craft ready, sous-owned) — never inferred
+        // from synced/distilled state. Legible reason, not a mystery, when it's not set.
+        const readiness = c.ready
+          ? `ready (execute) — ${c.ready.at} by ${c.ready.by}`
+          : "plan-mode only — not yet marked ready for service";
+        out(`${c.slug}\t[${c.scope}${synced}]\t${readiness}\t${c.covers ?? "no covers stated"}\t${distilled}${pending}`);
       }
+      const distilledCount = booksDistilledRecently(roster, Date.now());
+      out(`\n${distilledCount} book(s) distilled in the last 7 days.`);
       const orphans = store.orphanCraftBriefSlugs(roster.map((c) => c.slug));
       if (orphans.length > 0) {
         out("");
@@ -363,6 +377,38 @@ function cmdCraft(argv: string[]): void {
         );
         for (const o of orphans) out(`  "${o.slug}" — ${o.count} brief(s)`);
       }
+      return;
+    }
+
+    if (sub === "ready" || sub === "unready") {
+      // hands#92: execute-mode's trust bar is a JUDGMENT ("the sous has deemed this craft ready
+      // for service"), not a mechanical fact — so this command records that judgment rather than
+      // computing one. Sous-owned once a sous pane exists (hands#87/#171 — "stewards crafts");
+      // hand-operable by anyone until then, but the stamp always names who actually called it, so
+      // that's never ambiguous after the fact.
+      const slug = argv[1];
+      if (!slug) fail(`usage: hands craft ${sub} <slug>`);
+      const files = craftFiles(slug!);
+      if (!fs.existsSync(files.book)) {
+        fail(`unknown craft "${files.slug}" — no book found for it (\`hands craft ls\` for the roster)`);
+      }
+      const raw = fs.readFileSync(files.book, "utf8");
+      if (sub === "unready") {
+        fs.writeFileSync(files.book, stampCraftReadiness(raw, null));
+        out(`✔ "${files.slug}" reverted to plan-mode only`);
+        return;
+      }
+      const agentId = resolveAgentId();
+      const at = new Date().toISOString().slice(0, 10);
+      fs.writeFileSync(files.book, stampCraftReadiness(raw, { at, by: agentId }));
+      out(`✔ "${files.slug}" marked ready for service (execute mode) — ${at} by ${agentId}`);
+      if (!isSous(agentId)) {
+        out(
+          `  note: this is the sous's call once a sous pane exists (hands#87/#171) — recorded as set ` +
+            `by "${agentId}" for now, hand-operable until then.`,
+        );
+      }
+      out("  a synced Agent dispatch picks this up on the next `hands craft sync`; `hands craft brief --mode execute` works immediately.");
       return;
     }
 
@@ -523,7 +569,20 @@ function cmdCraft(argv: string[]): void {
             " — `hands craft ls` for the full roster. Not recording a dispatch for it.",
         );
       }
+      const bookRaw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
+      const header = parseCraftHeader(bookRaw);
       if (mode === "execute") {
+        // hands#92: "not ready → plan mode, no exceptions" — enforced HERE, the one place every
+        // execute-mode request passes through (the generated craft-agent template only ever asks
+        // for execute when it already saw `ready` set at sync time, but a hand-typed `--mode
+        // execute` must be refused just as hard, or the gate is decorative).
+        if (!header.ready) {
+          fail(
+            `"${files.slug}" is not ready for execute-mode dispatch — no readiness judgment on file ` +
+              `(plan mode only). \`hands craft ready ${files.slug}\` is how a craft graduates, once ` +
+              "its book/mise are solid — that call is the sous's (hands#87/#171), not this command's.",
+          );
+        }
         const open = store.openExecuteBrief(files.slug, cwd);
         if (open) {
           fail(
@@ -544,10 +603,9 @@ function cmdCraft(argv: string[]): void {
         ticketId,
       });
       const brief = store.getCraftBrief(briefId)!;
-      const bookRaw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
       // Raw chit text on stdout, nothing wrapped around it — the caller pastes this straight
       // into the Agent tool's prompt (or captures it via $(...) in a shell).
-      out(composeChit(brief, parseCraftHeader(bookRaw).covers, cfg.usage.mode));
+      out(composeChit(brief, header.covers, cfg.usage.mode));
       return;
     }
 
@@ -619,7 +677,9 @@ function cmdCraft(argv: string[]): void {
       return;
     }
 
-    fail("usage: hands craft <ls|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]");
+    fail(
+      "usage: hands craft <ls|ready|unready|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]",
+    );
   } finally {
     store.close();
   }
