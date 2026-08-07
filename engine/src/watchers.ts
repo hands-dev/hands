@@ -143,15 +143,19 @@ function allPids(): number[] | null {
  */
 export function watchersFor(
   stationId: string,
-  opts?: { notifyPath?: string; worktree?: string },
+  opts: { notifyPath: string; worktree?: string },
 ): WatcherReport {
   const pids = allPids();
   if (pids === null) {
     return { stationId, watchers: null, inboxAlive: null };
   }
   const watchers: Watcher[] = [];
-  const inboxNeedle = opts?.notifyPath ?? `${stationId}.notify`;
-  const worktree = opts?.worktree;
+  // Anchored to the RESOLVED path, never a bare `<id>.notify` substring
+  // (hands#202) — station ids repeat across every repo/coordination-dir on a
+  // machine, so an unanchored needle matches a same-numbered station's tail
+  // in a completely unrelated kitchen.
+  const inboxNeedle = opts.notifyPath;
+  const worktree = opts.worktree;
   const mine = selfLineage();
 
   for (const pid of pids) {
@@ -196,9 +200,9 @@ export function watchersFor(
  */
 export function quiesce(
   stationId: string,
-  opts?: { notifyPath?: string; worktree?: string; keepInbox?: boolean },
+  opts: { notifyPath: string; worktree?: string; keepInbox?: boolean },
 ): { stopped: Watcher[]; kept: Watcher[]; supported: boolean } {
-  const report = watchersFor(stationId, { notifyPath: opts?.notifyPath, worktree: opts?.worktree });
+  const report = watchersFor(stationId, { notifyPath: opts.notifyPath, worktree: opts.worktree });
   if (report.watchers === null) return { stopped: [], kept: [], supported: false };
   const keepInbox = opts?.keepInbox ?? true;
 
@@ -219,15 +223,19 @@ export function quiesce(
   return { stopped, kept, supported: true };
 }
 
-/**
- * Cheap liveness probe for one station's wake signal, for the board.
- * `null` means "couldn't look" — which must not render as "fine".
- */
-export function inboxMonitorAlive(stationId: string, notifyPath?: string): boolean | null {
+/** Escape a path for use inside a `pgrep -f` regex — it's matched as a pattern, not a literal string. */
+function escapeForPgrep(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function inboxMonitorAliveOnce(stationId: string, notifyPath: string): boolean | null {
   if (process.platform !== "linux") {
-    // pgrep exists on macOS; fall back to it rather than reporting a false negative
+    // pgrep exists on macOS; fall back to it rather than reporting a false negative.
+    // Anchored to the RESOLVED path (hands#202) — the bare `<id>.notify` pattern this
+    // used to build matched a same-numbered station's tail in a different
+    // repo/coordination-dir anywhere on the machine.
     try {
-      const out = execFileSync("pgrep", ["-f", `tail -F .*${stationId}\\.notify`], {
+      const out = execFileSync("pgrep", ["-f", `tail -F .*${escapeForPgrep(notifyPath)}`], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 5000,
@@ -239,4 +247,26 @@ export function inboxMonitorAlive(stationId: string, notifyPath?: string): boole
     }
   }
   return watchersFor(stationId, { notifyPath }).inboxAlive;
+}
+
+/**
+ * Cheap liveness probe for one station's wake signal, for the board.
+ * `null` means "couldn't look" — which must not render as "fine".
+ *
+ * A single miss is retried once, synchronously, after a short delay
+ * (hands#202) — the underlying scan (`/proc` readdir + per-pid cmdline reads,
+ * or `pgrep`) reads the live process table, which under heavy concurrent
+ * process churn (many processes forking/exiting at once, e.g. a full parallel
+ * test suite) can transiently fail to enumerate a pid that is, in fact, still
+ * running. Never retries a positive result — an "alive" finding is
+ * unambiguous and retrying it would only add latency with no benefit. This
+ * does not retry a `null` (genuinely can't inspect this platform) into a
+ * different `null` — only a `false` gets a second look.
+ */
+export function inboxMonitorAlive(stationId: string, notifyPath: string): boolean | null {
+  const first = inboxMonitorAliveOnce(stationId, notifyPath);
+  if (first !== false) return first;
+  // Synchronous, no subprocess — this function's callers are all sync.
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  return inboxMonitorAliveOnce(stationId, notifyPath);
 }

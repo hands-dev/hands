@@ -458,7 +458,8 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           // this. A station whose inbox tail died looks exactly like one with
           // nothing to do — it simply never wakes again. null = couldn't look,
           // which must not read as fine.
-          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id) : undefined,
+          // hands#202 — anchored to p.id's resolved path, never a bare substring.
+          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id, notifyPath(p.id)) : undefined,
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -732,7 +733,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         // the write itself; this additionally checks whether a Monitor is
         // even armed on sous.notify, so "sous.enabled but nobody ran
         // /loop /hands:sous" surfaces loudly instead of reading as delivered.
-        if (inboxMonitorAlive("sous") === false) {
+        if (inboxMonitorAlive("sous", notifyPath("sous")) === false) {
           sousWarning =
             "sous.enabled is true but no inbox monitor is tailing sous.notify — this escalation was " +
             "recorded but nothing is running /loop /hands:sous to see it";
@@ -934,7 +935,9 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       // self-heal (every pass, or the fallback heartbeat at worst) will pick
       // it up — but the dispatcher gets told rather than assuming delivery.
       const monitorDead =
-        isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee) === false;
+        isStation(assignee) &&
+        (assigneePeer?.alive ?? true) &&
+        inboxMonitorAlive(assignee, notifyPath(assignee)) === false;
       const monitorWarning = monitorDead
         ? `${assignee}'s inbox monitor is dead — it cannot be woken until its next pass (self-heal on the fallback ` +
           "heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a " +

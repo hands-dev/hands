@@ -125,3 +125,44 @@ linuxOnly("quiesce", () => {
     expect(inboxMonitorAlive("station-9", notify)).toBe(false);
   });
 });
+
+linuxOnly("inboxMonitorAlive — anchored to the resolved path, not a bare id substring (hands#202)", () => {
+  it("the anchored positive: a real tail for THIS station registers", async () => {
+    detach(`tail -F -n0 ${notify}`);
+    await settle();
+    expect(inboxMonitorAlive("station-9", notify)).toBe(true);
+  });
+
+  it(
+    "the decoy negative: a real tail for a DIFFERENT station's notify path — same station id, " +
+      "different resolved path, the exact shape of two same-numbered stations in two different " +
+      "kitchens on one machine — must NOT register as this station's own",
+    async () => {
+      const otherDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "hands-watch-other-")));
+      const otherNotify = path.join(otherDir, "station-9.notify"); // SAME id, different path
+      fs.writeFileSync(otherNotify, "");
+      try {
+        detach(`tail -F -n0 ${otherNotify}`); // armed for the OTHER kitchen's station-9 only
+        await settle();
+        // The bare substring "station-9.notify" is present in the decoy's command line too —
+        // an unanchored check would find it and report alive. Anchored to `notify` (this
+        // station's own path), it must not.
+        expect(inboxMonitorAlive("station-9", notify)).toBe(false);
+        expect(watchersFor("station-9", { notifyPath: notify, worktree: dir }).inboxAlive).toBe(false);
+      } finally {
+        fs.rmSync(otherDir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("catches a freshly-spawned tail without the test's own settle() wait — the retry's actual job", async () => {
+    // Deliberately no `await settle()` here, unlike every other test in this file — this is
+    // exactly the fresh-process-registration window the bounded retry (hands#202) exists to
+    // absorb. Best-effort: this exercises the real timing gap the retry targets, but a single
+    // local run passing is not a guarantee against every possible CI-load scenario — see the
+    // PR notes for why a fully deterministic reproduction of the transient scan-miss isn't
+    // provided here.
+    detach(`tail -F -n0 ${notify}`);
+    expect(inboxMonitorAlive("station-9", notify)).toBe(true);
+  });
+});

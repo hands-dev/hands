@@ -46,7 +46,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import * as os from "node:os";
 import { CONFIG_BASENAME, loadConfig, userConfigPath } from "./config.js";
 import { isSous, resolveAgentId } from "./identity.js";
-import { dbPath, repoInfo } from "./paths.js";
+import { dbPath, notifyPath, repoInfo } from "./paths.js";
 import { pathsReport } from "./server.js";
 import {
   addStations,
@@ -1098,8 +1098,13 @@ function cmdMonitors(argv: string[]): void {
   if (stations.length === 0) fail(targets.length ? `no such station: ${targets.join(", ")}` : "no stations open");
 
   for (const station of stations) {
+    // hands#202 — anchor to THIS station's resolved notify path, never a bare
+    // `<id>.notify` substring (station ids repeat across every kitchen on
+    // the machine). Every station shares one coordinationDir per repo, so
+    // info.repoRoot (not station.dir) is the correct cwd to resolve it from.
+    const notify = notifyPath(station.id, process.env, info.repoRoot);
     if (flags.has("--clear")) {
-      const res = quiesce(station.id, { worktree: station.dir, keepInbox: !flags.has("--all") });
+      const res = quiesce(station.id, { notifyPath: notify, worktree: station.dir, keepInbox: !flags.has("--all") });
       if (!res.supported) {
         out(`${station.id}: cannot inspect processes on this platform — nothing stopped`);
         continue;
@@ -1109,7 +1114,7 @@ function cmdMonitors(argv: string[]): void {
       for (const w of res.kept) out(`    kept    pid ${w.pid}  ${w.command}${w.isInbox ? "  (wake signal — use --all to stop it too)" : ""}`);
       continue;
     }
-    const report = watchersFor(station.id, { worktree: station.dir });
+    const report = watchersFor(station.id, { notifyPath: notify, worktree: station.dir });
     if (report.watchers === null) {
       out(`${station.id}: UNKNOWN — cannot inspect processes on this platform`);
       continue;
@@ -1185,6 +1190,7 @@ function cmdAttest(argv: string[]): void {
       agentId,
       resumingTickets: resuming,
       offline: flag(argv, "--offline"),
+      notifyPath: notifyPath(agentId),
     });
 
     store.setAttestation({

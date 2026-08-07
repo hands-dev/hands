@@ -240,18 +240,13 @@ describe("silent-failure surfacing (hands#173, hands#183)", () => {
     expect(res.body.warning).toContain("station-1");
   });
 
-  // station-90, not station-1: pgrep matches ANY process system-wide on the
-  // notify substring, and vitest runs test FILES in parallel — doctor.test.ts
-  // provisions a REAL "station-1" worktree with its own real tail processes,
-  // so sharing that id here raced against it. A distinctive id (matching
-  // watchers.test.ts's own "station-9" for the same reason) avoids it.
   it("a healthy assignee (real pid AND a real armed monitor) gets no warning", async () => {
     const expo = await connect("expo");
-    stores[0]!.registerAgent({ id: "station-90", cwd: "/", pid: process.pid });
-    const notify = path.join(home, "station-90.notify");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
+    const notify = path.join(home, "station-1.notify");
     detachTail(notify);
-    await waitForMonitorAlive("station-90", notify);
-    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-90" });
+    await waitForMonitorAlive("station-1", notify);
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
     expect(res.body.warning).toBeUndefined();
   });
 
@@ -262,11 +257,11 @@ describe("silent-failure surfacing (hands#173, hands#183)", () => {
       // process alive, but no tail on its notify file — the actual bug: a
       // live session that has gone deaf looks identical to a healthy one
       // everywhere except here.
-      stores[0]!.registerAgent({ id: "station-90", cwd: "/", pid: process.pid });
-      const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-90" });
+      stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
+      const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
       expect(res.body.ok).toBe(true); // NOT refused — the ticket is durably created regardless
-      expect(res.body.assignedTo).toBe("station-90");
-      expect(res.body.warning).toContain("station-90");
+      expect(res.body.assignedTo).toBe("station-1");
+      expect(res.body.warning).toContain("station-1");
       expect(res.body.warning).toContain("monitor");
     },
   );
@@ -335,18 +330,15 @@ describe("cross-peer-id mention warning (hands#170)", () => {
     const expo = await connect("expo");
     // A real, alive pid AND a real armed monitor — isolates this test to the
     // leak-warning path only, no interference from the unrelated hands#183
-    // dead-pid or hands#90 dead-monitor warnings. station-91, not station-1:
-    // doctor.test.ts provisions a REAL "station-1" worktree with its own real
-    // tail processes, and vitest runs test files in parallel — pgrep matches
-    // system-wide, so sharing that id here would race against it.
-    stores[0]!.registerAgent({ id: "station-91", cwd: "/", pid: process.pid });
-    const notify = path.join(home, "station-91.notify");
+    // dead-pid or hands#90 dead-monitor warnings.
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
+    const notify = path.join(home, "station-1.notify");
     detachTail(notify);
-    await waitForMonitorAlive("station-91", notify);
+    await waitForMonitorAlive("station-1", notify);
     const res = await call(expo, "hands_delegate", {
       title: "fix the bug",
-      body: "station-91, confirm your diff to main.ts is limited to the digest line",
-      to: "station-91",
+      body: "station-1, confirm your diff to main.ts is limited to the digest line",
+      to: "station-1",
     });
     expect(res.body.warning).toBeUndefined();
   });

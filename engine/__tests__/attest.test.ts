@@ -43,7 +43,13 @@ afterEach(() => {
 });
 
 const assess = (over: Partial<Parameters<typeof assessReadiness>[0]> = {}) =>
-  assessReadiness({ worktree, agentId: "station-1", offline: true, ...over });
+  assessReadiness({
+    worktree,
+    agentId: "station-1",
+    offline: true,
+    notifyPath: path.join(env.HANDS_HOME as string, "station-1.notify"),
+    ...over,
+  });
 
 const check = (r: ReturnType<typeof assess>, name: string) => r.checks.find((c) => c.name === name);
 
@@ -103,7 +109,15 @@ describe("assessReadiness — nothing missing", () => {
   it("passes the lock check once claimed", () => {
     claimWorktree({ worktree, agentId: "station-1", env, cwd: origin });
     // lock lives under the repo's coordination dir; assess reads it via readLock
-    const c = check(assessReadiness({ worktree, agentId: "station-1", offline: true }), "lock");
+    const c = check(
+      assessReadiness({
+        worktree,
+        agentId: "station-1",
+        offline: true,
+        notifyPath: path.join(env.HANDS_HOME as string, "station-1.notify"),
+      }),
+      "lock",
+    );
     expect([true, false]).toContain(c?.ok); // environment-dependent; must not throw
   });
 

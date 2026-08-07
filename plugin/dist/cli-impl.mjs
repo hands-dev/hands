@@ -23740,8 +23740,8 @@ function watchersFor(stationId, opts) {
     return { stationId, watchers: null, inboxAlive: null };
   }
   const watchers = [];
-  const inboxNeedle = opts?.notifyPath ?? `${stationId}.notify`;
-  const worktree = opts?.worktree;
+  const inboxNeedle = opts.notifyPath;
+  const worktree = opts.worktree;
   const mine = selfLineage();
   for (const pid of pids) {
     if (mine.has(pid)) continue;
@@ -23764,7 +23764,7 @@ function watchersFor(stationId, opts) {
   };
 }
 function quiesce(stationId, opts) {
-  const report = watchersFor(stationId, { notifyPath: opts?.notifyPath, worktree: opts?.worktree });
+  const report = watchersFor(stationId, { notifyPath: opts.notifyPath, worktree: opts.worktree });
   if (report.watchers === null) return { stopped: [], kept: [], supported: false };
   const keepInbox = opts?.keepInbox ?? true;
   const stopped = [];
@@ -23782,10 +23782,13 @@ function quiesce(stationId, opts) {
   }
   return { stopped, kept, supported: true };
 }
-function inboxMonitorAlive(stationId, notifyPath2) {
+function escapeForPgrep(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function inboxMonitorAliveOnce(stationId, notifyPath2) {
   if (process.platform !== "linux") {
     try {
-      const out3 = execFileSync4("pgrep", ["-f", `tail -F .*${stationId}\\.notify`], {
+      const out3 = execFileSync4("pgrep", ["-f", `tail -F .*${escapeForPgrep(notifyPath2)}`], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 5e3
@@ -23796,6 +23799,12 @@ function inboxMonitorAlive(stationId, notifyPath2) {
     }
   }
   return watchersFor(stationId, { notifyPath: notifyPath2 }).inboxAlive;
+}
+function inboxMonitorAlive(stationId, notifyPath2) {
+  const first = inboxMonitorAliveOnce(stationId, notifyPath2);
+  if (first !== false) return first;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  return inboxMonitorAliveOnce(stationId, notifyPath2);
 }
 var LOOP_PATTERNS, WATCHER_BINARIES, SHELLS;
 var init_watchers = __esm({
@@ -50549,7 +50558,8 @@ ${input.body}`, [agentId, ...recipients]);
           // this. A station whose inbox tail died looks exactly like one with
           // nothing to do — it simply never wakes again. null = couldn't look,
           // which must not read as fine.
-          inboxMonitorAlive: /^station-\d+$/.test(p2.id) ? inboxMonitorAlive(p2.id) : void 0
+          // hands#202 — anchored to p.id's resolved path, never a bare substring.
+          inboxMonitorAlive: /^station-\d+$/.test(p2.id) ? inboxMonitorAlive(p2.id, notifyPath(p2.id)) : void 0
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -50761,7 +50771,7 @@ ${input.body}`, [agentId, ...recipients]);
           wokeSous = result.notified.includes("sous");
         } catch {
         }
-        if (inboxMonitorAlive("sous") === false) {
+        if (inboxMonitorAlive("sous", notifyPath("sous")) === false) {
           sousWarning = "sous.enabled is true but no inbox monitor is tailing sous.notify \u2014 this escalation was recorded but nothing is running /loop /hands:sous to see it";
         }
       }
@@ -50895,7 +50905,7 @@ ${input.body}`, [agentId, ...recipients]);
       deliverWake([assignee], { from: agentId, subject: "task" });
       const assigneePeer = store.listPeers().find((p) => p.id === assignee);
       const deadWarning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
-      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee) === false;
+      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee, notifyPath(assignee)) === false;
       const monitorWarning = monitorDead ? `${assignee}'s inbox monitor is dead \u2014 it cannot be woken until its next pass (self-heal on the fallback heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a while; run \`hands doctor\` to confirm, or restart the station to fix it now.` : void 0;
       const leakWarning = crossPeerMentionWarning(`${input.title}
 ${input.body ?? ""}`, [agentId, assignee]);
@@ -51982,7 +51992,7 @@ function runDoctor(opts) {
           blockedStations.push(station.id);
         }
       }
-      const monitor = inboxMonitorAlive(station.id);
+      const monitor = inboxMonitorAlive(station.id, notifyPath(station.id, env, info.repoRoot));
       if (monitor === false) {
         checks.push({
           name: `${station.id}.monitor`,
@@ -52917,8 +52927,9 @@ function cmdMonitors(argv) {
   );
   if (stations.length === 0) fail(targets.length ? `no such station: ${targets.join(", ")}` : "no stations open");
   for (const station of stations) {
+    const notify2 = notifyPath(station.id, process.env, info.repoRoot);
     if (flags.has("--clear")) {
-      const res = quiesce(station.id, { worktree: station.dir, keepInbox: !flags.has("--all") });
+      const res = quiesce(station.id, { notifyPath: notify2, worktree: station.dir, keepInbox: !flags.has("--all") });
       if (!res.supported) {
         out2(`${station.id}: cannot inspect processes on this platform \u2014 nothing stopped`);
         continue;
@@ -52928,7 +52939,7 @@ function cmdMonitors(argv) {
       for (const w of res.kept) out2(`    kept    pid ${w.pid}  ${w.command}${w.isInbox ? "  (wake signal \u2014 use --all to stop it too)" : ""}`);
       continue;
     }
-    const report = watchersFor(station.id, { worktree: station.dir });
+    const report = watchersFor(station.id, { notifyPath: notify2, worktree: station.dir });
     if (report.watchers === null) {
       out2(`${station.id}: UNKNOWN \u2014 cannot inspect processes on this platform`);
       continue;
@@ -52978,7 +52989,8 @@ function cmdAttest(argv) {
       worktree: process.cwd(),
       agentId,
       resumingTickets: resuming,
-      offline: flag(argv, "--offline")
+      offline: flag(argv, "--offline"),
+      notifyPath: notifyPath(agentId)
     });
     store.setAttestation({
       agentId,
