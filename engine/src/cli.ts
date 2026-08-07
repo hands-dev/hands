@@ -59,6 +59,7 @@ import { idleMs, latestSessionId, recentActivity, transcriptDir } from "./statio
 import { runDoctor } from "./doctor.js";
 import { claimWorktree, releaseWorktree } from "./worktree-lock.js";
 import { quiesce, watchersFor } from "./watchers.js";
+import { readJournal, readPreviousPage } from "./journal-read.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
@@ -987,6 +988,43 @@ function cmdMonitors(argv: string[]): void {
   }
 }
 
+/**
+ * `hands journal read [--date YYYY-MM-DD] [--previous] [--limit N] [--pull]`
+ *
+ * The books were write-only from the agent side until this existed (hands#156).
+ * `--previous` is the shift-start read: the last page strictly before today,
+ * which handles a Monday reading Friday's close without date arithmetic.
+ */
+function cmdJournal(argv: string[]): void {
+  const sub = argv[0];
+  if (sub !== "read") fail("usage: hands journal read [--date YYYY-MM-DD] [--previous] [--limit N] [--pull]");
+  const rest = argv.slice(1);
+  const date = strOpt(rest, "--date");
+  const limitRaw = strOpt(rest, "--limit");
+  const result = flag(rest, "--previous")
+    ? readPreviousPage({})
+    : readJournal({
+        date,
+        limit: limitRaw ? Number.parseInt(limitRaw, 10) || 1 : 1,
+        pull: flag(rest, "--pull"),
+        maxBytes: flag(rest, "--json") ? 24_000 : 200_000,
+      });
+
+  if (flag(rest, "--json")) {
+    out(JSON.stringify(result, null, 2));
+    return;
+  }
+  if (!result.ok) {
+    out(`no page read: ${result.reason}`);
+    if (result.available?.length) out(`  available: ${result.available.slice(0, 8).join(", ")}`);
+    return;
+  }
+  for (const page of result.pages) {
+    out(`\u2500\u2500\u2500\u2500 ${page.relPath}  (${page.lines} lines) \u2500\u2500\u2500\u2500`);
+    out(page.text);
+  }
+}
+
 function cmdDoctor(argv: string[]): void {
   const report = runDoctor({ fix: argv.includes("--fix") });
   for (const c of report.checks) {
@@ -1163,6 +1201,8 @@ async function main(): Promise<void> {
         return cmdDoctor(rest);
       case "claim":
         return cmdClaim(rest);
+      case "journal":
+        return cmdJournal(rest);
       case "monitors":
       case "quiesce":
         return cmdMonitors(rest);
@@ -1194,6 +1234,7 @@ async function main(): Promise<void> {
         out("  hands restart <station-N>  recycle a wedged station");
         out("  hands claim [--evict]     take exclusive ownership of this station worktree");
         out("  hands monitors [<station>] [--clear]  what a station has armed; --clear stops strays");
+        out("  hands journal read [--previous]  read the books back - last shift page");
         out("  hands version             which build is running (and whether two installs disagree)");
         out("");
         out(`  hands init                scaffold ${CONFIG_BASENAME}`);

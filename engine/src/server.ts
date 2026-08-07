@@ -40,6 +40,7 @@ import {
 import { formatRosterContext, listCrafts } from "./crafts.js";
 import { type MessageRow, Store } from "./store.js";
 import { inboxMonitorAlive } from "./watchers.js";
+import { readJournal, readPreviousPage } from "./journal-read.js";
 
 const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
 
@@ -943,6 +944,42 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         }
         store.journal("digest.note", { text: input.text, at: Date.now() });
         return asToolResult({ ok: true, rendersOn: "next journal sync" });
+      },
+    );
+
+    server.registerTool(
+      "hands_journal_read",
+      {
+        title: "Read the books back — a past day's digest page (expo only)",
+        description:
+          "Read a daily digest page from the durable journal. WITHOUT a date, returns the most " +
+          "recent page that exists — which at the start of a shift is the previous shift's " +
+          "close-out, the thing you want before dispatching anything. The books were write-only " +
+          "from the agent side until this existed (hands#156): one line in yesterday's page has " +
+          "already settled a question three agents spent an afternoon re-deriving. Read-only and " +
+          "local — never blocks on the network.",
+        inputSchema: {
+          date: z
+            .string()
+            .regex(/^\d{4}-\d{2}-\d{2}$/)
+            .optional()
+            .describe("YYYY-MM-DD; omit for the most recent page"),
+          previous: z
+            .boolean()
+            .optional()
+            .describe("the last page STRICTLY BEFORE today — the shift-start read"),
+          limit: z.number().int().min(1).max(5).optional(),
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        const result = input.previous
+          ? readPreviousPage({ cwd: process.cwd() })
+          : readJournal({ date: input.date, limit: input.limit, cwd: process.cwd() });
+        // A missing page is a fact, not a failure — "first shift" and "books
+        // unconfigured" are both normal states a caller should read and move on from.
+        return asToolResult(result);
       },
     );
 
