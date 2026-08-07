@@ -136,8 +136,16 @@ function branchExists(cwd: string, branch: string): boolean {
   }
 }
 
-/** Which skill loop a spawned session comes up in. */
-export type LaunchMode = "expo" | "station";
+/**
+ * Which skill loop a spawned session comes up in. `sous` (hands#87/#93) has no
+ * managed worktree/dir convention of its own — unlike `expo`/`station`, its
+ * launch path never provisions anything; it runs wherever it's invoked,
+ * exactly like any other explicit `--agent-id` session already could before
+ * this existed. Where a sous SHOULD run long-term is still an open framing
+ * question (hands#91) — this doesn't answer it, it just stops requiring
+ * `HANDS_ID=sous claude ...` to be typed by hand.
+ */
+export type LaunchMode = "expo" | "station" | "sous";
 
 /**
  * Compose the paste-able launch command for a session (plugin-namespaced skill).
@@ -146,7 +154,9 @@ export type LaunchMode = "expo" | "station";
  */
 /** The skill loop a session comes up in, shared by the exec and paste paths. */
 export function launchSkill(mode: LaunchMode): string {
-  return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  if (mode === "expo") return "/loop /hands:expo";
+  if (mode === "sous") return "/loop /hands:sous";
+  return "/loop /hands:station";
 }
 
 export interface LaunchOpts {

@@ -9662,7 +9662,9 @@ function branchExists(cwd, branch) {
   }
 }
 function launchSkill(mode) {
-  return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  if (mode === "expo") return "/loop /hands:expo";
+  if (mode === "sous") return "/loop /hands:sous";
+  return "/loop /hands:station";
 }
 function launchArgs(target, mode, opts) {
   const args = [];
@@ -36286,13 +36288,24 @@ ${input.body}`, [agentId, ...recipients]);
         multiSelect: input.multiSelect,
         priorityRef: input.priority ?? null
       });
+      let wokeSous = false;
+      let sousWarning;
       if (cfg.sous.enabled) {
         try {
-          deliverWake(["sous"], { from: agentId, subject: "escalation" });
+          const result = deliverWake(["sous"], { from: agentId, subject: "escalation" });
+          wokeSous = result.notified.includes("sous");
         } catch {
         }
+        if (inboxMonitorAlive("sous") === false) {
+          sousWarning = "sous.enabled is true but no inbox monitor is tailing sous.notify \u2014 this escalation was recorded but nothing is running /loop /hands:sous to see it";
+        }
       }
-      return asToolResult({ ok: true, id: input.id, wokeSous: cfg.sous.enabled });
+      return asToolResult({
+        ok: true,
+        id: input.id,
+        wokeSous,
+        ...sousWarning ? { warning: sousWarning } : {}
+      });
     }
   );
   server.registerTool(
