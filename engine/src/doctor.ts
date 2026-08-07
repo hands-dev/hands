@@ -16,6 +16,7 @@ import {
   sessionsIn,
 } from "./sessions.js";
 import { idleMs } from "./station-logs.js";
+import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { Store } from "./store.js";
 
 /**
@@ -253,6 +254,15 @@ export function runDoctor(opts?: {
     // Who is actually running where. The bus can't answer this: it only knows
     // the ids that talk to it, and two panes sharing an id look like one busy
     // station. See sessions.ts for the two incidents that motivated it.
+    const blockedStations: string[] = [];
+    // One connection for the whole section — attestations here, craft notes
+    // below. Best-effort: a DB that can't be opened must not sink the report.
+    let store: Store | null = null;
+    try {
+      store = new Store({ env });
+    } catch {
+      /* no bus yet — checks that need it degrade, the rest still run */
+    }
     const scan = opts?.scan ?? scanClaudeSessions();
     if (scan.method === "unsupported") {
       // NOT "ok". #152's whole complaint is that doctor reported healthy when
@@ -337,6 +347,40 @@ export function runDoctor(opts?: {
         });
       }
 
+      // Readiness (hands#157). Dispatch depends on this now, so an invisible
+      // refusal is a kitchen that stalls for reasons nobody can name. Three
+      // states, and "declined" carries the station's OWN words — information
+      // only that station has, which is the whole argument for attestation over
+      // inspection.
+      const attested = store ? store.getAttestation(station.id) : null;
+      if (!attested) {
+        checks.push({
+          name: `${station.id}.ready`,
+          severity: "warn",
+          detail: "UNATTESTED — has never declared itself clean; dispatch to it is blocked. Run /hands:ready there.",
+        });
+        blockedStations.push(station.id);
+      } else if (!attested.ok) {
+        checks.push({
+          name: `${station.id}.ready`,
+          severity: "fail",
+          detail: `DECLINED — the station says: ${attested.reason ?? "(no reason recorded)"}`,
+        });
+        blockedStations.push(station.id);
+      } else {
+        const verdict = attestationValid(attested, currentWorktreeFacts(station.dir));
+        if (verdict.valid) {
+          checks.push({ name: `${station.id}.ready`, severity: "ok", detail: "attested clean and ready" });
+        } else {
+          checks.push({
+            name: `${station.id}.ready`,
+            severity: "warn",
+            detail: `attestation EXPIRED — ${verdict.reason}. Re-run /hands:ready there.`,
+          });
+          blockedStations.push(station.id);
+        }
+      }
+
       const idle = idleMs(station.dir, now);
       if (idle === null) {
         checks.push({
@@ -358,6 +402,22 @@ export function runDoctor(opts?: {
         });
       }
     }
+
+    // One line you can read without opening a station. With the gate live, this
+    // is the difference between "the kitchen is quiet" and "the kitchen cannot
+    // be given work" — states that look identical from the rail.
+    if (stations.length > 0) {
+      checks.push(
+        blockedStations.length === 0
+          ? { name: "dispatch", severity: "ok", detail: `all ${stations.length} station(s) ready` }
+          : {
+              name: "dispatch",
+              severity: "warn",
+              detail: `${blockedStations.length} of ${stations.length} station(s) BLOCKED — no tickets can go to ${blockedStations.join(", ")}`,
+            },
+      );
+    }
+    store?.close();
   }
 
   // ── crafts (hands#81/#96/#49): shadowed collisions + unfolded note backlog ──
@@ -394,9 +454,10 @@ export function runDoctor(opts?: {
     // book/skill/friction/spillover — EXPECTED to accumulate through the day, awaiting the next
     // `/hands:last-call`, not a sign nobody's watching. So this only warns once a backlog looks
     // like last-call genuinely hasn't run in a while, not on ordinary same-day accumulation.
-    let store: Store | null = null;
+    let craftStore: Store | null = null;
     try {
-      store = new Store({ env });
+      craftStore = new Store({ env });
+      const store = craftStore;
       const stale = store
         .pendingCraftSlugs()
         .map((slug) => {
@@ -416,7 +477,7 @@ export function runDoctor(opts?: {
     } catch {
       // best-effort — see comment above
     } finally {
-      store?.close();
+      craftStore?.close();
     }
   }
 

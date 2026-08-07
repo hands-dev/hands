@@ -16,6 +16,32 @@ import { cn } from "@/lib/utils";
 import type { Collision, PublicCraft, SnapshotAgent } from "../../src/snapshot.js";
 import type { TokenSeries } from "../../src/tokens.js";
 
+/**
+ * Readiness (hands#157). Dispatch depends on this, so a station that cannot be
+ * given work must LOOK different from one that is merely quiet — those two
+ * states are indistinguishable on a board that only shows activity, and that
+ * is exactly how a gated kitchen stalls for reasons nobody can name.
+ */
+function ReadyBadge({ agent }: { agent: SnapshotAgent }) {
+  if (agent.ready === "ready") return null;
+  const label =
+    agent.ready === "declined" ? "declined" : agent.ready === "expired" ? "expired" : "unattested";
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+        agent.ready === "declined"
+          ? "bg-destructive/15 text-destructive"
+          : "bg-amber-500/15 text-amber-600 dark:text-amber-500",
+      )}
+      // the station's own words, when it has them — only it knows
+      title={agent.readyReason ?? "no current attestation — dispatch to this station is blocked"}
+    >
+      {label}
+    </span>
+  );
+}
+
 function StateDot({ state }: { state: SnapshotAgent["state"] }) {
   return (
     <span
@@ -86,6 +112,7 @@ function StationCell({
           />
         ) : null}
         <span className="font-medium">{agent.sessionName ?? agent.id}</span>
+        <ReadyBadge agent={agent} />
         {agent.sessionName ? (
           <span className="truncate font-mono text-xs text-muted-foreground">{agent.id}</span>
         ) : null}
@@ -96,6 +123,11 @@ function StationCell({
           {agent.wakesLastHour}/h · {agent.wakes24h}/24h
         </span>
       </div>
+      {agent.readyReason ? (
+        <div className="mt-1 pl-4 text-xs text-destructive" title={agent.readyReason}>
+          {agent.readyReason}
+        </div>
+      ) : null}
       <div className="mt-1.5 flex items-center gap-2 pl-4 text-sm">
         <span className="min-w-0 flex-1 truncate">
           {agent.ticket ?? <span className="text-muted-foreground">standing by</span>}
@@ -139,6 +171,7 @@ export function StationsGrid({
   // stay in their existing (registration) order.
   const expo = agents.find((a) => a.id === "expo");
   const stations = agents.filter((a) => a.id !== "expo");
+  const blocked = stations.filter((a) => a.ready !== "ready");
   return (
     <Card>
       <CardHeader>
@@ -151,6 +184,21 @@ export function StationsGrid({
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/*
+          Kitchen-level readiness (hands#157). With the dispatch gate live,
+          "nothing is happening" and "nothing CAN be dispatched" look identical
+          from a board that only shows activity. This is the line you read
+          without opening a station.
+        */}
+        {blocked.length > 0 ? (
+          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+            <span className="font-medium">
+              {blocked.length} of {stations.length} station{stations.length === 1 ? "" : "s"} blocked
+            </span>{" "}
+            — no tickets can go to {blocked.map((a) => a.sessionName ?? a.id).join(", ")}. Run{" "}
+            <span className="font-mono text-xs">/hands:ready</span> there.
+          </div>
+        ) : null}
         {agents.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             No stations yet — <span className="font-mono text-xs">hands station add -n 2</span>
