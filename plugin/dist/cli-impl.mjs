@@ -583,10 +583,10 @@ function mergeDefs(...defs) {
 function cloneDef(schema) {
   return mergeDefs(schema._zod.def);
 }
-function getElementAtPath(obj, path24) {
-  if (!path24)
+function getElementAtPath(obj, path25) {
+  if (!path25)
     return obj;
-  return path24.reduce((acc, key) => acc?.[key], obj);
+  return path25.reduce((acc, key) => acc?.[key], obj);
 }
 function promiseAllObject(promisesObj) {
   const keys = Object.keys(promisesObj);
@@ -898,11 +898,11 @@ function aborted(x, startIndex = 0) {
   }
   return false;
 }
-function prefixIssues(path24, issues) {
+function prefixIssues(path25, issues) {
   return issues.map((iss) => {
     var _a2;
     (_a2 = iss).path ?? (_a2.path = []);
-    iss.path.unshift(path24);
+    iss.path.unshift(path25);
     return iss;
   });
 }
@@ -1144,7 +1144,7 @@ function formatError(error48, mapper = (issue2) => issue2.message) {
 }
 function treeifyError(error48, mapper = (issue2) => issue2.message) {
   const result = { errors: [] };
-  const processError = (error49, path24 = []) => {
+  const processError = (error49, path25 = []) => {
     var _a2, _b;
     for (const issue2 of error49.issues) {
       if (issue2.code === "invalid_union" && issue2.errors.length) {
@@ -1154,7 +1154,7 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
       } else if (issue2.code === "invalid_element") {
         processError({ issues: issue2.issues }, issue2.path);
       } else {
-        const fullpath = [...path24, ...issue2.path];
+        const fullpath = [...path25, ...issue2.path];
         if (fullpath.length === 0) {
           result.errors.push(mapper(issue2));
           continue;
@@ -1186,8 +1186,8 @@ function treeifyError(error48, mapper = (issue2) => issue2.message) {
 }
 function toDotPath(_path) {
   const segs = [];
-  const path24 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
-  for (const seg of path24) {
+  const path25 = _path.map((seg) => typeof seg === "object" ? seg.key : seg);
+  for (const seg of path25) {
     if (typeof seg === "number")
       segs.push(`[${seg}]`);
     else if (typeof seg === "symbol")
@@ -13881,13 +13881,13 @@ function resolveRef(ref, ctx) {
   if (!ref.startsWith("#")) {
     throw new Error("External $ref is not supported, only local refs (#/...) are allowed");
   }
-  const path24 = ref.slice(1).split("/").filter(Boolean);
-  if (path24.length === 0) {
+  const path25 = ref.slice(1).split("/").filter(Boolean);
+  if (path25.length === 0) {
     return ctx.rootSchema;
   }
   const defsKey = ctx.version === "draft-2020-12" ? "$defs" : "definitions";
-  if (path24[0] === defsKey) {
-    const key = path24[1];
+  if (path25[0] === defsKey) {
+    const key = path25[1];
     if (!key || !ctx.defs[key]) {
       throw new Error(`Reference not found: ${ref}`);
     }
@@ -17850,8 +17850,8 @@ var require_utils = __commonJS({
       }
       return ind;
     }
-    function removeDotSegments(path24) {
-      let input = path24;
+    function removeDotSegments(path25) {
+      let input = path25;
       const output = [];
       let nextSlash = -1;
       let len = 0;
@@ -18103,8 +18103,8 @@ var require_schemes = __commonJS({
         wsComponent.secure = void 0;
       }
       if (wsComponent.resourceName) {
-        const [path24, query] = wsComponent.resourceName.split("?");
-        wsComponent.path = path24 && path24 !== "/" ? path24 : void 0;
+        const [path25, query] = wsComponent.resourceName.split("?");
+        wsComponent.path = path25 && path25 !== "/" ? path25 : void 0;
         wsComponent.query = query;
         wsComponent.resourceName = void 0;
       }
@@ -21523,12 +21523,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats2(ajv, list, fs25, exportName) {
+    function addFormats2(ajv, list, fs26, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs25[f]);
+        ajv.addFormat(f, fs26[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -29162,7 +29162,7 @@ function convertStandardElicitationSchema(schema) {
 function isAnnotationOnlyJsonSchemaKeyword(key) {
   return ANNOTATION_ONLY_JSON_SCHEMA_KEYWORDS.has(key) || key.startsWith("x-");
 }
-function walkProperty(node, path24, vendor, unsupported) {
+function walkProperty(node, path25, vendor, unsupported) {
   if (!isJsonObject(node)) return node;
   const allowedKeys = typeof node.type === "string" && Object.hasOwn(PROPERTY_KEYS_BY_TYPE, node.type) ? PROPERTY_KEYS_BY_TYPE[node.type] : void 0;
   if (allowedKeys === void 0) return node;
@@ -29170,8 +29170,8 @@ function walkProperty(node, path24, vendor, unsupported) {
   for (const [key, value] of Object.entries(node)) if (allowedKeys.has(key) || isAnnotationOnlyJsonSchemaKeyword(key)) pruned[key] = value;
   else if (key === "pattern" && node.type === "string" && typeof node.format === "string") {
     if (!SUPPORTED_STRING_FORMATS.has(node.format)) pruned[key] = value;
-    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path24}.${key}`);
-  } else unsupported.push(`${path24}.${key}`);
+    else if (typeof value !== "string" || !isLibraryFormatPattern(node.format, value, vendor)) unsupported.push(`${path25}.${key}`);
+  } else unsupported.push(`${path25}.${key}`);
   return pruned;
 }
 function walkRequestedSchema(converted, vendor) {
@@ -29188,11 +29188,11 @@ function describeUnsupportedProperties(pruned, fallback) {
   const offenders = Object.entries(pruned.properties).filter(([, node]) => !parseSchema(PrimitiveSchemaDefinitionSchema2, node).success).map(([name]) => `properties.${name}`);
   return offenders.length > 0 ? offenders.join(", ") : fallback;
 }
-function findDroppedConstraintPaths(original, parsed, path24 = "") {
-  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path24}[${index}]`));
+function findDroppedConstraintPaths(original, parsed, path25 = "") {
+  if (Array.isArray(original) && Array.isArray(parsed)) return original.flatMap((item, index) => findDroppedConstraintPaths(item, parsed[index], `${path25}[${index}]`));
   if (!isJsonObject(original) || !isJsonObject(parsed)) return [];
   return Object.entries(original).flatMap(([key, value]) => {
-    const childPath = path24 ? `${path24}.${key}` : key;
+    const childPath = path25 ? `${path25}.${key}` : key;
     if (!Object.prototype.hasOwnProperty.call(parsed, key)) return isAnnotationOnlyJsonSchemaKeyword(key) ? [] : [childPath];
     return findDroppedConstraintPaths(value, parsed[key], childPath);
   });
@@ -29805,9 +29805,9 @@ var init_src_D_zzAWoS = __esm({
         });
         const parsed = buildSchemas2026().RequestMetaEnvelopeSchema.safeParse(meta3);
         if (!parsed.success) for (const issue2 of parsed.error.issues) {
-          const path24 = issue2.path.map(String);
-          const key = path24.length > 0 ? path24.join(".") : "_meta";
-          if (path24.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
+          const path25 = issue2.path.map(String);
+          const key = path25.length > 0 ? path25.join(".") : "_meta";
+          if (path25.length === 1 && issues.some((existing) => existing.key === key && existing.problem === "missing")) continue;
           issues.push({
             key,
             problem: issue2.message
@@ -33962,8 +33962,8 @@ var init_ajvProvider_97rDpkRx = __esm({
         for (let i = 0; i < str.length; i++) if (str[i] === token) ind++;
         return ind;
       }
-      function removeDotSegments(path24) {
-        let input = path24;
+      function removeDotSegments(path25) {
+        let input = path25;
         const output = [];
         let nextSlash = -1;
         let len = 0;
@@ -34116,8 +34116,8 @@ var init_ajvProvider_97rDpkRx = __esm({
           wsComponent.secure = void 0;
         }
         if (wsComponent.resourceName) {
-          const [path24, query] = wsComponent.resourceName.split("?");
-          wsComponent.path = path24 && path24 !== "/" ? path24 : void 0;
+          const [path25, query] = wsComponent.resourceName.split("?");
+          wsComponent.path = path25 && path25 !== "/" ? path25 : void 0;
           wsComponent.query = query;
           wsComponent.resourceName = void 0;
         }
@@ -38105,11 +38105,11 @@ var init_ajvProvider_97rDpkRx = __esm({
         if (!f) throw new Error(`Unknown format "${name}"`);
         return f;
       };
-      function addFormats2(ajv, list, fs25, exportName) {
+      function addFormats2(ajv, list, fs26, exportName) {
         var _a2;
         var _b;
         (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
-        for (const f of list) ajv.addFormat(f, fs25[f]);
+        for (const f of list) ajv.addFormat(f, fs26[f]);
       }
       module.exports = exports = formatsPlugin;
       Object.defineProperty(exports, "__esModule", { value: true });
@@ -39134,9 +39134,9 @@ var init_exports = {};
 __export(init_exports, {
   runInit: () => runInit
 });
-import * as fs23 from "node:fs";
+import * as fs24 from "node:fs";
 import * as os13 from "node:os";
-import * as path22 from "node:path";
+import * as path23 from "node:path";
 import * as readline from "node:readline/promises";
 function parseFlags(argv) {
   const flags = { yes: false, principal: null, journalUrl: null, handle: null };
@@ -39170,10 +39170,10 @@ async function runInit(argv) {
     if (!info) {
       out(`\u26A0 not inside a git repo \u2014 skipped ${CONFIG_BASENAME} (run init from your repo's main checkout)`);
     } else {
-      const configPath = path22.join(info.repoRoot, CONFIG_BASENAME);
+      const configPath = path23.join(info.repoRoot, CONFIG_BASENAME);
       const entry = registerProject(info.repoRoot);
       if (entry) out(`\u2714 registered "${entry.name}" \u2014 open it from anywhere with: hands ${entry.name}`);
-      if (fs23.existsSync(configPath)) {
+      if (fs24.existsSync(configPath)) {
         out(`\u2714 ${configPath} already exists (left untouched)`);
         out("  (to attach the books to an existing config: hands books <url>)");
       } else {
@@ -39201,7 +39201,7 @@ async function runInit(argv) {
           );
           scaffold.remote = { url: journalUrl.trim(), handle };
         }
-        fs23.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
+        fs24.writeFileSync(configPath, `${JSON.stringify(scaffold, null, 2)}
 `);
         out(`\u2714 scaffolded ${configPath}`);
       }
@@ -39230,7 +39230,7 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import { execFileSync as execFileSync9, spawnSync } from "node:child_process";
+import { execFileSync as execFileSync10, spawnSync } from "node:child_process";
 import * as os14 from "node:os";
 
 // src/server.ts
@@ -39596,8 +39596,8 @@ function getErrorMap() {
 
 // node_modules/zod/v3/helpers/parseUtil.js
 var makeIssue = (params) => {
-  const { data, path: path24, errorMaps, issueData } = params;
-  const fullPath = [...path24, ...issueData.path || []];
+  const { data, path: path25, errorMaps, issueData } = params;
+  const fullPath = [...path25, ...issueData.path || []];
   const fullIssue = {
     ...issueData,
     path: fullPath
@@ -39712,11 +39712,11 @@ var errorUtil;
 
 // node_modules/zod/v3/types.js
 var ParseInputLazyPath = class {
-  constructor(parent, value, path24, key) {
+  constructor(parent, value, path25, key) {
     this._cachedPath = [];
     this.parent = parent;
     this.data = value;
-    this._path = path24;
+    this._path = path25;
     this._key = key;
   }
   get path() {
@@ -43263,11 +43263,11 @@ function normalizeObjectSchema(schema) {
   }
   return void 0;
 }
-function getDotPath(path24) {
-  if (path24.length === 0) {
+function getDotPath(path25) {
+  if (path25.length === 0) {
     return "object root";
   }
-  return path24.reduce((acc, seg, index) => {
+  return path25.reduce((acc, seg, index) => {
     if (index === 0) {
       return String(seg);
     }
@@ -50340,9 +50340,129 @@ init_provision();
 init_projects();
 init_remote();
 init_seed_permissions();
+import { execFileSync as execFileSync8 } from "node:child_process";
+import * as fs22 from "node:fs";
+import * as path21 from "node:path";
+
+// src/sessions.ts
 import { execFileSync as execFileSync7 } from "node:child_process";
 import * as fs21 from "node:fs";
 import * as path20 from "node:path";
+function isClaudeProcess(pid) {
+  try {
+    const comm = fs21.readFileSync(`/proc/${pid}/comm`, "utf8").trim();
+    if (comm === "claude") return true;
+    const cmdline = fs21.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
+    return cmdline.slice(0, 2).some((a) => /(^|\/)claude$/.test(a));
+  } catch {
+    return false;
+  }
+}
+function envValue(pid, key) {
+  try {
+    const raw = fs21.readFileSync(`/proc/${pid}/environ`, "utf8");
+    for (const entry of raw.split("\0")) {
+      if (entry.startsWith(`${key}=`)) return entry.slice(key.length + 1) || null;
+    }
+  } catch {
+  }
+  return null;
+}
+function scanViaProc() {
+  const sessions = [];
+  let pids;
+  try {
+    pids = fs21.readdirSync("/proc").filter((n) => /^\d+$/.test(n));
+  } catch {
+    return { method: "unsupported", sessions: [], reason: "/proc is not readable" };
+  }
+  for (const name of pids) {
+    const pid = Number(name);
+    if (!isClaudeProcess(pid)) continue;
+    let cwd;
+    try {
+      cwd = fs21.realpathSync(fs21.readlinkSync(`/proc/${pid}/cwd`));
+    } catch {
+      continue;
+    }
+    sessions.push({ pid, cwd, handsId: envValue(pid, "HANDS_ID") });
+  }
+  return { method: "proc", sessions };
+}
+function scanViaLsof() {
+  let out3;
+  try {
+    out3 = execFileSync7("lsof", ["-a", "-c", "claude", "-d", "cwd", "-Fpn"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1e4
+    });
+  } catch {
+    return { method: "unsupported", sessions: [], reason: "lsof unavailable or returned no output" };
+  }
+  const sessions = [];
+  let pid = null;
+  for (const line of out3.split("\n")) {
+    if (line.startsWith("p")) pid = Number(line.slice(1)) || null;
+    else if (line.startsWith("n") && pid !== null) {
+      sessions.push({ pid, cwd: line.slice(1), handsId: null });
+      pid = null;
+    }
+  }
+  return { method: "lsof", sessions };
+}
+function scanClaudeSessions(platform = process.platform) {
+  if (platform === "linux") return scanViaProc();
+  if (platform === "darwin") return scanViaLsof();
+  return {
+    method: "unsupported",
+    sessions: [],
+    reason: `no session inspection on ${platform}`
+  };
+}
+function sessionsIn(dir, scan) {
+  let target = dir;
+  try {
+    target = fs21.realpathSync(dir);
+  } catch {
+  }
+  return scan.sessions.filter((s) => s.cwd === target);
+}
+function identityConflicts(stations, scan) {
+  const conflicts = [];
+  for (const station of stations) {
+    for (const session of sessionsIn(station.dir, scan)) {
+      if (session.handsId && session.handsId !== station.id) {
+        conflicts.push({
+          pid: session.pid,
+          cwd: session.cwd,
+          claimed: session.handsId,
+          expected: station.id
+        });
+      }
+    }
+  }
+  return conflicts;
+}
+function contestedIds(scan, stationIds) {
+  const known = new Set(stationIds);
+  const byId = /* @__PURE__ */ new Map();
+  for (const session of scan.sessions) {
+    if (!session.handsId || !known.has(session.handsId)) continue;
+    const list = byId.get(session.handsId) ?? [];
+    list.push(session);
+    byId.set(session.handsId, list);
+  }
+  for (const [id, list] of byId) {
+    if (list.length < 2) byId.delete(id);
+  }
+  return byId;
+}
+function describeSession(s) {
+  return `pid ${s.pid}${s.handsId ? ` (HANDS_ID=${s.handsId})` : ""} in ${path20.basename(s.cwd)}`;
+}
+
+// src/doctor.ts
 init_store();
 var IDLE_WARN_MS = 30 * 6e4;
 var WAL_RATIO_WARN = 10;
@@ -50361,7 +50481,7 @@ function isProcessAlive(pid) {
 }
 function gitHead(cwd) {
   try {
-    return execFileSync7("git", ["rev-parse", "HEAD"], {
+    return execFileSync8("git", ["rev-parse", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -50382,9 +50502,9 @@ function runDoctor(opts) {
     return { checks, worst: "fail" };
   }
   checks.push({ name: "repo", severity: "ok", detail: `${info.repoRoot} (${info.slug})` });
-  const configPath = path20.join(info.repoRoot, CONFIG_BASENAME);
+  const configPath = path21.join(info.repoRoot, CONFIG_BASENAME);
   let cfg = null;
-  if (!fs21.existsSync(configPath)) {
+  if (!fs22.existsSync(configPath)) {
     checks.push({
       name: "config",
       severity: "fail",
@@ -50402,7 +50522,7 @@ function runDoctor(opts) {
       });
     }
   }
-  const name = path20.basename(info.repoRoot);
+  const name = path21.basename(info.repoRoot);
   const registered = resolveProject2(name, env);
   if (registered?.repoRoot === info.repoRoot) {
     checks.push({ name: "registry", severity: "ok", detail: `resolves as "${name}"` });
@@ -50423,17 +50543,17 @@ function runDoctor(opts) {
     });
   }
   const db = dbPath(env, info.repoRoot);
-  if (!fs21.existsSync(db)) {
+  if (!fs22.existsSync(db)) {
     checks.push({
       name: "bus.db",
       severity: "warn",
       detail: "no database yet \u2014 normal before the first session takes a turn"
     });
   } else {
-    const dbSize = fs21.statSync(db).size;
+    const dbSize = fs22.statSync(db).size;
     let walSize = 0;
     try {
-      walSize = fs21.statSync(`${db}-wal`).size;
+      walSize = fs22.statSync(`${db}-wal`).size;
     } catch {
     }
     if (walSize > dbSize * WAL_RATIO_WARN && walSize > 1e6) {
@@ -50448,16 +50568,16 @@ function runDoctor(opts) {
   }
   const coord = coordinationDir(env, info.repoRoot);
   checks.push(
-    fs21.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
+    fs22.existsSync(coord) ? { name: "coordination", severity: "ok", detail: coord } : { name: "coordination", severity: "warn", detail: `missing: ${coord}` }
   );
   const pid = pidPath(env, info.repoRoot);
-  if (fs21.existsSync(pid)) {
-    const raw = fs21.readFileSync(pid, "utf8").trim();
+  if (fs22.existsSync(pid)) {
+    const raw = fs22.readFileSync(pid, "utf8").trim();
     const parsedPid = Number(raw);
     if (Number.isInteger(parsedPid) && parsedPid > 0 && isProcessAlive(parsedPid)) {
       checks.push({ name: "dashboard.serve", severity: "ok", detail: `running (pid ${parsedPid})` });
     } else if (opts?.fix) {
-      fs21.rmSync(pid, { force: true });
+      fs22.rmSync(pid, { force: true });
       checks.push({
         name: "dashboard.serve",
         severity: "ok",
@@ -50477,7 +50597,7 @@ function runDoctor(opts) {
   if (cached2?.[1]) {
     const pluginCommit = cached2[1];
     const head = gitHead(info.repoRoot);
-    const selfHosted = fs21.existsSync(path20.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
+    const selfHosted = fs22.existsSync(path21.join(info.repoRoot, "plugin", ".claude-plugin", "plugin.json"));
     if (selfHosted && head && !head.startsWith(pluginCommit) && !pluginCommit.startsWith(head.slice(0, 7))) {
       checks.push({
         name: "build",
@@ -50495,6 +50615,48 @@ function runDoctor(opts) {
     if (stations.length === 0) {
       checks.push({ name: "stations", severity: "ok", detail: "none open" });
     }
+    const scan = opts?.scan ?? scanClaudeSessions();
+    if (scan.method === "unsupported") {
+      checks.push({
+        name: "sessions",
+        severity: "warn",
+        detail: `cannot inspect live sessions (${scan.reason ?? "unsupported platform"}) \u2014 duplicate-session and identity checks are UNVERIFIED, not passing`
+      });
+    } else {
+      const conflicts = identityConflicts(stations, scan);
+      for (const c of conflicts) {
+        checks.push({
+          name: `${c.expected}.identity`,
+          severity: "fail",
+          detail: `pid ${c.pid} runs in ${c.expected}'s worktree but claims HANDS_ID=${c.claimed} \u2014 two panes are answering to one id; the bus, notify file and focus all follow the claim, not the directory`
+        });
+      }
+      for (const [id, panes] of contestedIds(scan, stations.map((s) => s.id))) {
+        checks.push({
+          name: `${id}.contested`,
+          severity: "fail",
+          detail: `${panes.length} live panes claim ${id}: ${panes.map(describeSession).join(", ")}`
+        });
+      }
+      for (const station of stations) {
+        if (!station.present) continue;
+        const here = sessionsIn(station.dir, scan);
+        if (here.length > 1) {
+          checks.push({
+            name: `${station.id}.duplicate`,
+            severity: "fail",
+            detail: `${here.length} Claude sessions share this worktree (${here.map((s) => `pid ${s.pid}`).join(", ")}) \u2014 they will commit over each other and report each other's work as their own`
+          });
+        }
+      }
+      if (conflicts.length === 0 && stations.length > 0) {
+        checks.push({
+          name: "sessions",
+          severity: "ok",
+          detail: `${scan.sessions.length} live session(s) inspected via ${scan.method}`
+        });
+      }
+    }
     for (const station of stations) {
       if (!station.present) {
         checks.push({
@@ -50504,8 +50666,8 @@ function runDoctor(opts) {
         });
         continue;
       }
-      const settings = path20.join(station.dir, ".claude", "settings.local.json");
-      if (fs21.existsSync(settings)) {
+      const settings = path21.join(station.dir, ".claude", "settings.local.json");
+      if (fs22.existsSync(settings)) {
         checks.push({ name: `${station.id}.permissions`, severity: "ok", detail: "seeded" });
       } else if (opts?.fix) {
         seedStationPermissions(station.dir);
@@ -50550,7 +50712,7 @@ function runDoctor(opts) {
     const slugsIn = (dir) => {
       if (!dir) return [];
       try {
-        return fs21.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.endsWith(".mise.md") && !f.endsWith(".skill.md")).map((f) => f.slice(0, -".md".length));
+        return fs22.readdirSync(dir).filter((f) => f.endsWith(".md") && !f.endsWith(".mise.md") && !f.endsWith(".skill.md")).map((f) => f.slice(0, -".md".length));
       } catch {
         return [];
       }
@@ -50587,15 +50749,15 @@ function runDoctor(opts) {
 }
 
 // src/version.ts
-import { execFileSync as execFileSync8 } from "node:child_process";
-import * as fs22 from "node:fs";
+import { execFileSync as execFileSync9 } from "node:child_process";
+import * as fs23 from "node:fs";
 import * as os12 from "node:os";
-import * as path21 from "node:path";
+import * as path22 from "node:path";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 var STAMP_BASENAME = "BUILD.json";
 function classifyInstall(entry, home = os12.homedir()) {
   if (!entry) return "unknown";
-  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path21.join(home, ".hands", "lib"))) {
+  if (/[/\\]\.hands[/\\]lib[/\\]/.test(entry) || entry.startsWith(path22.join(home, ".hands", "lib"))) {
     return "standalone";
   }
   if (/[/\\]plugins[/\\]cache[/\\]/.test(entry)) return "plugin";
@@ -50604,7 +50766,7 @@ function classifyInstall(entry, home = os12.homedir()) {
 }
 function readStamp(dir) {
   try {
-    const raw = fs22.readFileSync(path21.join(dir, STAMP_BASENAME), "utf8");
+    const raw = fs23.readFileSync(path22.join(dir, STAMP_BASENAME), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.version !== "string" || typeof parsed.builtAt !== "string") return null;
     return {
@@ -50618,7 +50780,7 @@ function readStamp(dir) {
 }
 function gitShort(cwd) {
   try {
-    return execFileSync8("git", ["rev-parse", "--short", "HEAD"], {
+    return execFileSync9("git", ["rev-parse", "--short", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -50631,7 +50793,7 @@ function gitShort(cwd) {
 function buildInfo(opts) {
   const entry = opts?.entry ?? process.argv[1] ?? fileURLToPath4(import.meta.url);
   const kind = classifyInstall(entry, opts?.home ?? os12.homedir());
-  const stamp = readStamp(path21.dirname(entry));
+  const stamp = readStamp(path22.dirname(entry));
   if (stamp) {
     return { version: stamp.version, commit: stamp.commit, builtAt: stamp.builtAt, kind, entry };
   }
@@ -50645,14 +50807,14 @@ function buildInfo(opts) {
 }
 function otherInstall(current, home = os12.homedir()) {
   if (current !== "standalone") {
-    const stamp = readStamp(path21.join(home, ".hands", "lib"));
+    const stamp = readStamp(path22.join(home, ".hands", "lib"));
     if (stamp) return { kind: "standalone", stamp };
   }
   if (current !== "plugin") {
-    const cacheRoot = path21.join(home, ".claude", "plugins", "cache", "hands", "hands");
+    const cacheRoot = path22.join(home, ".claude", "plugins", "cache", "hands", "hands");
     try {
-      for (const dir of fs22.readdirSync(cacheRoot)) {
-        const stamp = readStamp(path21.join(cacheRoot, dir, "dist"));
+      for (const dir of fs23.readdirSync(cacheRoot)) {
+        const stamp = readStamp(path22.join(cacheRoot, dir, "dist"));
         if (stamp) return { kind: "plugin", stamp };
       }
     } catch {
@@ -50674,8 +50836,8 @@ init_remote();
 init_crafts();
 init_mcp_install();
 init_store();
-import * as fs24 from "node:fs";
-import * as path23 from "node:path";
+import * as fs25 from "node:fs";
+import * as path24 from "node:path";
 function out2(line) {
   process.stdout.write(`${line}
 `);
@@ -50763,11 +50925,11 @@ function cmdScale(argv) {
 function cmdBooks(argv) {
   const info = repoInfo(process.cwd());
   if (!info) fail("not inside a git repo \u2014 run from your repo's main checkout");
-  const configPath = path23.join(info.repoRoot, CONFIG_BASENAME);
-  if (!fs24.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
+  const configPath = path24.join(info.repoRoot, CONFIG_BASENAME);
+  if (!fs25.existsSync(configPath)) fail(`no ${CONFIG_BASENAME} here \u2014 run: hands init`);
   let cfg;
   try {
-    cfg = JSON.parse(fs24.readFileSync(configPath, "utf8"));
+    cfg = JSON.parse(fs25.readFileSync(configPath, "utf8"));
   } catch (err) {
     fail(`${configPath} is not valid JSON: ${String(err)}`);
   }
@@ -50794,7 +50956,7 @@ function cmdBooks(argv) {
     url: url2,
     handle: handleArg ?? remote.handle ?? githubUsername() ?? os14.userInfo().username
   };
-  fs24.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs25.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 books attached: ${url2} (handle "${String(cfg.remote.handle)}")`);
   out2("  next: hands sync   (initializes the journal; --adopt if the repo is non-empty)");
@@ -50811,7 +50973,7 @@ function cmdUsage(argv) {
     const userPath = userConfigPath();
     let setByUser = false;
     try {
-      const raw = JSON.parse(fs24.readFileSync(userPath, "utf8"));
+      const raw = JSON.parse(fs25.readFileSync(userPath, "utf8"));
       setByUser = raw.usage?.mode === merged;
     } catch {
     }
@@ -50821,16 +50983,16 @@ function cmdUsage(argv) {
   if (mode !== "low" && mode !== "normal") fail("usage: hands usage [low|normal]");
   const configPath = userConfigPath();
   let cfg = {};
-  if (fs24.existsSync(configPath)) {
+  if (fs25.existsSync(configPath)) {
     try {
-      cfg = JSON.parse(fs24.readFileSync(configPath, "utf8"));
+      cfg = JSON.parse(fs25.readFileSync(configPath, "utf8"));
     } catch (err) {
       fail(`${configPath} is not valid JSON: ${String(err)}`);
     }
   }
   cfg.usage = { mode };
-  fs24.mkdirSync(path23.dirname(configPath), { recursive: true });
-  fs24.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
+  fs25.mkdirSync(path24.dirname(configPath), { recursive: true });
+  fs25.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}
 `);
   out2(`\u2714 usage mode: ${mode} (machine-wide \u2014 every repo; already-running panes pick it up on their next hands_board poll)`);
 }
@@ -50849,7 +51011,7 @@ function cmdCraft(argv) {
       for (const c of roster) {
         const distilled = c.distilled ? `distilled ${c.distilled}` : "never distilled";
         const pending = c.pendingNotes ? `, ${c.pendingNotes} pending note(s)` : "";
-        const synced = fs24.existsSync(craftAgentPath(cwd, c.slug)) ? "" : ", not yet synced here";
+        const synced = fs25.existsSync(craftAgentPath(cwd, c.slug)) ? "" : ", not yet synced here";
         out2(`${c.slug}	[${c.scope}${synced}]	${c.covers ?? "no covers stated"}	${distilled}${pending}`);
       }
       return;
@@ -50867,30 +51029,30 @@ function cmdCraft(argv) {
       const personal = personalCraftsDir(cfg);
       const targetDir = sub === "promote" ? shared : personal;
       const sourceDir = sub === "promote" ? personal : shared;
-      if (sub === "promote" && fs24.existsSync(path23.join(shared, `${files.slug}.md`))) {
+      if (sub === "promote" && fs25.existsSync(path24.join(shared, `${files.slug}.md`))) {
         fail(`a shared craft named "${files.slug}" already exists \u2014 resolve manually, then localize or edit it directly`);
       }
-      fs24.mkdirSync(targetDir, { recursive: true });
+      fs25.mkdirSync(targetDir, { recursive: true });
       const moved = [];
       for (const name of [`${files.slug}.md`, `${files.slug}.mise.md`, `${files.slug}.skill.md`]) {
-        const from = path23.join(sourceDir, name);
-        if (!fs24.existsSync(from)) continue;
-        fs24.copyFileSync(from, path23.join(targetDir, name));
-        fs24.rmSync(from);
+        const from = path24.join(sourceDir, name);
+        if (!fs25.existsSync(from)) continue;
+        fs25.copyFileSync(from, path24.join(targetDir, name));
+        fs25.rmSync(from);
         moved.push(name);
       }
       if (moved.length === 0) fail(`no files found for "${files.slug}" at ${sourceDir}`);
       materializeCraftAgents(cfg, info.repoRoot, process.env, info.repoRoot);
       if (sub === "promote") {
         try {
-          execFileSync9("git", ["add", ...moved.map((m) => path23.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
+          execFileSync10("git", ["add", ...moved.map((m) => path24.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
         } catch {
         }
         out2(`\u2714 "${files.slug}" promoted to shared \u2014 staged at ${shared}, not committed`);
         out2(`  next: git commit -m "craft: promote ${files.slug} to shared" && open a PR`);
       } else {
         try {
-          execFileSync9("git", ["rm", "--cached", "-q", ...moved.map((m) => path23.join(shared, m))], {
+          execFileSync10("git", ["rm", "--cached", "-q", ...moved.map((m) => path24.join(shared, m))], {
             cwd: info.repoRoot,
             stdio: "ignore"
           });
@@ -50976,7 +51138,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
         ticketId
       });
       const brief = store.getCraftBrief(briefId);
-      const bookRaw = fs24.existsSync(files.book) ? fs24.readFileSync(files.book, "utf8") : null;
+      const bookRaw = fs25.existsSync(files.book) ? fs25.readFileSync(files.book, "utf8") : null;
       out2(composeChit(brief, parseCraftHeader(bookRaw).covers, cfg.usage.mode));
       return;
     }
@@ -51045,7 +51207,7 @@ function requireRemote() {
   if (!j) {
     fail("books are unavailable in this environment \u2014 git isn't working (run: hands doctor)");
   }
-  if (!fs24.existsSync(path23.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
+  if (!fs25.existsSync(path24.join(j.dir, ".git"))) fail(`could not set up the journal clone at ${j.dir}`);
   return j;
 }
 function cmdRestore() {
@@ -51167,7 +51329,7 @@ function cmdPaths() {
   const cfg = loadConfig();
   const agentId = resolveAgentId({ expoBasename: cfg.expo.basename });
   let focus = null;
-  if (fs24.existsSync(dbPath())) {
+  if (fs25.existsSync(dbPath())) {
     const store = new Store();
     try {
       focus = store.getFocus(agentId);
@@ -51249,7 +51411,7 @@ function cmdRestart(argv) {
   const model = cfg.stations.overrides[id] ?? cfg.stations.model;
   const command = launchCommand({ id, dir, model }, "station");
   try {
-    execFileSync9("tmux", ["respawn-pane", "-k", "-t", id, command], {
+    execFileSync10("tmux", ["respawn-pane", "-k", "-t", id, command], {
       stdio: "ignore",
       timeout: 1e4
     });
@@ -51287,7 +51449,7 @@ function cmdLs() {
     return;
   }
   for (const p of projects) {
-    const configured = fs24.existsSync(path23.join(p.repoRoot, CONFIG_BASENAME));
+    const configured = fs25.existsSync(path24.join(p.repoRoot, CONFIG_BASENAME));
     let seats = "";
     try {
       if (configured) {
@@ -51360,7 +51522,7 @@ function launchStationSeat(_repoRoot, id, dir, cfg) {
 function tryLaunch(cmd, rest) {
   if (!cmd) {
     const info = repoInfo(process.cwd());
-    if (!info || !fs24.existsSync(path23.join(info.repoRoot, CONFIG_BASENAME))) return false;
+    if (!info || !fs25.existsSync(path24.join(info.repoRoot, CONFIG_BASENAME))) return false;
     launchAt(info.repoRoot, "expo", "expo");
     return true;
   }

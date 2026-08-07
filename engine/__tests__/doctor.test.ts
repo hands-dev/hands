@@ -261,3 +261,78 @@ describe("crafts checks (hands#81/#96/#49)", () => {
     expect(check("crafts.notes", report)).toBeUndefined();
   });
 });
+
+describe("session checks — hands#147 / #152", () => {
+  /** A real station worktree, so doctor's own listStations() sees it. */
+  function oneStation(): { dir: string } {
+    const worktreeRoot = path.join(root, "worktrees");
+    fs.writeFileSync(
+      path.join(repo, "hands.config.json"),
+      JSON.stringify({ ...CONFIG, stations: { ...CONFIG.stations, worktreeRoot } }, null, 2),
+    );
+    execFileSync(
+      "git",
+      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base"],
+      { cwd: repo },
+    );
+    const [plan] = addStations(1, { cwd: repo, env: { ...env, TMUX: "" } });
+    if (!plan) throw new Error("provisioner returned no station");
+    return { dir: fs.realpathSync(plan.dir) };
+  }
+
+  const scanOf = (sessions: { pid: number; cwd: string; handsId: string | null }[]) =>
+    ({ method: "proc" as const, sessions });
+
+  it("FAILS when a pane in a station's worktree claims another station's id", () => {
+    const { dir } = oneStation();
+    const report = runDoctor({
+      cwd: repo,
+      env,
+      scan: scanOf([{ pid: 24450, cwd: dir, handsId: "station-7" }]),
+    });
+    const c = report.checks.find((x) => x.name === "station-1.identity");
+    expect(c?.severity).toBe("fail");
+    expect(c?.detail).toContain("station-7");
+    expect(report.worst).toBe("fail");
+  });
+
+  it("FAILS when two sessions share one station worktree", () => {
+    const { dir } = oneStation();
+    const report = runDoctor({
+      cwd: repo,
+      env,
+      scan: scanOf([
+        { pid: 27949, cwd: dir, handsId: "station-1" },
+        { pid: 24450, cwd: dir, handsId: "station-1" },
+      ]),
+    });
+    const dup = report.checks.find((x) => x.name === "station-1.duplicate");
+    expect(dup?.severity).toBe("fail");
+    expect(dup?.detail).toContain("2 Claude sessions");
+  });
+
+  it("WARNS rather than passing when sessions cannot be inspected", () => {
+    // the heart of #152: doctor must not report healthy when it could not look
+    oneStation();
+    const report = runDoctor({
+      cwd: repo,
+      env,
+      scan: { method: "unsupported", sessions: [], reason: "no session inspection on win32" },
+    });
+    const s = report.checks.find((x) => x.name === "sessions");
+    expect(s?.severity).toBe("warn");
+    expect(s?.detail).toContain("UNVERIFIED");
+  });
+
+  it("passes cleanly when one pane sits in its own worktree with its own id", () => {
+    const { dir } = oneStation();
+    const report = runDoctor({
+      cwd: repo,
+      env,
+      scan: scanOf([{ pid: 1, cwd: dir, handsId: "station-1" }]),
+    });
+    expect(report.checks.find((x) => x.name === "station-1.identity")).toBeUndefined();
+    expect(report.checks.find((x) => x.name === "station-1.duplicate")).toBeUndefined();
+    expect(report.checks.find((x) => x.name === "sessions")?.severity).toBe("ok");
+  });
+});

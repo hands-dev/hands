@@ -7,6 +7,14 @@ import { listStations } from "./provision.js";
 import { pruneMissing, resolveProject } from "./projects.js";
 import { personalCraftsDir, sharedCraftsDir } from "./remote.js";
 import { seedStationPermissions } from "./seed-permissions.js";
+import {
+  contestedIds,
+  describeSession,
+  identityConflicts,
+  scanClaudeSessions,
+  type SessionScan,
+  sessionsIn,
+} from "./sessions.js";
 import { idleMs } from "./station-logs.js";
 import { Store } from "./store.js";
 
@@ -82,6 +90,8 @@ export function runDoctor(opts?: {
   env?: NodeJS.ProcessEnv;
   /** the executing script path; defaults to process.argv[1] (injectable for tests) */
   entry?: string;
+  /** pre-computed session scan (injectable for tests; defaults to a live scan) */
+  scan?: SessionScan;
 }): DoctorReport {
   const cwd = opts?.cwd ?? process.cwd();
   const env = opts?.env ?? process.env;
@@ -239,6 +249,64 @@ export function runDoctor(opts?: {
     if (stations.length === 0) {
       checks.push({ name: "stations", severity: "ok", detail: "none open" });
     }
+
+    // Who is actually running where. The bus can't answer this: it only knows
+    // the ids that talk to it, and two panes sharing an id look like one busy
+    // station. See sessions.ts for the two incidents that motivated it.
+    const scan = opts?.scan ?? scanClaudeSessions();
+    if (scan.method === "unsupported") {
+      // NOT "ok". #152's whole complaint is that doctor reported healthy when
+      // it had no way to know. Saying so is the fix.
+      checks.push({
+        name: "sessions",
+        severity: "warn",
+        detail: `cannot inspect live sessions (${scan.reason ?? "unsupported platform"}) — duplicate-session and identity checks are UNVERIFIED, not passing`,
+      });
+    } else {
+      // #152 — a pane whose HANDS_ID disagrees with the worktree it sits in.
+      // The resolver honours env over cwd, so this is invisible otherwise.
+      const conflicts = identityConflicts(stations, scan);
+      for (const c of conflicts) {
+        checks.push({
+          name: `${c.expected}.identity`,
+          severity: "fail",
+          detail: `pid ${c.pid} runs in ${c.expected}'s worktree but claims HANDS_ID=${c.claimed} — two panes are answering to one id; the bus, notify file and focus all follow the claim, not the directory`,
+        });
+      }
+
+      // #152 second half — one id claimed by several live panes, wherever they sit.
+      for (const [id, panes] of contestedIds(scan, stations.map((s) => s.id))) {
+        checks.push({
+          name: `${id}.contested`,
+          severity: "fail",
+          detail: `${panes.length} live panes claim ${id}: ${panes.map(describeSession).join(", ")}`,
+        });
+      }
+
+      // #147 — two sessions in one station worktree. This produced an evening
+      // of misleading signals (a branch 16 commits ahead of what its own
+      // station believed it had pushed) and was only found by hand.
+      for (const station of stations) {
+        if (!station.present) continue;
+        const here = sessionsIn(station.dir, scan);
+        if (here.length > 1) {
+          checks.push({
+            name: `${station.id}.duplicate`,
+            severity: "fail",
+            detail: `${here.length} Claude sessions share this worktree (${here.map((s) => `pid ${s.pid}`).join(", ")}) — they will commit over each other and report each other's work as their own`,
+          });
+        }
+      }
+
+      if (conflicts.length === 0 && stations.length > 0) {
+        checks.push({
+          name: "sessions",
+          severity: "ok",
+          detail: `${scan.sessions.length} live session(s) inspected via ${scan.method}`,
+        });
+      }
+    }
+
     for (const station of stations) {
       if (!station.present) {
         checks.push({
