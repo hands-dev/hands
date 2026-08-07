@@ -25,6 +25,11 @@
  *   hands craft fold <s>       acquire the fold lease, print pending notes to distill (this also
  *                              catches up any mise notes that missed their immediate write)
  *   hands craft fold-done <s>  release the lease, mark notes folded (--through <noteId>)
+ *   hands recipe ls            every recipe — state, rank, criteria progress (hands#96/#137)
+ *   hands recipe new <s>       draft a stub — the principal (or /hands:recipe) fills it in
+ *   hands recipe promote <s>   onto the menu [--rank N] (durably journaled — menu history)
+ *   hands recipe demote <s>    back to the book (durably journaled)
+ *   hands recipe history <d>   which recipes were on the menu on date d (YYYY-MM-DD)
  *   hands station add [-n N] [--without-bypass]  open N stations (worktree hidden inside)
  *   hands station ls           list this repo's stations
  *   hands station rm <id>      retire a station (idempotent; --force discards)
@@ -80,6 +85,10 @@ import {
   personalCraftsDir,
   readEvents,
   replayInto,
+  // aliased: projects.js already exports an unrelated resolveProject (kitchen-name → repo path);
+  // this one resolves the books journal's project KEY for a cwd — different signature, same name.
+  resolveProject as resolveJournalProject,
+  resolveHandle,
   sharedCraftsDir,
   syncPull,
   syncPush,
@@ -101,6 +110,14 @@ import {
   stampCraftReadiness,
   sweepHeldSeatHeader,
 } from "./crafts.js";
+import {
+  currentMenu,
+  listRecipes,
+  menuOnDay,
+  newRecipeStub,
+  recipeFiles,
+  stampRecipeState,
+} from "./recipes.js";
 import {
   booksMcpEntry,
   desktopConfigPath,
@@ -695,6 +712,93 @@ function cmdCraft(argv: string[]): void {
   } finally {
     store.close();
   }
+}
+
+/**
+ * `hands recipe ls|new|promote|demote|history` (hands#96/#137) — replaces `priorities.md`/
+ * `hands_priorities`. Recipes are principal-authored (one file, one owner — no scope tiers to
+ * promote between like crafts have); this CLI is the scaffolding + state-transition surface, not
+ * a content editor — the principal edits the file directly for everything else. `promote`/`demote`
+ * are the only state-changing verbs and are the only ones that touch the journal (durable "which
+ * recipes were on the menu which days" history, hands#96) — `ls`/`new`/`history` are pure reads
+ * (or, for `new`, a local scaffold write with nothing to journal yet).
+ */
+function cmdRecipe(argv: string[]): void {
+  const sub = argv[0];
+  const cfg = loadConfig();
+
+  if (sub === "ls" || !sub) {
+    const recipes = listRecipes(cfg);
+    if (recipes.length === 0) {
+      out("no recipes drafted yet — hands recipe new <slug> to start one, or /hands:recipe to be walked through it");
+      return;
+    }
+    for (const r of recipes) {
+      const rank = r.state === "menu" ? ` #${r.rank ?? "?"}` : "";
+      const criteria = r.criteriaTotal > 0 ? `, ${r.criteriaDone}/${r.criteriaTotal} criteria met` : "";
+      out(`${r.slug}\t[${r.state}${rank}]\t${r.title ?? "(no title)"}${criteria}`);
+    }
+    return;
+  }
+
+  if (sub === "new") {
+    const slug = argv[1];
+    if (!slug) fail("usage: hands recipe new <slug> [--title <text>]");
+    const files = recipeFiles(slug!, cfg);
+    if (fs.existsSync(files.path)) fail(`"${files.slug}" already exists at ${files.path} — edit it directly`);
+    const title = strOpt(argv, "--title") ?? slug!;
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.path, newRecipeStub(title));
+    out(`✔ drafted "${files.slug}" at ${files.path} — edit it directly to fill in the description and criteria`);
+    return;
+  }
+
+  if (sub === "promote" || sub === "demote") {
+    const slug = argv[1];
+    if (!slug) fail(`usage: hands recipe ${sub} <slug>${sub === "promote" ? " [--rank N]" : ""}`);
+    const files = recipeFiles(slug!, cfg);
+    if (!fs.existsSync(files.path)) {
+      fail(`unknown recipe "${files.slug}" — no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+    }
+    const raw = fs.readFileSync(files.path, "utf8");
+    const now = Date.now();
+    // Journal wiring is deliberately scoped to just this write, not the whole CLI process — a CLI
+    // invocation is one-shot, unlike the long-running MCP server that wires it once at connect.
+    const journal = openJournal({ cwd: process.cwd(), config: cfg });
+    if (sub === "promote") {
+      const rankArg = strOpt(argv, "--rank");
+      const rank = rankArg ? Number.parseInt(rankArg, 10) : currentMenu(listRecipes(cfg)).length + 1;
+      if (rankArg !== undefined && !Number.isInteger(rank)) fail("--rank must be an integer");
+      fs.writeFileSync(files.path, stampRecipeState(raw, "menu", rank));
+      journal?.append("recipe.promoted", { slug: files.slug, rank, at: now });
+      out(`✔ "${files.slug}" onto the menu (#${rank})`);
+    } else {
+      fs.writeFileSync(files.path, stampRecipeState(raw, "book", null));
+      journal?.append("recipe.demoted", { slug: files.slug, at: now });
+      out(`✔ "${files.slug}" back to the book`);
+    }
+    if (!journal) out("  (books unavailable — state saved to the file, but this move won't show up in menu history)");
+    return;
+  }
+
+  if (sub === "history") {
+    const date = argv[1];
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) fail("usage: hands recipe history <YYYY-MM-DD>");
+    const dir = journalDir();
+    const project = resolveJournalProject(cfg);
+    const handle = resolveHandle(cfg);
+    const events = readEvents(dir, project, handle);
+    const slugs = menuOnDay(events, date!);
+    if (slugs.length === 0) {
+      out(`no recipes recorded on the menu for ${date} (or the journal doesn't reach back that far)`);
+    } else {
+      out(`On the menu ${date}:`);
+      for (const s of slugs) out(`  ${s}`);
+    }
+    return;
+  }
+
+  fail("usage: hands recipe <ls|new|promote|demote|history> [<slug>]");
 }
 
 function requireRemote() {
@@ -1378,6 +1482,8 @@ async function main(): Promise<void> {
         return cmdBooks(rest);
       case "craft":
         return cmdCraft(rest);
+      case "recipe":
+        return cmdRecipe(rest);
       case "scale":
         return cmdScale(rest);
       case "restore":

@@ -599,7 +599,7 @@ export class Store {
       -- these. head_sha and origin_sha are what make the record expire by
       -- EVENT rather than by clock -- a stale attestation carrying a freshness
       -- stamp is worse than none, which is the flaw #157 identified in
-      -- priorities reporting stale:false about a superseded picture.
+      -- the menu reporting stale:false about a superseded picture.
       CREATE TABLE IF NOT EXISTS attestations (
         agent_id   TEXT PRIMARY KEY,
         ok         INTEGER NOT NULL,       -- 1 = clean and ready, 0 = declined

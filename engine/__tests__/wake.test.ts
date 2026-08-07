@@ -536,7 +536,7 @@ describe("board stateHash + full bundle", () => {
     expect(c.body.stateHash).not.toBe(a.body.stateHash);
   });
 
-  it("full:true bundles tasks + questions + priorities into one read", async () => {
+  it("full:true bundles tasks + questions + menu into one read", async () => {
     const expo = await connect("expo");
     const store = stores[0]!;
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
@@ -548,7 +548,7 @@ describe("board stateHash + full bundle", () => {
     expect(tasks[0]!.assignee).toBe("station-1");
     const questions = res.body.openQuestions as Array<{ question: string }>;
     expect(questions.map((q) => q.question)).toContain("ship it?");
-    expect(res.body.priorities).toMatchObject({ set: false });
+    expect(res.body.menu).toMatchObject({ set: false });
     const plain = await call(expo, "hands_board", {});
     expect(plain.body.activeTasks).toBeUndefined();
   });

@@ -7257,26 +7257,6 @@ var init_store = __esm({
       );
 
       CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
-
-      -- hands#139/#91/#95 \u2014 CDC's two whole-board checkpoints (pre-fire triage,
-      -- pre-ship sign-off) collapsed into one record shape, mirroring
-      -- wake_outcomes/rec_outcome's enum+note pattern rather than inventing a
-      -- second table for the second checkpoint. Written by the expo (the
-      -- identity actually running the CDC dispatch), never by CDC itself \u2014
-      -- CDC returns a verdict in its own response text, same as any craft's
-      -- craft-note contract; the caller records it.
-      CREATE TABLE IF NOT EXISTS task_signoffs (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id     INTEGER NOT NULL,
-        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship
-        verdict     TEXT NOT NULL,      -- approved | rejected
-        note        TEXT,
-        origin_sha  TEXT,               -- origin/main HEAD at signoff time \u2014 the staleness anchor
-        by          TEXT NOT NULL,
-        created_at  INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_task_signoffs_task ON task_signoffs (task_id, created_at);
     `);
         this.db.exec(`
       CREATE TABLE IF NOT EXISTS craft_notes (
@@ -7320,7 +7300,7 @@ var init_store = __esm({
       -- these. head_sha and origin_sha are what make the record expire by
       -- EVENT rather than by clock -- a stale attestation carrying a freshness
       -- stamp is worse than none, which is the flaw #157 identified in
-      -- priorities reporting stale:false about a superseded picture.
+      -- the menu reporting stale:false about a superseded picture.
       CREATE TABLE IF NOT EXISTS attestations (
         agent_id   TEXT PRIMARY KEY,
         ok         INTEGER NOT NULL,       -- 1 = clean and ready, 0 = declined
@@ -7883,44 +7863,6 @@ var init_store = __esm({
       /** Record that an obligation was just nudged, so the next pass doesn't immediately re-nudge it. */
       markChased(kind, id, now = Date.now()) {
         this.setWatermark("*", `chase:${kind}:${id}`, String(now));
-      }
-      // --- CDC checkpoint sign-offs (hands#139/#91/#95) ---
-      recordSignoff(input) {
-        const now = input.now ?? Date.now();
-        const id = this.withRetry(() => {
-          const result = this.db.prepare(
-            `INSERT INTO task_signoffs (task_id, checkpoint, verdict, note, origin_sha, by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-          ).run(
-            input.taskId,
-            input.checkpoint,
-            input.verdict,
-            input.note ?? null,
-            input.originSha ?? null,
-            input.by,
-            now
-          );
-          return Number(result.lastInsertRowid);
-        });
-        this.journal("task.signoff", {
-          id,
-          taskId: input.taskId,
-          checkpoint: input.checkpoint,
-          verdict: input.verdict,
-          note: input.note ?? null,
-          by: input.by,
-          at: now
-        });
-        return id;
-      }
-      /** The most recent sign-off for a task, optionally scoped to one checkpoint. */
-      latestSignoff(taskId, checkpoint) {
-        const clause = checkpoint ? "AND checkpoint = ?" : "";
-        const params = checkpoint ? [taskId, checkpoint] : [taskId];
-        return this.db.prepare(`SELECT * FROM task_signoffs WHERE task_id = ? ${clause} ORDER BY id DESC LIMIT 1`).get(...params);
-      }
-      signoffsForTask(taskId) {
-        return this.db.prepare("SELECT * FROM task_signoffs WHERE task_id = ? ORDER BY id ASC").all(taskId);
       }
       // --- questions (worktree → expo escalation) ---
       askQuestion(input) {
@@ -8579,26 +8521,6 @@ var init_store = __esm({
         }
         return result;
       }
-      /**
-       * hands#103c — subagent_samples has been written on every sub-agent finish since the
-       * SubagentStop hook landed, but craftTokenUsage() above only ever reads the "craft-<slug>"
-       * slice of it; a plain "general-purpose"/"Explore"/etc. dispatch (not routed through a synced
-       * craft) was invisible. This is the whole table, grouped by whatever agent_type it actually
-       * dispatched as — "which agents are used most/least, and is a craft earning its place" needs
-       * that comparison, not just the craft subset. Same 7-day self-trimmed window as the table.
-       */
-      subagentUsageSummary() {
-        const rows = this.db.prepare(
-          `SELECT COALESCE(agent_type, '(untyped)') as agent_type, SUM(output_tokens) as total, COUNT(*) as calls
-         FROM subagent_samples GROUP BY agent_type ORDER BY calls DESC, total DESC, agent_type ASC`
-        ).all();
-        return rows.map((row) => ({
-          agentType: row.agent_type,
-          calls: row.calls,
-          totalOutputTokens: row.total,
-          avgOutputTokens: row.calls > 0 ? Math.round(row.total / row.calls) : 0
-        }));
-      }
       /** Every craft dispatch tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used." */
       listCraftBriefsByTicket(ticketId) {
         return this.db.prepare("SELECT * FROM craft_briefs WHERE ticket_id = ? ORDER BY created_at ASC").all(ticketId);
@@ -9084,50 +9006,9 @@ var init_notify = __esm({
   }
 });
 
-// src/priorities.ts
-import * as fs6 from "node:fs";
-import * as path6 from "node:path";
-function prioritiesPath(env = process.env) {
-  return path6.join(coordinationDir(env), "priorities.md");
-}
-function stripMarker(line) {
-  return line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim();
-}
-function readPriorities(env = process.env) {
-  const file2 = prioritiesPath(env);
-  let raw;
-  try {
-    raw = fs6.readFileSync(file2, "utf8");
-  } catch {
-    return { items: [], raw: "", exists: false };
-  }
-  const items = raw.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map(stripMarker).filter(Boolean);
-  return { items, raw, exists: true };
-}
-function writePriorities(items, env = process.env) {
-  const dir = coordinationDir(env);
-  fs6.mkdirSync(dir, { recursive: true, mode: 448 });
-  const body = `# Today's priorities (ranked \u2014 the expo adjudicates against these)
-
-${items.map((it, i) => `${i + 1}. ${it}`).join("\n")}
-`;
-  const file2 = prioritiesPath(env);
-  fs6.writeFileSync(file2, body, { mode: 384 });
-  try {
-    fs6.chmodSync(file2, 384);
-  } catch {
-  }
-}
-var init_priorities = __esm({
-  "src/priorities.ts"() {
-    "use strict";
-    init_paths();
-  }
-});
-
 // src/digest.ts
-import * as fs9 from "node:fs";
-import * as path8 from "node:path";
+import * as fs8 from "node:fs";
+import * as path7 from "node:path";
 function dayOf(ts) {
   return new Date(ts).toISOString().slice(0, 10);
 }
@@ -9178,11 +9059,10 @@ function describe3(event) {
       return `- ${t} todo #${d.id} \u2192 ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
     case "focus.set":
       return `- ${t} focus \u2192 ${oneLine(d.focus) || "(cleared)"}`;
-    case "priorities.set": {
-      const items = Array.isArray(d.items) ? d.items : [];
-      const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
-      return `- ${t} specials set (${items.length}): ${list}`;
-    }
+    case "recipe.promoted":
+      return `- ${t} recipe "${oneLine(d.slug)}" onto the menu${d.rank ? ` (#${d.rank})` : ""}`;
+    case "recipe.demoted":
+      return `- ${t} recipe "${oneLine(d.slug)}" off the menu`;
     default:
       return null;
   }
@@ -9258,7 +9138,7 @@ function renderIndex(days, opts) {
 function writeIfOwn(file2, content) {
   let existing = null;
   try {
-    existing = fs9.readFileSync(file2, "utf8");
+    existing = fs8.readFileSync(file2, "utf8");
   } catch {
   }
   if (existing !== null) {
@@ -9266,14 +9146,14 @@ function writeIfOwn(file2, content) {
     const stamped = existing.match(STAMP_RE);
     if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
   }
-  fs9.writeFileSync(file2, content);
+  fs8.writeFileSync(file2, content);
   return true;
 }
 function regenerateDigests(journal, dates) {
   const events = readEvents(journal.dir, journal.project, journal.handle);
   if (events.length === 0) return [];
-  const handleDir2 = path8.join(journal.dir, "journal", journal.project, journal.handle);
-  fs9.mkdirSync(handleDir2, { recursive: true });
+  const handleDir2 = path7.join(journal.dir, "journal", journal.project, journal.handle);
+  fs8.mkdirSync(handleDir2, { recursive: true });
   const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
   const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
   const changed = [];
@@ -9282,14 +9162,14 @@ function regenerateDigests(journal, dates) {
     const digest = renderDigest(events, { project: journal.project, handle: journal.handle, date: date5 });
     index.push({ date: date5, summary: digest.summary });
     if (!target.includes(date5)) continue;
-    const file2 = path8.join(handleDir2, `${date5}.md`);
+    const file2 = path7.join(handleDir2, `${date5}.md`);
     if (writeIfOwn(file2, digest.body)) {
-      changed.push(path8.join("journal", journal.project, journal.handle, `${date5}.md`));
+      changed.push(path7.join("journal", journal.project, journal.handle, `${date5}.md`));
     }
   }
   const readme = renderIndex(index, { project: journal.project, handle: journal.handle });
-  if (writeIfOwn(path8.join(handleDir2, "README.md"), readme)) {
-    changed.push(path8.join("journal", journal.project, journal.handle, "README.md"));
+  if (writeIfOwn(path7.join(handleDir2, "README.md"), readme)) {
+    changed.push(path7.join("journal", journal.project, journal.handle, "README.md"));
   }
   return changed;
 }
@@ -9308,25 +9188,25 @@ var init_digest = __esm({
 
 // src/worktree-lock.ts
 import * as crypto from "node:crypto";
-import * as fs10 from "node:fs";
+import * as fs9 from "node:fs";
 import * as os5 from "node:os";
-import * as path9 from "node:path";
+import * as path8 from "node:path";
 function lockPath(worktree, env = process.env, cwd) {
   let resolved = worktree;
   try {
-    resolved = fs10.realpathSync(worktree);
+    resolved = fs9.realpathSync(worktree);
   } catch {
   }
   const digest = crypto.createHash("sha256").update(resolved).digest("hex").slice(0, 12);
-  return path9.join(
+  return path8.join(
     coordinationDir(env, cwd ?? resolved),
     "locks",
-    `${path9.basename(resolved)}-${digest}.json`
+    `${path8.basename(resolved)}-${digest}.json`
   );
 }
 function readLock(worktree, env, cwd) {
   try {
-    const raw = fs10.readFileSync(lockPath(worktree, env, cwd), "utf8");
+    const raw = fs9.readFileSync(lockPath(worktree, env, cwd), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.pid !== "number" || typeof parsed.worktree !== "string") return null;
     return {
@@ -9350,10 +9230,10 @@ var init_worktree_lock = __esm({
 
 // src/watchers.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs11 from "node:fs";
+import * as fs10 from "node:fs";
 function argvOf(pid) {
   try {
-    const parts = fs11.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    const parts = fs10.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
     return parts.length > 0 ? parts : null;
   } catch {
     return null;
@@ -9376,7 +9256,7 @@ function classify(argv, inboxNeedle) {
 }
 function cwdOf(pid) {
   try {
-    return fs11.realpathSync(fs11.readlinkSync(`/proc/${pid}/cwd`));
+    return fs10.realpathSync(fs10.readlinkSync(`/proc/${pid}/cwd`));
   } catch {
     return null;
   }
@@ -9388,7 +9268,7 @@ function selfLineage() {
     line.add(pid);
     const stat = (() => {
       try {
-        return fs11.readFileSync(`/proc/${pid}/stat`, "utf8");
+        return fs10.readFileSync(`/proc/${pid}/stat`, "utf8");
       } catch {
         return null;
       }
@@ -9402,7 +9282,7 @@ function selfLineage() {
 }
 function allPids() {
   try {
-    return fs11.readdirSync("/proc").filter((n) => /^\d+$/.test(n)).map(Number);
+    return fs10.readdirSync("/proc").filter((n) => /^\d+$/.test(n)).map(Number);
   } catch {
     return null;
   }
@@ -9413,8 +9293,8 @@ function watchersFor(stationId, opts) {
     return { stationId, watchers: null, inboxAlive: null };
   }
   const watchers = [];
-  const inboxNeedle = opts.notifyPath;
-  const worktree = opts.worktree;
+  const inboxNeedle = opts?.notifyPath ?? `${stationId}.notify`;
+  const worktree = opts?.worktree;
   const mine = selfLineage();
   for (const pid of pids) {
     if (mine.has(pid)) continue;
@@ -9436,13 +9316,10 @@ function watchersFor(stationId, opts) {
     inboxAlive: watchers.some((w) => w.isInbox)
   };
 }
-function escapeForPgrep(s) {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-function inboxMonitorAliveOnce(stationId, notifyPath2) {
+function inboxMonitorAlive(stationId, notifyPath2) {
   if (process.platform !== "linux") {
     try {
-      const out = execFileSync4("pgrep", ["-f", `tail -F .*${escapeForPgrep(notifyPath2)}`], {
+      const out = execFileSync4("pgrep", ["-f", `tail -F .*${stationId}\\.notify`], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 5e3
@@ -9453,12 +9330,6 @@ function inboxMonitorAliveOnce(stationId, notifyPath2) {
     }
   }
   return watchersFor(stationId, { notifyPath: notifyPath2 }).inboxAlive;
-}
-function inboxMonitorAlive(stationId, notifyPath2) {
-  const first = inboxMonitorAliveOnce(stationId, notifyPath2);
-  if (first !== false) return first;
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-  return inboxMonitorAliveOnce(stationId, notifyPath2);
 }
 var LOOP_PATTERNS, WATCHER_BINARIES, SHELLS;
 var init_watchers = __esm({
@@ -9472,7 +9343,7 @@ var init_watchers = __esm({
 
 // src/attest.ts
 import { execFileSync as execFileSync5 } from "node:child_process";
-import * as path10 from "node:path";
+import * as path9 from "node:path";
 function git3(cwd, args) {
   try {
     return execFileSync5("git", args, {
@@ -9517,35 +9388,35 @@ var init_attest = __esm({
 });
 
 // src/seed-permissions.ts
-import * as fs12 from "node:fs";
-import * as path11 from "node:path";
+import * as fs11 from "node:fs";
+import * as path10 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function unseedStationPermissions(dir) {
-  const file2 = path11.join(dir, SEEDED_RELPATH);
-  if (!fs12.existsSync(file2)) return false;
-  fs12.rmSync(file2, { force: true });
-  const parent = path11.dirname(file2);
+  const file2 = path10.join(dir, SEEDED_RELPATH);
+  if (!fs11.existsSync(file2)) return false;
+  fs11.rmSync(file2, { force: true });
+  const parent = path10.dirname(file2);
   try {
-    if (fs12.readdirSync(parent).length === 0) fs12.rmdirSync(parent);
+    if (fs11.readdirSync(parent).length === 0) fs11.rmdirSync(parent);
   } catch {
   }
   return true;
 }
 function seedStationPermissions(dir) {
-  const file2 = path11.join(dir, ".claude", "settings.local.json");
-  if (fs12.existsSync(file2)) return { path: file2, written: false };
-  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
-  fs12.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+  const file2 = path10.join(dir, ".claude", "settings.local.json");
+  if (fs11.existsSync(file2)) return { path: file2, written: false };
+  fs11.mkdirSync(path10.dirname(file2), { recursive: true });
+  fs11.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
 `);
   return { path: file2, written: true };
 }
 function mergeStationSettings(dir, patch) {
-  const file2 = path11.join(dir, SEEDED_RELPATH);
+  const file2 = path10.join(dir, SEEDED_RELPATH);
   let existing = {};
   try {
-    const raw = fs12.readFileSync(file2, "utf8");
+    const raw = fs11.readFileSync(file2, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") existing = parsed;
   } catch {
@@ -9559,8 +9430,8 @@ function mergeStationSettings(dir, patch) {
     }
   }
   if (!changed) return { path: file2, written: false };
-  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
-  fs12.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
+  fs11.mkdirSync(path10.dirname(file2), { recursive: true });
+  fs11.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -9607,7 +9478,7 @@ var init_seed_permissions = __esm({
       "mcp__plugin_hands_hands__hands_peers",
       "mcp__plugin_hands_hands__hands_board",
       "mcp__plugin_hands_hands__hands_history",
-      "mcp__plugin_hands_hands__hands_priorities",
+      "mcp__plugin_hands_hands__hands_menu",
       "mcp__plugin_hands_hands__hands_questions",
       "mcp__plugin_hands_hands__hands_todos",
       ...SHIP_RULES
@@ -9624,7 +9495,7 @@ var init_seed_permissions = __esm({
 
 // src/theming.ts
 import * as os6 from "node:os";
-import * as path12 from "node:path";
+import * as path11 from "node:path";
 function themeColorForIndex(index) {
   const n = THEME_PALETTE.length;
   const i = ((index - 1) % n + n) % n;
@@ -9635,10 +9506,10 @@ function themeFileName(repoSlug, index) {
 }
 function themesDir(env = process.env) {
   const home = env.HANDS_TEST_HOME?.trim() || os6.homedir();
-  return path12.join(home, ".claude", "themes");
+  return path11.join(home, ".claude", "themes");
 }
 function themeFilePath(repoSlug, index, env = process.env) {
-  return path12.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
+  return path11.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
 }
 function assignStationTheme(opts) {
   const color = themeColorForIndex(opts.index);
@@ -9690,9 +9561,9 @@ __export(provision_exports, {
   stationRoot: () => stationRoot
 });
 import { execFileSync as execFileSync6, spawnSync } from "node:child_process";
-import * as fs13 from "node:fs";
+import * as fs12 from "node:fs";
 import * as os7 from "node:os";
-import * as path13 from "node:path";
+import * as path12 from "node:path";
 function git4(cwd, args) {
   return execFileSync6("git", args, {
     cwd,
@@ -9709,7 +9580,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path13.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path12.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -9718,7 +9589,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs13.readdirSync(root);
+    names = fs12.readdirSync(root);
   } catch {
     return [];
   }
@@ -9730,7 +9601,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path13.join(root, name),
+      dir: path12.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -9789,14 +9660,14 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs13.mkdirSync(root, { recursive: true });
+  fs12.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path13.join(root, id);
+    const dir = path12.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -9810,13 +9681,13 @@ function addStations(count, opts) {
     let sessionName;
     if (cfg.stations.theming) {
       const assignment = assignStationTheme({
-        repoLabel: path13.basename(info.repoRoot),
+        repoLabel: path12.basename(info.repoRoot),
         repoSlug: info.slug,
         index,
         env: opts?.env
       });
-      fs13.mkdirSync(path13.dirname(assignment.file), { recursive: true });
-      fs13.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+      fs12.mkdirSync(path12.dirname(assignment.file), { recursive: true });
+      fs12.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
 `);
       mergeStationSettings(dir, { theme: assignment.themeId });
       themeColor = assignment.color.hex;
@@ -9847,10 +9718,10 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path13.join(root, `station-${index}`);
+  const dir = path12.join(root, `station-${index}`);
   if (cfg.stations.theming) {
     try {
-      fs13.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+      fs12.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
     } catch {
     }
   }
@@ -9859,7 +9730,7 @@ function removeStation(id, opts) {
   } catch {
   }
   let removed = false;
-  if (fs13.existsSync(dir)) {
+  if (fs12.existsSync(dir)) {
     if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
@@ -9908,6 +9779,73 @@ var init_provision = __esm({
     init_theming();
     ProvisionError = class extends Error {
     };
+  }
+});
+
+// src/recipes.ts
+import * as fs13 from "node:fs";
+import * as path13 from "node:path";
+function readFileSafe(p) {
+  try {
+    const body = fs13.readFileSync(p, "utf8").trim();
+    return body || null;
+  } catch {
+    return null;
+  }
+}
+function parseRecipe(slug, content) {
+  if (!content) {
+    return { slug, state: "book", rank: null, title: null, criteria: [], criteriaDone: 0, criteriaTotal: 0 };
+  }
+  const lines = content.split("\n");
+  const titleLine = lines.find((l) => TITLE_RE.test(l.trim()));
+  const title = titleLine ? TITLE_RE.exec(titleLine.trim())?.[1]?.trim() ?? null : null;
+  const headerLine = lines.find((l) => l.trim().startsWith(">")) ?? "";
+  const m = HEADER_RE.exec(headerLine.trim());
+  const state = m?.[1] === "menu" ? "menu" : "book";
+  const rank = state === "menu" && m?.[2] ? Number(m[2]) : null;
+  const criteria = [];
+  let inCriteria = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (CRITERIA_HEADING_RE.test(line)) {
+      inCriteria = true;
+      continue;
+    }
+    if (inCriteria && SECTION_HEADING_RE.test(line)) {
+      inCriteria = false;
+      continue;
+    }
+    if (inCriteria) {
+      const cm = CRITERION_RE.exec(line);
+      if (cm) criteria.push({ text: cm[2].trim(), done: cm[1].toLowerCase() === "x" });
+    }
+  }
+  return { slug, state, rank, title, criteria, criteriaDone: criteria.filter((c) => c.done).length, criteriaTotal: criteria.length };
+}
+function listRecipes(config2, env = process.env, cwd = process.cwd()) {
+  const dir = recipesDir(config2, env, cwd);
+  let entries;
+  try {
+    entries = fs13.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return entries.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -".md".length)).map((slug) => parseRecipe(slug, readFileSafe(path13.join(dir, `${slug}.md`)))).sort((a, b) => a.slug.localeCompare(b.slug));
+}
+function currentMenu(recipes) {
+  return recipes.filter((r) => r.state === "menu").sort((a, b) => (a.rank ?? Number.POSITIVE_INFINITY) - (b.rank ?? Number.POSITIVE_INFINITY));
+}
+var HEADER_RE, TITLE_RE, CRITERIA_HEADING_RE, SECTION_HEADING_RE, CRITERION_RE;
+var init_recipes = __esm({
+  "src/recipes.ts"() {
+    "use strict";
+    init_remote();
+    HEADER_RE = /^>\s*state:\s*(\w+)(?:\s*·\s*rank:\s*(\d+))?/;
+    TITLE_RE = /^#\s+(.+)$/;
+    CRITERIA_HEADING_RE = /^##\s*Acceptance criteria/i;
+    SECTION_HEADING_RE = /^##\s/;
+    CRITERION_RE = /^-\s*\[([ xX])\]\s*(.+)$/;
   }
 });
 
@@ -9995,7 +9933,13 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
   }
   const journal = store.journalSince(0, 40).reverse().map((j) => ({ id: j.id, by: j.agent_id, kind: j.kind, text: j.text, ref: j.ref, at: j.created_at }));
   const messages = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
-  const priorities = readPriorities(env).items;
+  const menu = currentMenu(listRecipes(loadConfig({ env }), env)).map((r) => ({
+    slug: r.slug,
+    title: r.title,
+    rank: r.rank,
+    criteriaDone: r.criteriaDone,
+    criteriaTotal: r.criteriaTotal
+  }));
   const questions = store.listQuestions({ limit: 30 }).map((q) => ({
     id: q.id,
     asker: q.asker,
@@ -10074,7 +10018,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     journal,
     messages,
     collisions,
-    priorities,
+    menu,
     questions,
     github,
     tasks,
@@ -10101,7 +10045,7 @@ function buildPublicSnapshot(store, opts) {
     handle: opts.handle,
     project: opts.project,
     crafts: full.agents.filter((a) => a.focus).map((a) => ({ station: a.id, focus: a.focus })),
-    priorities: full.priorities,
+    menu: full.menu,
     questions: full.questions,
     tasks: full.tasks,
     todos: full.todos,
@@ -10119,8 +10063,9 @@ var init_snapshot = __esm({
     "use strict";
     init_attest();
     init_board();
+    init_config();
     init_provision();
-    init_priorities();
+    init_recipes();
     init_store();
     init_theming();
   }
@@ -10535,6 +10480,10 @@ function personalCraftsDir(config2, env = process.env, cwd = process.cwd()) {
   const booksOn = Boolean(config2.remote.url?.trim());
   return booksOn ? path15.join(journalDir(env, cwd), "journal", resolveProject(config2, cwd), resolveHandle(config2), "crafts") : path15.join(coordinationDir(env, cwd), "crafts");
 }
+function recipesDir(config2, env = process.env, cwd = process.cwd()) {
+  const booksOn = Boolean(config2.remote.url?.trim());
+  return booksOn ? path15.join(journalDir(env, cwd), "journal", resolveProject(config2, cwd), resolveHandle(config2), "recipes") : path15.join(coordinationDir(env, cwd), "recipes");
+}
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
   const raw = sanitizeSegment(craft, "unnamed");
@@ -10573,8 +10522,10 @@ function summarizeEvent(e) {
       return `question #${d.id} answered`;
     case "question.escalate":
       return `question #${d.id} escalated`;
-    case "priorities.set":
-      return `specials set (${Array.isArray(d.items) ? d.items.length : 0})`;
+    case "recipe.promoted":
+      return `recipe "${s(d.slug)}" onto the menu${d.rank ? ` (#${d.rank})` : ""}`;
+    case "recipe.demoted":
+      return `recipe "${s(d.slug)}" off the menu`;
     case "digest.note":
       return clip(`note: ${s(d.text)}`);
     case "focus.set":
@@ -10667,7 +10618,6 @@ var init_remote = __esm({
     init_config();
     init_digest();
     init_paths();
-    init_priorities();
     init_snapshot();
     JOURNAL_VERSION = 1;
     JOURNAL_LAYOUT = 2;
@@ -10682,9 +10632,6 @@ var init_remote = __esm({
 // src/crafts.ts
 import * as fs15 from "node:fs";
 import * as path16 from "node:path";
-function isRoleCraft(slug) {
-  return ROLE_CRAFT_SLUGS.has(slug);
-}
 function parseCraftHeader(bookContent) {
   if (!bookContent) return { covers: null, distilled: null, ready: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
@@ -10695,7 +10642,7 @@ function parseCraftHeader(bookContent) {
     ready: readyMatch ? { at: readyMatch[1], by: readyMatch[2] } : null
   };
 }
-function readFileSafe(p) {
+function readFileSafe2(p) {
   try {
     const body = fs15.readFileSync(p, "utf8").trim();
     return body || null;
@@ -10704,7 +10651,7 @@ function readFileSafe(p) {
   }
 }
 function readCraftFileCapped(p, cap = 6e3) {
-  const body = readFileSafe(p);
+  const body = readFileSafe2(p);
   if (!body) return null;
   const points = Array.from(body);
   return points.length <= cap ? body : `${points.slice(0, cap).join("")}
@@ -10730,14 +10677,14 @@ function listCraftFiles(config2, env = process.env, cwd = process.cwd()) {
   ]) {
     for (const slug of listSlugsIn(dir)) {
       if (seen.has(slug) || !dir) continue;
-      const { covers, distilled, ready } = parseCraftHeader(readFileSafe(path16.join(dir, `${slug}.md`)));
+      const { covers, distilled, ready } = parseCraftHeader(readFileSafe2(path16.join(dir, `${slug}.md`)));
       seen.set(slug, { slug, scope, covers, distilled, ready });
     }
   }
   return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
 }
 function listCrafts(store, config2, env = process.env, cwd = process.cwd()) {
-  return listCraftFiles(config2, env, cwd).filter((e) => !isRoleCraft(e.slug)).map((e) => ({
+  return listCraftFiles(config2, env, cwd).map((e) => ({
     ...e,
     pendingNotes: store.pendingCraftNotes(e.slug).length
   }));
@@ -10812,7 +10759,7 @@ distinct from \`friction\`, which is about whether YOUR OWN book/skill/mise stee
 `;
 }
 function materializeCraftAgents(config2, targetDir, env = process.env, cwd = process.cwd()) {
-  const roster = listCraftFiles(config2, env, cwd).filter((e) => !isRoleCraft(e.slug));
+  const roster = listCraftFiles(config2, env, cwd);
   const agentsDir = path16.join(targetDir, ".claude", "agents");
   const skillsDir = path16.join(targetDir, ".claude", "skills");
   fs15.mkdirSync(agentsDir, { recursive: true });
@@ -10823,7 +10770,7 @@ function materializeCraftAgents(config2, targetDir, env = process.env, cwd = pro
     const skillFile = craftSkillPath(targetDir, entry.slug);
     fs15.mkdirSync(path16.dirname(skillFile), { recursive: true });
     fs15.writeFileSync(craftAgentPath(targetDir, entry.slug), generatedCraftAgent(entry));
-    fs15.writeFileSync(skillFile, generatedCraftSkill(entry, readFileSafe(files.skill)));
+    fs15.writeFileSync(skillFile, generatedCraftSkill(entry, readFileSafe2(files.skill)));
     written.push(entry.slug);
   }
   const wantSlugs = new Set(roster.map((c) => c.slug));
@@ -10977,7 +10924,7 @@ function applyImmediateCraftNote(store, files, note, holder) {
     if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
     try {
       fs15.mkdirSync(files.dir, { recursive: true });
-      fs15.writeFileSync(files.mise, upsertMiseLine(readFileSafe(files.mise), note.body));
+      fs15.writeFileSync(files.mise, upsertMiseLine(readFileSafe2(files.mise), note.body));
       store.markCraftNoteFolded(note.id);
       return true;
     } finally {
@@ -10988,18 +10935,17 @@ function applyImmediateCraftNote(store, files, note, holder) {
   if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
   try {
     fs15.mkdirSync(files.dir, { recursive: true });
-    fs15.writeFileSync(target, appendRawNote(readFileSafe(target), formatRawTaggedLine(note)));
+    fs15.writeFileSync(target, appendRawNote(readFileSafe2(target), formatRawTaggedLine(note)));
     return true;
   } finally {
     store.releaseCraftFoldLease(files.slug, holder);
   }
 }
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS;
+var COVERS_RE, DISTILLED_RE, READY_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
     init_remote();
-    ROLE_CRAFT_SLUGS = /* @__PURE__ */ new Set(["cdc"]);
     COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
     DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
     READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
@@ -11109,55 +11055,12 @@ var init_chat = __esm({
       "mcp__hands__hands_tasks",
       "mcp__hands__hands_peers",
       "mcp__hands__hands_history",
-      "mcp__hands__hands_priorities",
+      "mcp__hands__hands_menu",
       "mcp__hands__hands_questions",
       "mcp__hands__hands_paths",
       "mcp__hands__hands_todos"
     ];
     SYSTEM_PROMPT = "You are the read-only assistant embedded in the hands dashboard. Answer questions about the kitchen's current work using only the hands_* tools available to you. You cannot send messages, delegate tickets, or change anything \u2014 if asked to take an action, say so plainly and explain that you're read-only.";
-  }
-});
-
-// src/context-signals.ts
-function total(s) {
-  return s.inputTokens + s.cacheReadTokens + s.cacheCreationTokens;
-}
-function deriveContextSignals(samples, now) {
-  const sorted = [...samples].sort((a, b) => a.at - b.at);
-  let compactionsLastHour = 0;
-  let learnedCeiling = null;
-  let lastCompactionIndex = -1;
-  for (let i = 1; i < sorted.length; i++) {
-    const prevTotal = total(sorted[i - 1]);
-    const curTotal = total(sorted[i]);
-    if (prevTotal > 0 && curTotal < prevTotal * COMPACTION_DROP_RATIO) {
-      if (now - sorted[i].at < HOUR_MS) compactionsLastHour++;
-      learnedCeiling = learnedCeiling === null ? prevTotal : Math.max(learnedCeiling, prevTotal);
-      lastCompactionIndex = i;
-    }
-  }
-  const window = sorted.slice(Math.max(lastCompactionIndex + 1, sorted.length - SLOPE_WINDOW));
-  let slopePerMin = null;
-  if (window.length >= 2) {
-    const first = window[0];
-    const last = window[window.length - 1];
-    const dtMin = (last.at - first.at) / 6e4;
-    if (dtMin > 0) slopePerMin = (total(last) - total(first)) / dtMin;
-  }
-  let etaToCompactionMin = null;
-  if (learnedCeiling !== null && slopePerMin !== null && slopePerMin > 0 && sorted.length > 0) {
-    const current = total(sorted[sorted.length - 1]);
-    if (current < learnedCeiling) etaToCompactionMin = (learnedCeiling - current) / slopePerMin;
-  }
-  return { compactionsLastHour, slopePerMin, etaToCompactionMin };
-}
-var COMPACTION_DROP_RATIO, SLOPE_WINDOW, HOUR_MS;
-var init_context_signals = __esm({
-  "src/context-signals.ts"() {
-    "use strict";
-    COMPACTION_DROP_RATIO = 0.5;
-    SLOPE_WINDOW = 6;
-    HOUR_MS = 60 * 6e4;
   }
 });
 
@@ -11620,13 +11523,6 @@ function serve(opts) {
     });
   };
   const buildContextUsage = (agentIds) => store.contextSamplesForAgents(agentIds);
-  const buildContextSignals = (contextUsage, now) => {
-    const result = {};
-    for (const [agentId, samples] of Object.entries(contextUsage)) {
-      result[agentId] = deriveContextSignals(samples, now);
-    }
-    return result;
-  };
   const buildAgentMessages = (agentIds) => {
     const result = {};
     for (const id of agentIds) {
@@ -11655,10 +11551,8 @@ function serve(opts) {
     const craftRoster = buildCraftRoster();
     const agentIds = snapshot.agents.map((a) => a.id);
     const contextUsage = buildContextUsage(agentIds);
-    const contextSignals = buildContextSignals(contextUsage, snapshot.now);
     const agentMessages = buildAgentMessages(agentIds);
     const craftBriefsByTicket = buildCraftBriefsByTicket();
-    const subagentUsage = store.subagentUsageSummary();
     const chatAvailable = hasAgentSdkInstalledFn();
     return {
       json: JSON.stringify({
@@ -11673,13 +11567,11 @@ function serve(opts) {
         tokens,
         taskCosts,
         contextUsage,
-        contextSignals,
         agentMessages,
         craftBriefsByTicket,
-        subagentUsage,
         chatAvailable
       }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages) + JSON.stringify(craftBriefsByTicket) + JSON.stringify(subagentUsage) + JSON.stringify(chatAvailable)
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages) + JSON.stringify(craftBriefsByTicket) + JSON.stringify(chatAvailable)
     };
   };
   const clients = /* @__PURE__ */ new Set();
@@ -12059,7 +11951,6 @@ var init_serve = __esm({
     "use strict";
     init_chat();
     init_config();
-    init_context_signals();
     init_crafts();
     init_feedback();
     init_notify();
@@ -35580,22 +35471,21 @@ function pollGithub(store, opts) {
 init_identity();
 init_notify();
 init_paths();
-init_priorities();
 
 // src/publish.ts
-import * as fs8 from "node:fs";
+import * as fs7 from "node:fs";
 
 // src/memory.ts
 init_paths();
 import { createHash as createHash3 } from "node:crypto";
-import * as fs7 from "node:fs";
+import * as fs6 from "node:fs";
 import * as os4 from "node:os";
-import * as path7 from "node:path";
+import * as path6 from "node:path";
 function memoryDir(env = process.env, cwd = process.cwd()) {
   const override = env.HANDS_MEMORY_DIR?.trim();
   if (override) return override;
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
-  return path7.join(os4.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
+  return path6.join(os4.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
 }
 function descriptionOf(body) {
   const m = body.match(/^description:\s*(.+)$/m);
@@ -35605,7 +35495,7 @@ function scanMemory(env = process.env) {
   const dir = memoryDir(env);
   let names;
   try {
-    names = fs7.readdirSync(dir);
+    names = fs6.readdirSync(dir);
   } catch {
     return [];
   }
@@ -35613,7 +35503,7 @@ function scanMemory(env = process.env) {
   for (const file2 of names) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md") continue;
     try {
-      const body = fs7.readFileSync(path7.join(dir, file2), "utf8");
+      const body = fs6.readFileSync(path6.join(dir, file2), "utf8");
       entries.push({
         name: file2.replace(/\.md$/, ""),
         hash: createHash3("sha1").update(body).digest("hex").slice(0, 12),
@@ -35630,15 +35520,15 @@ var MAX_FILES = 50;
 var USAGE_TAIL_CAP = 256 * 1024;
 function readLastUsage(transcriptPath) {
   try {
-    const stat = fs8.statSync(transcriptPath);
+    const stat = fs7.statSync(transcriptPath);
     const start = Math.max(0, stat.size - USAGE_TAIL_CAP);
     const length = stat.size - start;
     const buffer = Buffer.alloc(length);
-    const fd = fs8.openSync(transcriptPath, "r");
+    const fd = fs7.openSync(transcriptPath, "r");
     try {
-      fs8.readSync(fd, buffer, 0, length, start);
+      fs7.readSync(fd, buffer, 0, length, start);
     } finally {
-      fs8.closeSync(fd);
+      fs7.closeSync(fd);
     }
     const lines = buffer.toString("utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -35758,9 +35648,9 @@ function totalOutputTokens(transcriptPath) {
     }
   }
   if (byMessage.size === 0) return null;
-  let total2 = 0;
-  for (const tokens of byMessage.values()) total2 += tokens;
-  return total2;
+  let total = 0;
+  for (const tokens of byMessage.values()) total += tokens;
+  return total;
 }
 function readMeta(transcriptPath) {
   try {
@@ -35863,6 +35753,7 @@ function runSubagentStop(store, opts) {
 // src/server.ts
 init_remote();
 init_crafts();
+init_recipes();
 init_store();
 init_watchers();
 
@@ -36001,7 +35892,7 @@ function readPreviousPage(opts) {
 // src/server.ts
 init_attest();
 init_provision();
-var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
+var MENU_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;
 var MAX_WAIT_SECONDS = 120;
 function sleep(ms) {
@@ -36062,7 +35953,7 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "hands", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " You are a generalist: you hold no craft of your own. You own the ticket and your worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices of work they cover \u2014 see the roster below." : "") + craftRosterContext(cfg, store)
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's menu or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_menu to read the current menu, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " You are a generalist: you hold no craft of your own. You own the ticket and your worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices of work they cover \u2014 see the roster below." : "") + craftRosterContext(cfg, store)
     }
   );
   server.registerTool(
@@ -36232,9 +36123,9 @@ ${input.body}`, [agentId, ...recipients]);
     "hands_board",
     {
       title: "Read the standup board",
-      description: "Snapshot of every agent: who's active (branch + last-active age), recent learnings (commits + memory writes), and any file/ticket collisions with you. Always includes a cheap `stateHash` fingerprint \u2014 if it matches your last pass, nothing moved and you can skip a deeper re-scan. Pass full:true to bundle active tasks + open questions + the priorities digest into this ONE read (instead of separate tasks/questions/priorities calls).",
+      description: "Snapshot of every agent: who's active (branch + last-active age), recent learnings (commits + memory writes), and any file/ticket collisions with you. Always includes a cheap `stateHash` fingerprint \u2014 if it matches your last pass, nothing moved and you can skip a deeper re-scan. Pass full:true to bundle active tasks + open questions + the menu digest into this ONE read (instead of separate tasks/questions/menu calls).",
       inputSchema: {
-        full: external_exports3.boolean().optional().describe("true = also bundle active tasks, open questions, and the priorities digest")
+        full: external_exports3.boolean().optional().describe("true = also bundle active tasks, open questions, and the menu digest")
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     },
@@ -36243,30 +36134,29 @@ ${input.body}`, [agentId, ...recipients]);
       const now = Date.now();
       store.parkStrandedTickets(now);
       const wakes = store.wakeCounts(now);
-      const peers = store.listPeers(now).map((p2) => {
-        const activeAge = p2.last_active ? now - p2.last_active : null;
+      const peers = store.listPeers(now).map((p) => {
+        const activeAge = p.last_active ? now - p.last_active : null;
         return {
-          id: p2.id,
-          focus: p2.focus ?? void 0,
-          isSelf: p2.id === agentId,
-          online: p2.online,
+          id: p.id,
+          focus: p.focus ?? void 0,
+          isSelf: p.id === agentId,
+          online: p.online,
           // hands#183: pid-liveness, independent of the 15-minute online window —
           // false only when the recorded process is confirmed gone. This is what
           // "safe to dispatch to" should check, not `online` alone.
-          alive: p2.alive,
-          branch: p2.branch ?? void 0,
+          alive: p.alive,
+          branch: p.branch ?? void 0,
           state: activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle",
-          lastActive: p2.last_active ? new Date(p2.last_active).toISOString() : void 0,
+          lastActive: p.last_active ? new Date(p.last_active).toISOString() : void 0,
           // wake accounting: each wake re-processes this agent's whole context,
           // so cost ≈ wakes × context size. Spot the chatty hotspots here.
-          wakesLastHour: wakes.get(p2.id)?.lastHour ?? 0,
-          wakes24h: wakes.get(p2.id)?.last24h ?? 0,
+          wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
+          wakes24h: wakes.get(p.id)?.last24h ?? 0,
           // hands#133/#121: "idle" and "deaf" are indistinguishable without
           // this. A station whose inbox tail died looks exactly like one with
           // nothing to do — it simply never wakes again. null = couldn't look,
           // which must not read as fine.
-          // hands#202 — anchored to p.id's resolved path, never a bare substring.
-          inboxMonitorAlive: /^station-\d+$/.test(p2.id) ? inboxMonitorAlive(p2.id, notifyPath(p2.id)) : void 0
+          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id) : void 0
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -36302,17 +36192,17 @@ ${input.body}`, [agentId, ...recipients]);
         context: q.context ?? void 0,
         askedAt: new Date(q.created_at).toISOString()
       }));
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
+      const menu = currentMenu(listRecipes(cfg));
+      const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
       return asToolResult({
         ...base,
         activeTasks,
         openQuestions,
-        priorities: {
-          items: p.items,
-          set: p.items.length > 0,
-          stale: confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS
+        menu: {
+          items: menu.map((r) => ({ slug: r.slug, title: r.title, rank: r.rank, criteriaDone: r.criteriaDone, criteriaTotal: r.criteriaTotal })),
+          set: menu.length > 0,
+          stale: confirmedAt == null || now - confirmedAt > MENU_STALE_MS
         }
       });
     }
@@ -36340,7 +36230,7 @@ ${input.body}`, [agentId, ...recipients]);
     "hands_ask",
     {
       title: "Escalate an open question to the expo",
-      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them \u2014 structured, not just prose, when the decision cleanly decomposes into 2-4 choices.`,
+      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's menu or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them \u2014 structured, not just prose, when the decision cleanly decomposes into 2-4 choices.`,
       inputSchema: {
         question: external_exports3.string(),
         context: external_exports3.string().optional().describe("what's blocked, options, your lean"),
@@ -36478,7 +36368,7 @@ ${input.body}`, [agentId, ...recipients]);
           wokeSous = result.notified.includes("sous");
         } catch {
         }
-        if (inboxMonitorAlive("sous", notifyPath("sous")) === false) {
+        if (inboxMonitorAlive("sous") === false) {
           sousWarning = "sous.enabled is true but no inbox monitor is tailing sous.notify \u2014 this escalation was recorded but nothing is running /loop /hands:sous to see it";
         }
       }
@@ -36511,47 +36401,11 @@ ${input.body}`, [agentId, ...recipients]);
     }
   );
   server.registerTool(
-    "hands_craft_signoff",
+    "hands_menu",
     {
-      title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
-      description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved) or 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before you may act on \xA75 (review depth / merge) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh.",
+      title: "Read the menu \u2014 today's recipes in play (hands#96/#137)",
+      description: `Read-only: the current menu (recipes with state: menu, ranked) + whether it's stale/unset. Recipes are principal-authored \u2014 a file per recipe, drafted directly or via /hands:recipe \u2014 this tool never writes one; \`hands recipe promote/demote\` (CLI) moves an item on/off. Pass confirm=true to mark the current menu still-current. If items is empty, ask ${principal} for today's menu.`,
       inputSchema: {
-        taskId: external_exports3.number().int(),
-        checkpoint: external_exports3.enum(["pre-fire", "pre-ship"]),
-        verdict: external_exports3.enum(["approved", "rejected"]),
-        note: external_exports3.string().optional(),
-        originSha: external_exports3.string().optional().describe("origin/main HEAD at the moment CDC judged \u2014 the staleness anchor; omit if unavailable")
-      },
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-    },
-    async (input) => {
-      store.touch(agentId);
-      if (!isExpo(agentId)) {
-        return {
-          ...asToolResult({ ok: false, error: "Only the expo records a CDC signoff \u2014 it's the one running the dispatch." }),
-          isError: true
-        };
-      }
-      const task = store.getTask(input.taskId);
-      if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
-      const id = store.recordSignoff({
-        taskId: input.taskId,
-        checkpoint: input.checkpoint,
-        verdict: input.verdict,
-        note: input.note ?? null,
-        originSha: input.originSha ?? null,
-        by: agentId
-      });
-      return asToolResult({ ok: true, id });
-    }
-  );
-  server.registerTool(
-    "hands_priorities",
-    {
-      title: "Read or set the menu \u2014 the expo's ranked priorities",
-      description: `No args: read the current ranked priorities (+ whether they're stale/unset). Pass \`set\` to replace them (ranked, most-important first). Pass confirm=true to mark the existing list still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
-      inputSchema: {
-        set: external_exports3.array(external_exports3.string()).optional(),
         confirm: external_exports3.boolean().optional()
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
@@ -36559,23 +36413,17 @@ ${input.body}`, [agentId, ...recipients]);
     async (input) => {
       store.touch(agentId);
       const now = Date.now();
-      if (input.set) {
-        writePriorities(input.set);
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-        store.journal("priorities.set", { items: input.set, at: now });
-      } else if (input.confirm) {
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-      }
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
+      if (input.confirm) store.setWatermark("*", "menu_confirmed_at", String(now));
+      const menu = currentMenu(listRecipes(cfg));
+      const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
-      const stale = confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS;
+      const stale = confirmedAt == null || now - confirmedAt > MENU_STALE_MS;
       return asToolResult({
-        items: p.items,
-        set: p.items.length > 0,
+        items: menu.map((r) => ({ slug: r.slug, title: r.title, rank: r.rank, criteriaDone: r.criteriaDone, criteriaTotal: r.criteriaTotal })),
+        set: menu.length > 0,
         confirmedAt: confirmedAt ? new Date(confirmedAt).toISOString() : null,
         stale,
-        needsInput: p.items.length === 0
+        needsInput: menu.length === 0
       });
     }
   );
@@ -36647,7 +36495,7 @@ ${input.body}`, [agentId, ...recipients]);
       deliverWake([assignee], { from: agentId, subject: "task" });
       const assigneePeer = store.listPeers().find((p) => p.id === assignee);
       const deadWarning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
-      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee, notifyPath(assignee)) === false;
+      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee) === false;
       const monitorWarning = monitorDead ? `${assignee}'s inbox monitor is dead \u2014 it cannot be woken until its next pass (self-heal on the fallback heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a while; run \`hands doctor\` to confirm, or restart the station to fix it now.` : void 0;
       const leakWarning = crossPeerMentionWarning(`${input.title}
 ${input.body ?? ""}`, [agentId, assignee]);
@@ -36683,33 +36531,18 @@ ${input.body ?? ""}`, [agentId, assignee]);
       });
       return asToolResult({
         count: rows.length,
-        tasks: rows.map((t) => {
-          const signoff = store.latestSignoff(t.id);
-          return {
-            id: t.id,
-            title: t.title,
-            body: t.body ?? void 0,
-            from: t.created_by,
-            assignee: t.assignee ?? "queue",
-            state: t.state,
-            result: t.result ?? void 0,
-            priority: t.priority_ref ?? void 0,
-            dish: t.dish ?? void 0,
-            updatedAt: new Date(t.updated_at).toISOString(),
-            // hands#139/#91/#95 — the most recent CDC checkpoint verdict, if
-            // any. `originSha` is the staleness anchor: compare against the
-            // CURRENT origin/main HEAD yourself before trusting an
-            // "approved" pre-ship signoff — a stale one is not a signoff.
-            signoff: signoff ? {
-              checkpoint: signoff.checkpoint,
-              verdict: signoff.verdict,
-              note: signoff.note ?? void 0,
-              originSha: signoff.origin_sha ?? void 0,
-              by: signoff.by,
-              at: new Date(signoff.created_at).toISOString()
-            } : void 0
-          };
-        })
+        tasks: rows.map((t) => ({
+          id: t.id,
+          title: t.title,
+          body: t.body ?? void 0,
+          from: t.created_by,
+          assignee: t.assignee ?? "queue",
+          state: t.state,
+          result: t.result ?? void 0,
+          priority: t.priority_ref ?? void 0,
+          dish: t.dish ?? void 0,
+          updatedAt: new Date(t.updated_at).toISOString()
+        }))
       });
     }
   );
@@ -36980,7 +36813,7 @@ ${input.body ?? ""}`, [agentId, assignee]);
       "hands_station_add",
       {
         title: "Open more stations (expo only)",
-        description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu (ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
+        description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
         inputSchema: { count: external_exports3.number().int().min(1).max(12).optional() },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
       },

@@ -3,7 +3,16 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildBoard } from "../src/board.js";
-import { prioritiesPath, readPriorities, writePriorities } from "../src/priorities.js";
+import { loadConfig } from "../src/config.js";
+import {
+  currentMenu,
+  listRecipes,
+  menuOnDay,
+  newRecipeStub,
+  parseRecipe,
+  recipeFiles,
+  stampRecipeState,
+} from "../src/recipes.js";
 import { Store } from "../src/store.js";
 
 let home: string;
@@ -15,22 +24,90 @@ beforeEach(() => {
 });
 afterEach(() => fs.rmSync(home, { recursive: true, force: true }));
 
-describe("priorities", () => {
-  it("is absent until set, then round-trips ranked items", () => {
-    expect(readPriorities(env).exists).toBe(false);
-    writePriorities(["fix greptile gate", "staging stability", "loops cadence"], env);
-    const p = readPriorities(env);
-    expect(p.exists).toBe(true);
-    expect(p.items).toEqual(["fix greptile gate", "staging stability", "loops cadence"]);
+describe("recipes (hands#96/#137 — replaces priorities.md/hands_priorities)", () => {
+  it("is absent until drafted, then round-trips through promote/demote", () => {
+    const cfg = loadConfig({ env });
+    expect(listRecipes(cfg, env)).toEqual([]);
+
+    const files = recipeFiles("fix greptile gate", cfg, env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.path, newRecipeStub("Fix the greptile gate"));
+    expect(listRecipes(cfg, env)).toHaveLength(1);
+    expect(currentMenu(listRecipes(cfg, env))).toEqual([]); // fresh recipe starts in the book, not the menu
+
+    const promoted = stampRecipeState(fs.readFileSync(files.path, "utf8"), "menu", 1);
+    fs.writeFileSync(files.path, promoted);
+    const onMenu = currentMenu(listRecipes(cfg, env));
+    expect(onMenu.map((r) => r.slug)).toEqual(["fix-greptile-gate"]);
+    expect(onMenu[0]?.rank).toBe(1);
+
+    const demoted = stampRecipeState(fs.readFileSync(files.path, "utf8"), "book", null);
+    fs.writeFileSync(files.path, demoted);
+    expect(currentMenu(listRecipes(cfg, env))).toEqual([]);
   });
 
-  it("strips list markers and skips headers/blanks when reading a hand-edited file", () => {
-    fs.mkdirSync(home, { recursive: true });
-    fs.writeFileSync(
-      prioritiesPath(env),
-      "# Today\n\n- first thing\n2. second thing\n\n* third thing\n",
-    );
-    expect(readPriorities(env).items).toEqual(["first thing", "second thing", "third thing"]);
+  it("parses acceptance criteria as GFM checkboxes, counting done vs total", () => {
+    const content = [
+      "# Fix DELETE 404s",
+      "> state: menu · rank: 2",
+      "",
+      "Fix the 404 semantics.",
+      "",
+      "## Acceptance criteria",
+      "- [x] Given a deleted order, when DELETE runs again, then it 404s.",
+      "- [ ] Given a valid order, when DELETE succeeds, then it's gone from GET.",
+    ].join("\n");
+    const r = parseRecipe("ordering-api-404-fix", content);
+    expect(r.state).toBe("menu");
+    expect(r.rank).toBe(2);
+    expect(r.title).toBe("Fix DELETE 404s");
+    expect(r.criteriaTotal).toBe(2);
+    expect(r.criteriaDone).toBe(1);
+  });
+});
+
+describe("menuOnDay — durable menu history from the journal, not new storage (hands#96)", () => {
+  const day = (s: string) => Date.parse(`${s}T12:00:00Z`);
+
+  it("a recipe promoted then never demoted stays on the menu for every later day", () => {
+    const events = [
+      { v: 1, ts: day("2026-08-01"), type: "recipe.promoted", data: { slug: "a", rank: 1 } },
+    ];
+    expect(menuOnDay(events, "2026-08-01")).toEqual(["a"]);
+    expect(menuOnDay(events, "2026-08-05")).toEqual(["a"]); // still on, no demotion ever happened
+  });
+
+  it("a demotion after promotion removes it from later days but not earlier ones", () => {
+    const events = [
+      { v: 1, ts: day("2026-08-01"), type: "recipe.promoted", data: { slug: "a", rank: 1 } },
+      { v: 1, ts: day("2026-08-03"), type: "recipe.demoted", data: { slug: "a" } },
+    ];
+    expect(menuOnDay(events, "2026-08-02")).toEqual(["a"]); // between promote and demote
+    expect(menuOnDay(events, "2026-08-04")).toEqual([]); // after demote
+  });
+
+  it("only counts events up to and including the target day — future promotions don't leak backward", () => {
+    const events = [
+      { v: 1, ts: day("2026-08-10"), type: "recipe.promoted", data: { slug: "future-recipe", rank: 1 } },
+    ];
+    expect(menuOnDay(events, "2026-08-05")).toEqual([]);
+  });
+
+  it("tracks multiple recipes independently", () => {
+    const events = [
+      { v: 1, ts: day("2026-08-01"), type: "recipe.promoted", data: { slug: "a", rank: 1 } },
+      { v: 1, ts: day("2026-08-01"), type: "recipe.promoted", data: { slug: "b", rank: 2 } },
+      { v: 1, ts: day("2026-08-02"), type: "recipe.demoted", data: { slug: "a" } },
+    ];
+    expect(menuOnDay(events, "2026-08-03").sort()).toEqual(["b"]);
+  });
+
+  it("ignores unrelated journal event types", () => {
+    const events = [
+      { v: 1, ts: day("2026-08-01"), type: "recipe.promoted", data: { slug: "a", rank: 1 } },
+      { v: 1, ts: day("2026-08-01"), type: "task.create", data: { id: 1 } },
+    ];
+    expect(menuOnDay(events, "2026-08-01")).toEqual(["a"]);
   });
 });
 

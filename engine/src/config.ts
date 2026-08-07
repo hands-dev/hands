@@ -49,7 +49,7 @@ export interface HandsConfig {
    * Durable remote journal (opt-in). When `url` is set, every state-changing
    * bus action is appended to an NDJSON event log inside a git clone of that
    * repo and pushed on the Stop-hook cadence — so the coordination state
-   * (tasks, questions, todos, priorities, history) survives machine restarts
+   * (tasks, questions, todos, recipes, history) survives machine restarts
    * and moves. Multiplayer is the same mechanism with a shared repo: each
    * fleet writes only under its own `handle` namespace, so writers never
    * conflict. The remote holds message bodies in PLAINTEXT — use a private

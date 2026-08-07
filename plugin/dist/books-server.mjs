@@ -30287,38 +30287,34 @@ var DIGEST_VERSION = 1;
 var STAMP_PREFIX = "<!-- hands digest v";
 var STAMP = `${STAMP_PREFIX}${DIGEST_VERSION} -->`;
 
-// src/priorities.ts
-import * as fs5 from "node:fs";
-import * as path5 from "node:path";
-
 // src/snapshot.ts
 import * as path14 from "node:path";
 
 // src/attest.ts
 import { execFileSync as execFileSync3 } from "node:child_process";
-import * as path7 from "node:path";
+import * as path6 from "node:path";
 
 // src/worktree-lock.ts
 import * as crypto from "node:crypto";
-import * as fs6 from "node:fs";
+import * as fs5 from "node:fs";
 import * as os4 from "node:os";
-import * as path6 from "node:path";
+import * as path5 from "node:path";
 
 // src/watchers.ts
 import { execFileSync as execFileSync2 } from "node:child_process";
-import * as fs7 from "node:fs";
+import * as fs6 from "node:fs";
 
 // src/board.ts
 import { createHash as createHash3 } from "node:crypto";
 
 // src/identity.ts
-import * as path8 from "node:path";
+import * as path7 from "node:path";
 
 // src/board.ts
-import * as path9 from "node:path";
+import * as path8 from "node:path";
 
 // src/store.ts
-import * as fs8 from "node:fs";
+import * as fs7 from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 var ONLINE_WINDOW_MS = 15 * 6e4;
 
@@ -30327,18 +30323,18 @@ var IDLE_THRESHOLD_MS = 3 * 6e4;
 
 // src/provision.ts
 import { execFileSync as execFileSync4, spawnSync } from "node:child_process";
-import * as fs11 from "node:fs";
+import * as fs10 from "node:fs";
 import * as os6 from "node:os";
-import * as path13 from "node:path";
+import * as path12 from "node:path";
 
 // src/crafts.ts
-import * as fs9 from "node:fs";
-import * as path10 from "node:path";
+import * as fs8 from "node:fs";
+import * as path9 from "node:path";
 var WEEK_MS = 7 * 24 * 60 * 6e4;
 
 // src/seed-permissions.ts
-import * as fs10 from "node:fs";
-import * as path11 from "node:path";
+import * as fs9 from "node:fs";
+import * as path10 from "node:path";
 var PUSH_RULE = "Bash(git push *)";
 var PR_CREATE_RULE = "Bash(gh pr create *)";
 var SHIP_RULES = [PUSH_RULE, PR_CREATE_RULE];
@@ -30378,7 +30374,7 @@ var ALLOW = [
   "mcp__plugin_hands_hands__hands_peers",
   "mcp__plugin_hands_hands__hands_board",
   "mcp__plugin_hands_hands__hands_history",
-  "mcp__plugin_hands_hands__hands_priorities",
+  "mcp__plugin_hands_hands__hands_menu",
   "mcp__plugin_hands_hands__hands_questions",
   "mcp__plugin_hands_hands__hands_todos",
   ...SHIP_RULES
@@ -30386,7 +30382,11 @@ var ALLOW = [
 
 // src/theming.ts
 import * as os5 from "node:os";
-import * as path12 from "node:path";
+import * as path11 from "node:path";
+
+// src/recipes.ts
+import * as fs11 from "node:fs";
+import * as path13 from "node:path";
 
 // src/remote.ts
 var GIT_TIMEOUT_MS = 2e4;

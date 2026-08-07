@@ -1,8 +1,9 @@
 import * as path from "node:path";
 import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { IDLE_THRESHOLD_MS } from "./board.js";
+import { loadConfig } from "./config.js";
 import { listStations } from "./provision.js";
-import { readPriorities } from "./priorities.js";
+import { currentMenu, listRecipes } from "./recipes.js";
 import { type MessageRow, Store } from "./store.js";
 import { themeColorForIndex } from "./theming.js";
 
@@ -175,13 +176,21 @@ export interface SnapshotTodo {
   at: number;
 }
 
+export interface SnapshotMenuItem {
+  slug: string;
+  title: string | null;
+  rank: number | null;
+  criteriaDone: number;
+  criteriaTotal: number;
+}
+
 export interface Snapshot {
   now: number;
   agents: SnapshotAgent[];
   journal: SnapshotJournal[];
   messages: SnapshotMessage[];
   collisions: Collision[];
-  priorities: string[];
+  menu: SnapshotMenuItem[];
   questions: SnapshotQuestion[];
   github: SnapshotPr[];
   tasks: SnapshotTask[];
@@ -303,7 +312,13 @@ export function buildSnapshot(
 
   const messages: SnapshotMessage[] = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
 
-  const priorities = readPriorities(env).items;
+  const menu: SnapshotMenuItem[] = currentMenu(listRecipes(loadConfig({ env }), env)).map((r) => ({
+    slug: r.slug,
+    title: r.title,
+    rank: r.rank,
+    criteriaDone: r.criteriaDone,
+    criteriaTotal: r.criteriaTotal,
+  }));
   const questions: SnapshotQuestion[] = store.listQuestions({ limit: 30 }).map((q) => ({
     id: q.id,
     asker: q.asker,
@@ -389,7 +404,7 @@ export function buildSnapshot(
     journal,
     messages,
     collisions,
-    priorities,
+    menu,
     questions,
     github,
     tasks,
@@ -419,7 +434,7 @@ export interface PublicSnapshot {
   handle: string;
   project: string;
   crafts: PublicCraft[];
-  priorities: string[];
+  menu: SnapshotMenuItem[];
   questions: SnapshotQuestion[];
   tasks: SnapshotTask[];
   todos: SnapshotTodo[];
@@ -437,7 +452,7 @@ export interface PublicSnapshot {
  * alongside digests (see remote.ts syncPush) so a hosted dashboard can read
  * it with no server-side replay. Derived from the same buildSnapshot() the
  * local dashboard uses, forwarding only fields that are meaningful off-machine:
- * tickets/questions/todos/priorities/craft labels. Deliberately drops message
+ * tickets/questions/todos/menu/craft labels. Deliberately drops message
  * bodies (never leave the NDJSON layer — same policy as digests), live
  * agent presence (pid/cwd/files/branch/wakes — meaningless once the pane that
  * pushed this isn't the pane you're looking at), and token/cost telemetry
@@ -457,7 +472,7 @@ export function buildPublicSnapshot(
     crafts: full.agents
       .filter((a) => a.focus)
       .map((a) => ({ station: a.id, focus: a.focus })),
-    priorities: full.priorities,
+    menu: full.menu,
     questions: full.questions,
     tasks: full.tasks,
     todos: full.todos,

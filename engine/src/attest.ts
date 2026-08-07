@@ -179,7 +179,7 @@ export function assessReadiness(opts: {
  * Is a recorded attestation still good?
  *
  * Measured against EVENTS, not the clock. #157's sharpest point is that
- * `hands_priorities` reports `stale: false` when the list was merely *set*
+ * `hands_menu` reports `stale: false` when the menu was merely *confirmed*
  * recently — so an out-of-date map arrives with a freshness stamp on it. An
  * attestation with the same flaw would be worse than none.
  *

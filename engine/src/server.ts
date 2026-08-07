@@ -25,7 +25,6 @@ import { pollGithub } from "./github.js";
 import { isExpo, isStation, resolveAgentId, resolveAgentRef } from "./identity.js";
 import { notify } from "./notify.js";
 import { coordinationDir, dbPath, notifyPath, repoInfo } from "./paths.js";
-import { readPriorities, writePriorities } from "./priorities.js";
 import { runPublish } from "./publish.js";
 import { runSubagentStop } from "./subagent-stop.js";
 import {
@@ -38,13 +37,14 @@ import {
   syncPush,
 } from "./remote.js";
 import { formatRosterContext, listCrafts } from "./crafts.js";
+import { currentMenu, listRecipes } from "./recipes.js";
 import { type MessageRow, Store } from "./store.js";
 import { inboxMonitorAlive } from "./watchers.js";
 import { readJournal, readPreviousPage } from "./journal-read.js";
 import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { listStations } from "./provision.js";
 
-const PRIORITIES_STALE_MS = 24 * 60 * 60_000;
+const MENU_STALE_MS = 24 * 60 * 60_000;
 
 const POLL_INTERVAL_MS = 250;
 const MAX_WAIT_SECONDS = 120;
@@ -164,12 +164,12 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         "checkpoints — MCP cannot wake you unprompted. Never put secrets in message bodies (the " +
         "shared DB stores them in plaintext). When you hit an open question or decision you can't " +
         "resolve alone, escalate it with hands_ask — the expo (the main checkout) adjudicates " +
-        `against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the ` +
+        `against the day's menu or bubbles it to ${principal}. When a PR is ready to merge, ask the ` +
         "expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) " +
         "call rather than deciding it yourself." +
         (isExpo(agentId)
           ? " You ARE the expo — the expeditor at the pass / command center: run hands_questions, " +
-            "hands_priorities to read/set the ranked priorities, hands_answer to resolve, " +
+            "hands_menu to read the current menu, hands_answer to resolve, " +
             `hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal ` +
             "to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), " +
             "and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, " +
@@ -416,13 +416,13 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         "Snapshot of every agent: who's active (branch + last-active age), recent learnings " +
         "(commits + memory writes), and any file/ticket collisions with you. Always includes a cheap " +
         "`stateHash` fingerprint — if it matches your last pass, nothing moved and you can skip a " +
-        "deeper re-scan. Pass full:true to bundle active tasks + open questions + the priorities " +
-        "digest into this ONE read (instead of separate tasks/questions/priorities calls).",
+        "deeper re-scan. Pass full:true to bundle active tasks + open questions + the menu " +
+        "digest into this ONE read (instead of separate tasks/questions/menu calls).",
       inputSchema: {
         full: z
           .boolean()
           .optional()
-          .describe("true = also bundle active tasks, open questions, and the priorities digest"),
+          .describe("true = also bundle active tasks, open questions, and the menu digest"),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -498,17 +498,17 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         context: q.context ?? undefined,
         askedAt: new Date(q.created_at).toISOString(),
       }));
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
+      const menu = currentMenu(listRecipes(cfg));
+      const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
       return asToolResult({
         ...base,
         activeTasks,
         openQuestions,
-        priorities: {
-          items: p.items,
-          set: p.items.length > 0,
-          stale: confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS,
+        menu: {
+          items: menu.map((r) => ({ slug: r.slug, title: r.title, rank: r.rank, criteriaDone: r.criteriaDone, criteriaTotal: r.criteriaTotal })),
+          set: menu.length > 0,
+          stale: confirmedAt == null || now - confirmedAt > MENU_STALE_MS,
         },
       });
     },
@@ -554,7 +554,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       title: "Escalate an open question to the expo",
       description:
         "Raise an open question or decision you can't resolve alone. The expo (main checkout) " +
-        `adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough ` +
+        `adjudicates against the day's menu or bubbles it up to ${principal}. Include enough ` +
         "context to decide; propose options if you have them — structured, not just prose, when the " +
         "decision cleanly decomposes into 2-4 choices.",
       inputSchema: {
@@ -822,15 +822,16 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
   );
 
   server.registerTool(
-    "hands_priorities",
+    "hands_menu",
     {
-      title: "Read or set the menu — the expo's ranked priorities",
+      title: "Read the menu — today's recipes in play (hands#96/#137)",
       description:
-        "No args: read the current ranked priorities (+ whether they're stale/unset). Pass `set` to " +
-        "replace them (ranked, most-important first). Pass confirm=true to mark the existing list " +
-        `still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
+        "Read-only: the current menu (recipes with state: menu, ranked) + whether it's stale/unset. " +
+        "Recipes are principal-authored — a file per recipe, drafted directly or via /hands:recipe " +
+        `— this tool never writes one; \`hands recipe promote/demote\` (CLI) moves an item on/off. ` +
+        `Pass confirm=true to mark the current menu still-current. If items is empty, ask ${principal} ` +
+        "for today's menu.",
       inputSchema: {
-        set: z.array(z.string()).optional(),
         confirm: z.boolean().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -838,24 +839,17 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     async (input) => {
       store.touch(agentId);
       const now = Date.now();
-      if (input.set) {
-        writePriorities(input.set);
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-        // priorities live in a file, not the DB — journal them explicitly
-        store.journal("priorities.set", { items: input.set, at: now });
-      } else if (input.confirm) {
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-      }
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
+      if (input.confirm) store.setWatermark("*", "menu_confirmed_at", String(now));
+      const menu = currentMenu(listRecipes(cfg));
+      const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
-      const stale = confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS;
+      const stale = confirmedAt == null || now - confirmedAt > MENU_STALE_MS;
       return asToolResult({
-        items: p.items,
-        set: p.items.length > 0,
+        items: menu.map((r) => ({ slug: r.slug, title: r.title, rank: r.rank, criteriaDone: r.criteriaDone, criteriaTotal: r.criteriaTotal })),
+        set: menu.length > 0,
         confirmedAt: confirmedAt ? new Date(confirmedAt).toISOString() : null,
         stale,
-        needsInput: p.items.length === 0,
+        needsInput: menu.length === 0,
       });
     },
   );
@@ -1426,7 +1420,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         title: "Open more stations (expo only)",
         description:
           "Provision and launch `count` new station sessions for this repo. Use when the menu " +
-          "(ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its " +
+          "is under-staffed. Each station appears on the board as station-<n> once its " +
           "session takes its first turn. If the launcher is manual, relay the pasteCommand to " +
           `${principal} to start the pane.`,
         inputSchema: { count: z.number().int().min(1).max(12).optional() },
