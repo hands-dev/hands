@@ -92,6 +92,7 @@ import {
   craftAgentPath,
   craftKnown,
   FOLD_READY_THRESHOLD,
+  isRoleCraft,
   listCrafts,
   materializeCraftAgents,
   nearestCraftSlugs,
@@ -391,6 +392,12 @@ function cmdCraft(argv: string[]): void {
       const slug = argv[1];
       if (!slug) fail(`usage: hands craft ${sub} <slug>`);
       const files = craftFiles(slug!);
+      if (isRoleCraft(files.slug)) {
+        fail(
+          `"${files.slug}" is a role craft (hands#139) — it judges, it never writes files, so it ` +
+            "never needs execute mode. Not a missing certification; not markable.",
+        );
+      }
       if (!fs.existsSync(files.book)) {
         fail(`unknown craft "${files.slug}" — no book found for it (\`hands craft ls\` for the roster)`);
       }
@@ -418,6 +425,9 @@ function cmdCraft(argv: string[]): void {
       const slug = argv[1];
       if (!slug) fail(`usage: hands craft ${sub} <slug>`);
       const files = craftFiles(slug!);
+      if (isRoleCraft(files.slug)) {
+        fail(`"${files.slug}" is a role craft (hands#139) — not tier-mutable. It lives in the shared tier by construction.`);
+      }
       const wantScope = sub === "promote" ? "shared" : "personal";
       if (files.scope === wantScope) fail(`"${files.slug}" is already ${wantScope}`);
       const info = repoInfo(process.cwd());

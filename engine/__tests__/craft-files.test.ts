@@ -14,6 +14,7 @@ import {
   craftKnown,
   craftSkillPath,
   formatRosterContext,
+  isRoleCraft,
   listCrafts,
   materializeCraftAgents,
   nearestCraftSlugs,
@@ -304,6 +305,45 @@ describe("listCrafts", () => {
     const orderingApi = roster.find((c) => c.slug === "ordering-api");
     expect(orderingApi?.scope).toBe("shared");
     expect(orderingApi?.covers).toBe("app.py");
+    store.close();
+  });
+
+  it("excludes role crafts from the browsable roster (hands#139/#91/#95)", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+    fs.writeFileSync(path.join(shared, "saucier.md"), "> covers: sauces\n");
+
+    const store = new Store({ env });
+    const roster = listCrafts(store, loadConfig({ cwd: repo, env }), env, repo);
+    expect(roster.map((c) => c.slug)).toEqual(["saucier"]); // cdc never appears
+    store.close();
+  });
+});
+
+describe("role crafts — dispatch still works even though the roster hides them (hands#139/#91/#95)", () => {
+  it("isRoleCraft classifies cdc and nothing else", () => {
+    expect(isRoleCraft("cdc")).toBe(true);
+    expect(isRoleCraft("saucier")).toBe(false);
+    expect(isRoleCraft("issue-triage")).toBe(false);
+  });
+
+  it("craftKnown still resolves a role craft by slug — hands craft brief cdc keeps working", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+
+    const { known, slugs } = craftKnown("cdc", loadConfig({ cwd: repo, env }), env, repo);
+    expect(known).toBe(true);
+    expect(slugs).toContain("cdc"); // present in the raw enumeration craftKnown uses...
+    // ...but NOT in the browsable roster, confirming the two are deliberately different views.
+    const store = new Store({ env });
+    const roster = listCrafts(store, loadConfig({ cwd: repo, env }), env, repo);
+    expect(roster.map((c) => c.slug)).not.toContain("cdc");
     store.close();
   });
 });
@@ -881,6 +921,19 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     expect(after).not.toContain("saucier [personal, brief-only, plan-only]");
 
     store.close();
+  });
+
+  it("never materializes a role craft, even self-cleaning any pre-existing generated files (hands#139/#91/#95)", () => {
+    const files = craftFiles("cdc", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: whole-board judgment\n");
+    const target = fs.mkdtempSync(path.join(home, "target-"));
+    const cfg = loadConfig({ env });
+
+    const res = materializeCraftAgents(cfg, target, env);
+    expect(res.written).toEqual([]);
+    expect(fs.existsSync(craftAgentPath(target, "cdc"))).toBe(false);
+    expect(fs.existsSync(craftSkillPath(target, "cdc"))).toBe(false);
   });
 });
 

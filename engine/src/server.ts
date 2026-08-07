@@ -776,6 +776,52 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
   );
 
   server.registerTool(
+    "hands_craft_signoff",
+    {
+      title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
+      description:
+        "Record CDC's whole-board checkpoint verdict for a ticket — 'pre-fire' (dispatched before " +
+        "handing the ticket to a station: is this still the right build given how the board moved) or " +
+        "'pre-ship' (dispatched before you may call hands on the dish: still right given everything " +
+        "that moved while it was in flight). CDC returns its verdict as text from its own dispatch; " +
+        "you record it here — CDC never calls this itself. A dish's tickets need a fresh 'approved' " +
+        "pre-ship signoff before you may act on §5 (review depth / merge) — see hands_tasks' `signoff` " +
+        "field for whether the most recent one is still fresh.",
+      inputSchema: {
+        taskId: z.number().int(),
+        checkpoint: z.enum(["pre-fire", "pre-ship"]),
+        verdict: z.enum(["approved", "rejected"]),
+        note: z.string().optional(),
+        originSha: z
+          .string()
+          .optional()
+          .describe("origin/main HEAD at the moment CDC judged — the staleness anchor; omit if unavailable"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      store.touch(agentId);
+      if (!isExpo(agentId)) {
+        return {
+          ...asToolResult({ ok: false, error: "Only the expo records a CDC signoff — it's the one running the dispatch." }),
+          isError: true,
+        };
+      }
+      const task = store.getTask(input.taskId);
+      if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
+      const id = store.recordSignoff({
+        taskId: input.taskId,
+        checkpoint: input.checkpoint,
+        verdict: input.verdict,
+        note: input.note ?? null,
+        originSha: input.originSha ?? null,
+        by: agentId,
+      });
+      return asToolResult({ ok: true, id });
+    },
+  );
+
+  server.registerTool(
     "hands_priorities",
     {
       title: "Read or set the menu — the expo's ranked priorities",
@@ -984,18 +1030,35 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       });
       return asToolResult({
         count: rows.length,
-        tasks: rows.map((t) => ({
-          id: t.id,
-          title: t.title,
-          body: t.body ?? undefined,
-          from: t.created_by,
-          assignee: t.assignee ?? "queue",
-          state: t.state,
-          result: t.result ?? undefined,
-          priority: t.priority_ref ?? undefined,
-          dish: t.dish ?? undefined,
-          updatedAt: new Date(t.updated_at).toISOString(),
-        })),
+        tasks: rows.map((t) => {
+          const signoff = store.latestSignoff(t.id);
+          return {
+            id: t.id,
+            title: t.title,
+            body: t.body ?? undefined,
+            from: t.created_by,
+            assignee: t.assignee ?? "queue",
+            state: t.state,
+            result: t.result ?? undefined,
+            priority: t.priority_ref ?? undefined,
+            dish: t.dish ?? undefined,
+            updatedAt: new Date(t.updated_at).toISOString(),
+            // hands#139/#91/#95 — the most recent CDC checkpoint verdict, if
+            // any. `originSha` is the staleness anchor: compare against the
+            // CURRENT origin/main HEAD yourself before trusting an
+            // "approved" pre-ship signoff — a stale one is not a signoff.
+            signoff: signoff
+              ? {
+                  checkpoint: signoff.checkpoint,
+                  verdict: signoff.verdict,
+                  note: signoff.note ?? undefined,
+                  originSha: signoff.origin_sha ?? undefined,
+                  by: signoff.by,
+                  at: new Date(signoff.created_at).toISOString(),
+                }
+              : undefined,
+          };
+        }),
       });
     },
   );

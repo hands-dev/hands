@@ -37,6 +37,28 @@ import type { CraftBriefRow, CraftNoteRow, Store } from "./store.js";
  * distill the raw sections into curated prose, in place, never by appending.
  */
 
+/**
+ * Role crafts (hands#139/#91/#95) — a craft in every mechanical sense (book +
+ * mise + skill, dispatched the same `hands craft brief`/`mise` way, its notes
+ * fold through the same pipeline) but NOT a codebase-domain specialization a
+ * station picks ad hoc: it judges the whole board, not one ticket's slice,
+ * and its founding charter isn't user-authored. Deliberately NOT a separate
+ * storage tier — it lives in the shared tier like any other craft (so
+ * `craftFiles`/`craftKnown`/`hands craft brief|mise|fold` all resolve it for
+ * free, no new resolution path to build or keep in sync) — only EXCLUDED,
+ * explicitly, from the surfaces a user browses or mutates: the roster
+ * (`hands craft ls`, the roster context injected into sessions),
+ * `sync`'s Agent/Skill materialization sweep, `promote`/`localize`, and
+ * `ready`/`unready` (a role craft never writes files, so it never needs
+ * execute mode — see crafts.ts's CDC section for why that's structural, not
+ * a missing certification).
+ */
+export const ROLE_CRAFT_SLUGS: ReadonlySet<string> = new Set(["cdc"]);
+
+export function isRoleCraft(slug: string): boolean {
+  return ROLE_CRAFT_SLUGS.has(slug);
+}
+
 /** Who marked a craft ready for execute-mode dispatch, and when — a judgment, not a mechanical fact (hands#92). */
 export interface CraftReadiness {
   at: string;
@@ -217,17 +239,25 @@ export function nearestCraftSlugs(target: string, known: string[], limit = 3): s
   return [...known].sort((a, b) => editDistance(target, a) - editDistance(target, b)).slice(0, limit);
 }
 
-/** The full roster across both tiers, enriched with each craft's pending-note count. */
+/**
+ * The full roster across both tiers, enriched with each craft's pending-note
+ * count. Role crafts (hands#139/#91/#95) are excluded — this is the browsable
+ * list a station/expo picks a domain specialization from, not an inventory of
+ * everything with a book on disk. `craftKnown`/`hands craft brief` still
+ * resolve a role craft directly by slug; only discovery here is filtered.
+ */
 export function listCrafts(
   store: Store,
   config: HandsConfig,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): CraftRosterEntry[] {
-  return listCraftFiles(config, env, cwd).map((e) => ({
-    ...e,
-    pendingNotes: store.pendingCraftNotes(e.slug).length,
-  }));
+  return listCraftFiles(config, env, cwd)
+    .filter((e) => !isRoleCraft(e.slug))
+    .map((e) => ({
+      ...e,
+      pendingNotes: store.pendingCraftNotes(e.slug).length,
+    }));
 }
 
 /** Where a craft's generated, session-discoverable Agent type lives inside a given checkout/worktree. */
@@ -347,7 +377,12 @@ export function materializeCraftAgents(
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): { written: string[]; removed: string[] } {
-  const roster = listCraftFiles(config, env, cwd);
+  // Role crafts (hands#139/#91/#95) are excluded from the sync sweep — they
+  // stay dispatchable via `hands craft brief` (craftKnown/craftFiles are
+  // unfiltered), just never materialized as a one-call Agent type. Also
+  // self-cleaning: if one was ever materialized before this filter existed,
+  // the removal pass below deletes it, since it's no longer in `wantSlugs`.
+  const roster = listCraftFiles(config, env, cwd).filter((e) => !isRoleCraft(e.slug));
   const agentsDir = path.join(targetDir, ".claude", "agents");
   const skillsDir = path.join(targetDir, ".claude", "skills");
   fs.mkdirSync(agentsDir, { recursive: true });

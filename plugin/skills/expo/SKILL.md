@@ -286,11 +286,22 @@ switch a pane's model yourself.
    seat for a craft anymore. An **empty craft roster** in a kitchen with real recurring-specialty
    demand → suggest the principal run `/hands:crafts` (the brigade-design survey) once; until then
    stations work generically, which is fine for small kitchens.
-2. **Fire the ticket:** `hands_delegate({ to, title, body, priority, dish })` — always cite the
+2. **CDC pre-fire triage on the DRAFT — your call, not every ticket (hands#139).** For anything
+   non-trivial, or when the board has moved since you started drafting, dispatch CDC BEFORE
+   `hands_delegate` (there's no ticket id yet to attach a signoff to — CDC judges the draft's
+   content and the board, not a row): `hands craft brief cdc --mode plan --task "<the ticket
+   you're about to draft>"`, paste the chit into a general-purpose Agent (CDC is a role craft —
+   deliberately never synced/materialized, `hands craft ls`'s roster doesn't list it). `rejected`
+   means something concrete has shifted; revise before firing anything, don't fire the rejected
+   draft and fix it after. Skip this for small, mechanical, low-stakes tickets — CDC exists to
+   catch what a single-dish view misses, not to gate routine work.
+3. **Fire the ticket:** `hands_delegate({ to, title, body, priority, dish })` — always cite the
    special it serves, and the **dish** (the external deliverable — Linear/PR ref) when one
    exists. For a fresh special the first ticket is almost always **a plan**: *"Plan: get <X>
-   working end-to-end — approach, files, risks, open questions. Don't build yet."*
-3. **Track via the rail** so you never double-fire, and follow up when a station goes quiet on an
+   working end-to-end — approach, files, risks, open questions. Don't build yet."* If you ran CDC
+   triage above, record its verdict against the now-real ticket id right after firing:
+   `hands_craft_signoff({ taskId, checkpoint: "pre-fire", verdict: "approved", note, originSha })`.
+4. **Track via the rail** so you never double-fire, and follow up when a station goes quiet on an
    in-progress ticket — but check before you wake it (hands#60): bus silence isn't proof of a
    stall, it's just proof nothing was *sent*. A station's own Claude Code transcript is ground
    truth on whether it's actually moving: `hands_peers` for its `cwd`, then
@@ -417,6 +428,21 @@ ticket** is a ship ticket for a dish. The principal saying *"get hands on <PR/di
 sanction to run this flow for that dish **now**.
 
 Pull the facts first: `gh pr view <N> --json additions,deletions,files,title,statusCheckRollup,mergeable`.
+
+**Gate — a fresh CDC pre-ship sign-off, before A or B (hands#139).** You reviewed this dish on its
+own merits; CDC's whole reason for existing is that isn't the same as reviewing it against
+*everything else on the board right now* — a PR correct in isolation can still collide with
+something else in flight, and nobody catches that unless something is looking at both at once.
+Check `hands_tasks`' `signoff` field for the dish's ticket(s): needs a `pre-ship` entry with
+`verdict: "approved"` AND a fresh `originSha` — compare it yourself against current `git rev-parse
+origin/main`; if they differ, or a new entry in `collisions` touches this dish's files, the
+sign-off is stale and doesn't count. Missing or stale → dispatch CDC now (`hands craft brief cdc
+--mode plan --task "pre-ship: <dish>"`, same brief-only path as pre-fire), record its verdict —
+`hands_craft_signoff({ taskId, checkpoint: "pre-ship", verdict, note, originSha })` — for every
+ticket under the dish. `rejected` → you may not proceed to A/B; that's the whole point of "last
+line of defense." Skip this gate only for genuinely trivial dishes (a typo fix, a doc-only PR) —
+judgment call, same bar as review-depth's own "trivial" bucket below, not a loophole for anything
+you'd rather not wait on.
 
 **A) Review depth — yours to decide (reversible):** trivial → `/code-review low` or skip with a
 reason; moderate → `/code-review` (usage mode `"low"`: `/code-review low` instead — see "Usage

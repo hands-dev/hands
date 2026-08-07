@@ -15,10 +15,12 @@ kitchen is too small to need any.
 ## 1. Gate + the existing roster
 
 Call `hands_paths`: need `repoRoot` (stop if null — per-repo, like everything here) and
-`craftsDir`. Read what already exists: `head -n 12 <craftsDir>/*.md 2>/dev/null`. If a roster
-exists, this is a **re-survey**: propose only deltas — new seams the roster misses, and any
-near-duplicate pairs that should merge ("ordering API" + "orders backend" = one craft). Never
-re-propose what's already established.
+`craftsDir`. Read what already exists: `head -n 12 <craftsDir>/*.md 2>/dev/null` — **skip `cdc.md`
+if present**, that's a role craft (hands#139), not a codebase-domain specialization; this survey is
+about the latter only, and `cdc` never belongs in a proposed or existing roster count. If a roster
+(minus `cdc`) exists, this is a **re-survey**: propose only deltas — new seams the roster misses,
+and any near-duplicate pairs that should merge ("ordering API" + "orders backend" = one craft).
+Never re-propose what's already established.
 
 ## 2. Survey the codebase — delegated, compact
 

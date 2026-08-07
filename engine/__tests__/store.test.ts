@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ONLINE_WINDOW_MS, Store } from "../src/store.js";
+import { isSignoffStale, ONLINE_WINDOW_MS, Store } from "../src/store.js";
 
 /** A pid guaranteed dead: spawnSync blocks until the child exits, so by the time it returns the pid is reaped. */
 function deadPid(): number {
@@ -253,5 +253,82 @@ describe("Store observability samples (hands#103, #106)", () => {
     store.recordWakeOutcome({ agentId: "station-1", messageId: 2, outcome: "fired", now: 25 * hour });
     expect(store.wakeOutcomeCounts("station-1", -1)).toEqual({ fired: 1, suppressed: 0, coalesced: 0, failed: 0 });
     store.close();
+  });
+});
+
+describe("Store.recordSignoff / latestSignoff / signoffsForTask (hands#139/#91/#95)", () => {
+  it("records a signoff and reads it back by task", () => {
+    const store = open();
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-1", title: "plan X" });
+    const id = store.recordSignoff({
+      taskId,
+      checkpoint: "pre-fire",
+      verdict: "approved",
+      note: "board clean, no collisions",
+      originSha: "abc123",
+      by: "expo",
+      now: 1000,
+    });
+    expect(id).toBeGreaterThan(0);
+
+    const latest = store.latestSignoff(taskId);
+    expect(latest).toMatchObject({
+      task_id: taskId,
+      checkpoint: "pre-fire",
+      verdict: "approved",
+      note: "board clean, no collisions",
+      origin_sha: "abc123",
+      by: "expo",
+    });
+    store.close();
+  });
+
+  it("latestSignoff returns the most recent across checkpoints, or scoped to one when asked", () => {
+    const store = open();
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-1", title: "plan X" });
+    store.recordSignoff({ taskId, checkpoint: "pre-fire", verdict: "approved", by: "expo", now: 1000 });
+    store.recordSignoff({ taskId, checkpoint: "pre-ship", verdict: "rejected", note: "collides with #42", by: "expo", now: 2000 });
+
+    expect(store.latestSignoff(taskId)?.checkpoint).toBe("pre-ship"); // most recent overall
+    expect(store.latestSignoff(taskId, "pre-fire")?.verdict).toBe("approved"); // scoped
+    expect(store.latestSignoff(taskId, "pre-ship")?.verdict).toBe("rejected");
+    store.close();
+  });
+
+  it("signoffsForTask returns the full history, oldest first", () => {
+    const store = open();
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-1", title: "plan X" });
+    store.recordSignoff({ taskId, checkpoint: "pre-fire", verdict: "approved", by: "expo", now: 1000 });
+    store.recordSignoff({ taskId, checkpoint: "pre-ship", verdict: "approved", by: "expo", now: 2000 });
+
+    const history = store.signoffsForTask(taskId);
+    expect(history.map((s) => s.checkpoint)).toEqual(["pre-fire", "pre-ship"]);
+    store.close();
+  });
+
+  it("a task with no signoff yet returns undefined, not a default", () => {
+    const store = open();
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-1", title: "plan X" });
+    expect(store.latestSignoff(taskId)).toBeUndefined();
+    store.close();
+  });
+});
+
+describe("isSignoffStale (hands#139/#91/#95)", () => {
+  it("is fresh when the origin sha matches what was captured at signoff time", () => {
+    expect(isSignoffStale({ origin_sha: "abc" }, "abc")).toBe(false);
+  });
+
+  it("goes stale the moment origin/main moves past the captured sha", () => {
+    expect(isSignoffStale({ origin_sha: "abc" }, "def")).toBe(true);
+  });
+
+  it("a new collision invalidates a signoff regardless of the sha", () => {
+    expect(isSignoffStale({ origin_sha: "abc" }, "abc", true)).toBe(true);
+  });
+
+  it("is not stale-by-sha when either side has no sha to compare (nothing to invalidate against)", () => {
+    expect(isSignoffStale({ origin_sha: null }, "abc")).toBe(false);
+    expect(isSignoffStale({ origin_sha: "abc" }, null)).toBe(false);
   });
 });
