@@ -742,10 +742,20 @@ export function craftFiles(
   cwd: string = process.cwd(),
 ): CraftFiles {
   const config = loadConfig({ cwd, env });
-  const slug = sanitizeSegment(craft, "unnamed");
+  const raw = sanitizeSegment(craft, "unnamed");
   const shared = sharedCraftsDir(config, cwd);
+  const personal = personalCraftsDir(config, env, cwd);
+  const bookExists = (slug: string) =>
+    (shared !== null && fs.existsSync(path.join(shared, `${slug}.md`))) || fs.existsSync(path.join(personal, `${slug}.md`));
+  // Accept a `craft-`-prefixed name as an alias for the bare slug (hands#165) — the roster
+  // injects `craft-<slug>` (the Agent-tool agentType a synced dispatch uses), so a station that
+  // pastes that string into `hands craft brief` should still resolve, as long as the bare slug
+  // is a real craft. Only strips when doing so actually resolves something real, so a craft
+  // genuinely founded under a `craft-`-prefixed name (unlikely, but not disallowed) still wins.
+  const stripped = raw.startsWith("craft-") ? raw.slice("craft-".length) : null;
+  const slug = stripped && !bookExists(raw) && bookExists(stripped) ? stripped : raw;
   const scope: CraftScope = shared && fs.existsSync(path.join(shared, `${slug}.md`)) ? "shared" : "personal";
-  const dir = scope === "shared" && shared ? shared : personalCraftsDir(config, env, cwd);
+  const dir = scope === "shared" && shared ? shared : personal;
   return {
     dir,
     slug,

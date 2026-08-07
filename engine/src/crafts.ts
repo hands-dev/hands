@@ -60,6 +60,23 @@ export function parseCraftHeader(bookContent: string | null): { covers: string |
   };
 }
 
+const HELD_SEAT_CLAUSE_RE = /·\s*last held:\s*(\S+)(?:\s+by\s+\S+)?/i;
+
+/**
+ * One-time content fix for hands#167: rewrites a book's `last held: DATE by AGENT` header clause
+ * (the retired per-station-ownership model — a generalist reading it reasonably concludes the
+ * craft belongs to somebody else and doesn't dispatch it) into `distilled: DATE`, dropping the
+ * ownership assertion while keeping the timestamp parseCraftHeader already treats as a staleness
+ * signal. A no-op (changed: false) when the header carries no such clause. Header-line only —
+ * deliberately doesn't touch ownership prose elsewhere in a book's body (e.g. "belongs to another
+ * station and must not be written into"), which needs a model's judgment to rewrite safely, not a
+ * regex; `hands craft sweep-headers` (cli.ts) is what runs this across a repo's whole roster.
+ */
+export function sweepHeldSeatHeader(bookContent: string): { content: string; changed: boolean } {
+  if (!HELD_SEAT_CLAUSE_RE.test(bookContent)) return { content: bookContent, changed: false };
+  return { content: bookContent.replace(HELD_SEAT_CLAUSE_RE, (_m, date: string) => `· distilled: ${date}`), changed: true };
+}
+
 function readFileSafe(p: string): string | null {
   try {
     const body = fs.readFileSync(p, "utf8").trim();
@@ -121,6 +138,46 @@ function listCraftFiles(
     }
   }
   return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/**
+ * Whether `slug` (already resolved by `craftFiles` — so any `craft-` alias is already stripped)
+ * is a real, founded craft, plus the full known-slug list for a "closest match" suggestion.
+ * `hands craft brief` uses this to refuse an unknown slug loudly instead of silently writing a
+ * phantom `craft_briefs` row (hands#165) — `mise`/`fold`/`promote`/`localize` have their own
+ * existing checks (an open brief, a moved file count, a pending-note backlog) and don't need this.
+ */
+export function craftKnown(
+  slug: string,
+  config: HandsConfig,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): { known: boolean; slugs: string[] } {
+  const slugs = listCraftFiles(config, env, cwd).map((e) => e.slug);
+  return { known: slugs.includes(slug), slugs };
+}
+
+/** Levenshtein edit distance — small inputs only (craft slugs), no need for a smarter algorithm. */
+function editDistance(a: string, b: string): number {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  const dp: number[][] = Array.from({ length: rows }, () => new Array<number>(cols).fill(0));
+  for (let i = 0; i < rows; i++) dp[i]![0] = i;
+  for (let j = 0; j < cols; j++) dp[0]![j] = j;
+  for (let i = 1; i < rows; i++) {
+    for (let j = 1; j < cols; j++) {
+      dp[i]![j] =
+        a[i - 1] === b[j - 1]
+          ? dp[i - 1]![j - 1]!
+          : 1 + Math.min(dp[i - 1]![j]!, dp[i]![j - 1]!, dp[i - 1]![j - 1]!);
+    }
+  }
+  return dp[rows - 1]![cols - 1]!;
+}
+
+/** The `limit` known slugs closest to `target` by edit distance — a fix suggestion for a typo'd `hands craft brief` call. */
+export function nearestCraftSlugs(target: string, known: string[], limit = 3): string[] {
+  return [...known].sort((a, b) => editDistance(target, a) - editDistance(target, b)).slice(0, limit);
 }
 
 /** The full roster across both tiers, enriched with each craft's pending-note count. */
@@ -275,6 +332,11 @@ export function materializeCraftAgents(
   return { written, removed };
 }
 
+export interface CraftDispatchRate {
+  ticketsFinished: number;
+  ticketsWithCraftBrief: number;
+}
+
 /**
  * The roster injected into every station's AND the expo's MCP instructions at
  * connect (server.ts's craftRosterContext) — a summary, not content, so the
@@ -284,8 +346,19 @@ export function materializeCraftAgents(
  * already have a materialized agentType here (the fast dispatch path) vs.
  * which need the `hands craft brief`/`mise` fallback (founded/edited since
  * the last `hands craft sync` or provisioning).
+ *
+ * Each bullet leads with the BARE slug — the exact string `hands craft brief <slug>` accepts —
+ * never the `craft-<slug>` agentType form, and the dispatch line below spells out which string
+ * goes where. Getting this backwards is hands#165: a station that read `craft-<slug>` off the
+ * roster and passed it straight to `hands craft brief` got a silently-recorded phantom dispatch,
+ * because that command never checked the slug was real. It does now (craftKnown, in cli.ts) —
+ * this wording is the other half of the same fix, so the mismatch stops happening at the source.
  */
-export function formatRosterContext(entries: CraftRosterEntry[], targetDir: string): string {
+export function formatRosterContext(
+  entries: CraftRosterEntry[],
+  targetDir: string,
+  dispatchRate?: CraftDispatchRate,
+): string {
   if (entries.length === 0) {
     return (
       "\n\nNo crafts founded yet. Crafts are dispatched as sub-agents, not held — found one via " +
@@ -296,19 +369,28 @@ export function formatRosterContext(entries: CraftRosterEntry[], targetDir: stri
     const staleness = e.distilled ? "" : " (never distilled)";
     const pending = e.pendingNotes ? ` · ${e.pendingNotes} pending note(s)` : "";
     const ready = fs.existsSync(craftAgentPath(targetDir, e.slug));
-    return `- craft-${e.slug} [${e.scope}${ready ? "" : ", not yet synced"}] — ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
+    // "brief-only" (not "not yet synced" — hands#167): this craft is fully dispatchable right
+    // now via `hands craft brief`, just not through the one-call Agent-tool path yet. The old
+    // wording read as "unavailable" and a generalist reasonably chose not to dispatch at all.
+    return `- ${e.slug} [${e.scope}${ready ? "" : ", brief-only"}] — ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
   });
   const cap = 1500;
   let body = lines.join("\n");
   const points = Array.from(body);
   if (points.length > cap) body = `${points.slice(0, cap).join("")}\n…(see hands craft ls for the rest)`;
+  const rate =
+    dispatchRate && dispatchRate.ticketsFinished > 0
+      ? `\nDispatch rate (7d): ${dispatchRate.ticketsWithCraftBrief} of ${dispatchRate.ticketsFinished} finished ticket(s) went through a craft.`
+      : "";
   return (
     "\n\n## Crafts available (dispatch as sub-agents — don't do their work yourself)\n" +
     body +
-    '\nDispatch a synced craft: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) — it briefs ' +
-    'and equips itself. "not yet synced" → fall back to `hands craft brief <slug>` yourself ' +
-    "(add `--ticket <id>` if you're working one), paste the printed chit into a general-purpose " +
-    "Agent's prompt instead. `hands craft ls` gives the full roster on demand."
+    '\nSynced: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) — e.g. "craft-' +
+    `${entries[0]!.slug}" for the first one above; it briefs and equips itself. "brief-only" → run ` +
+    "`hands craft brief <slug>` yourself — the BARE slug shown above, no `craft-` prefix " +
+    "(add `--ticket <id>` if you're working one), then paste the printed chit into a " +
+    "general-purpose Agent's prompt. `hands craft ls` gives the full roster on demand." +
+    rate
   );
 }
 

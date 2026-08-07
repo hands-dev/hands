@@ -79,13 +79,21 @@ function presentMessage(row: MessageRow) {
  * static per connection, so a craft founded mid-session needs a reconnect
  * (or `hands craft ls`) to become visible.
  */
+const DISPATCH_RATE_WINDOW_MS = 7 * 24 * 60 * 60_000;
+
 export function craftRosterContext(
   config: HandsConfig,
   store: Store,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
+  now: number = Date.now(),
 ): string {
-  return formatRosterContext(listCrafts(store, config, env, cwd), cwd);
+  const roster = listCrafts(store, config, env, cwd);
+  const rate = store.craftDispatchRate(
+    now - DISPATCH_RATE_WINDOW_MS,
+    roster.map((c) => c.slug),
+  );
+  return formatRosterContext(roster, cwd, rate);
 }
 
 export function buildServer(store: Store, agentId: string, config?: HandsConfig): McpServer {
