@@ -125,3 +125,41 @@ describe("dispatchability", () => {
     expect(attestationValid(record({ now: 1000 }), { ...facts, shiftStartedAt: 500 }).valid).toBe(true);
   });
 });
+
+describe("snapshot readiness — what the dashboard renders", () => {
+  it("carries four states, not a boolean", async () => {
+    const { buildSnapshot } = await import("../src/snapshot.js");
+    store.registerAgent({ id: "station-1", cwd: "/x", pid: 1 });
+    store.registerAgent({ id: "station-2", cwd: "/y", pid: 2 });
+    store.registerAgent({ id: "station-3", cwd: "/z", pid: 3 });
+
+    store.setAttestation({ agentId: "station-1", ok: true });
+    store.setAttestation({ agentId: "station-2", ok: false, reason: "unrecognised stash" });
+    // station-3 never attests
+
+    const byId = new Map(buildSnapshot(store, Date.now(), env).agents.map((a) => [a.id, a]));
+    expect(byId.get("station-1")?.ready).toBe("ready");
+    expect(byId.get("station-2")?.ready).toBe("declined");
+    expect(byId.get("station-3")?.ready).toBe("unattested");
+  });
+
+  it("relays the station's OWN words on a decline", async () => {
+    const { buildSnapshot } = await import("../src/snapshot.js");
+    store.registerAgent({ id: "station-2", cwd: "/y", pid: 2 });
+    store.setAttestation({
+      agentId: "station-2",
+      ok: false,
+      reason: "14 uncommitted files I don't recognise",
+    });
+    const agent = buildSnapshot(store, Date.now(), env).agents.find((a) => a.id === "station-2");
+    // only the station knows this; the expo relaying it beats any inspection
+    expect(agent?.readyReason).toContain("don't recognise");
+  });
+
+  it("never marks the expo unattested — only stations attest", async () => {
+    const { buildSnapshot } = await import("../src/snapshot.js");
+    store.registerAgent({ id: "expo", cwd: "/repo", pid: 9 });
+    const expo = buildSnapshot(store, Date.now(), env).agents.find((a) => a.id === "expo");
+    expect(expo?.ready).toBe("ready");
+  });
+});

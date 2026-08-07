@@ -23345,9 +23345,462 @@ var init_digest = __esm({
   }
 });
 
-// src/theming.ts
+// src/worktree-lock.ts
+import * as crypto2 from "node:crypto";
+import * as fs10 from "node:fs";
 import * as os5 from "node:os";
 import * as path9 from "node:path";
+function lockPath(worktree, env = process.env, cwd) {
+  let resolved = worktree;
+  try {
+    resolved = fs10.realpathSync(worktree);
+  } catch {
+  }
+  const digest = crypto2.createHash("sha256").update(resolved).digest("hex").slice(0, 12);
+  return path9.join(
+    coordinationDir(env, cwd ?? resolved),
+    "locks",
+    `${path9.basename(resolved)}-${digest}.json`
+  );
+}
+function processStartTime(pid) {
+  try {
+    const stat = fs10.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const after = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
+    const ticks = Number(after[19]);
+    return Number.isFinite(ticks) ? ticks : null;
+  } catch {
+    return null;
+  }
+}
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function isStale(record2) {
+  if (!isAlive(record2.pid)) return true;
+  if (record2.startedAtBoot === null) return false;
+  const now = processStartTime(record2.pid);
+  return now !== null && now !== record2.startedAtBoot;
+}
+function readLock(worktree, env, cwd) {
+  try {
+    const raw = fs10.readFileSync(lockPath(worktree, env, cwd), "utf8");
+    const parsed = JSON.parse(raw);
+    if (typeof parsed.pid !== "number" || typeof parsed.worktree !== "string") return null;
+    return {
+      pid: parsed.pid,
+      startedAtBoot: typeof parsed.startedAtBoot === "number" ? parsed.startedAtBoot : null,
+      claimedAt: typeof parsed.claimedAt === "number" ? parsed.claimedAt : 0,
+      agentId: typeof parsed.agentId === "string" ? parsed.agentId : "unknown",
+      worktree: parsed.worktree,
+      hostname: typeof parsed.hostname === "string" ? parsed.hostname : "unknown"
+    };
+  } catch {
+    return null;
+  }
+}
+function claimWorktree(opts) {
+  const pid = opts.pid ?? process.pid;
+  const file2 = lockPath(opts.worktree, opts.env, opts.cwd);
+  const existing = readLock(opts.worktree, opts.env, opts.cwd);
+  let previous = "none";
+  if (existing) {
+    if (existing.pid === pid) previous = "self";
+    else if (isStale(existing)) previous = "stale";
+    else if (opts.evict) {
+      try {
+        process.kill(existing.pid, "SIGTERM");
+      } catch {
+      }
+      previous = "evicted";
+    } else {
+      return { ok: false, heldBy: existing };
+    }
+  }
+  const record2 = {
+    pid,
+    startedAtBoot: processStartTime(pid),
+    claimedAt: opts.now ?? Date.now(),
+    agentId: opts.agentId,
+    worktree: opts.worktree,
+    hostname: os5.hostname()
+  };
+  fs10.mkdirSync(path9.dirname(file2), { recursive: true });
+  fs10.writeFileSync(file2, `${JSON.stringify(record2, null, 2)}
+`);
+  return { ok: true, record: record2, previous };
+}
+function releaseWorktree(worktree, pid = process.pid, env, cwd) {
+  const existing = readLock(worktree, env, cwd);
+  if (!existing || existing.pid !== pid) return false;
+  try {
+    fs10.rmSync(lockPath(worktree, env, cwd), { force: true });
+    return true;
+  } catch {
+    return false;
+  }
+}
+var init_worktree_lock = __esm({
+  "src/worktree-lock.ts"() {
+    "use strict";
+    init_paths();
+  }
+});
+
+// src/watchers.ts
+import { execFileSync as execFileSync4 } from "node:child_process";
+import * as fs11 from "node:fs";
+function argvOf(pid) {
+  try {
+    const parts = fs11.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    return parts.length > 0 ? parts : null;
+  } catch {
+    return null;
+  }
+}
+function classify(argv, inboxNeedle) {
+  const joined = argv.join(" ");
+  const bin = (argv[0] ?? "").split("/").pop() ?? "";
+  if (WATCHER_BINARIES.has(bin)) {
+    return {
+      pid: 0,
+      command: joined,
+      isInbox: bin === "tail" && joined.includes(inboxNeedle)
+    };
+  }
+  if (SHELLS.has(bin) && LOOP_PATTERNS.some((re) => re.test(joined))) {
+    return { pid: 0, command: joined, isInbox: false };
+  }
+  return null;
+}
+function cwdOf(pid) {
+  try {
+    return fs11.realpathSync(fs11.readlinkSync(`/proc/${pid}/cwd`));
+  } catch {
+    return null;
+  }
+}
+function selfLineage() {
+  const line = /* @__PURE__ */ new Set();
+  let pid = process.pid;
+  for (let hops = 0; pid > 1 && hops < 32; hops++) {
+    line.add(pid);
+    const stat = (() => {
+      try {
+        return fs11.readFileSync(`/proc/${pid}/stat`, "utf8");
+      } catch {
+        return null;
+      }
+    })();
+    if (stat === null) break;
+    const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+    if (!Number.isFinite(ppid) || ppid <= 0) break;
+    pid = ppid;
+  }
+  return line;
+}
+function allPids() {
+  try {
+    return fs11.readdirSync("/proc").filter((n) => /^\d+$/.test(n)).map(Number);
+  } catch {
+    return null;
+  }
+}
+function watchersFor(stationId, opts) {
+  const pids = allPids();
+  if (pids === null) {
+    return { stationId, watchers: null, inboxAlive: null };
+  }
+  const watchers = [];
+  const inboxNeedle = opts?.notifyPath ?? `${stationId}.notify`;
+  const worktree = opts?.worktree;
+  const mine = selfLineage();
+  for (const pid of pids) {
+    if (mine.has(pid)) continue;
+    const argv = argvOf(pid);
+    if (!argv) continue;
+    const hit = classify(argv, inboxNeedle);
+    if (!hit) continue;
+    const owned = hit.isInbox || worktree !== void 0 && cwdOf(pid) === worktree;
+    if (!owned) continue;
+    watchers.push({
+      pid,
+      command: hit.command.length > 160 ? `${hit.command.slice(0, 159)}\u2026` : hit.command,
+      isInbox: hit.isInbox
+    });
+  }
+  return {
+    stationId,
+    watchers,
+    inboxAlive: watchers.some((w) => w.isInbox)
+  };
+}
+function quiesce(stationId, opts) {
+  const report = watchersFor(stationId, { notifyPath: opts?.notifyPath, worktree: opts?.worktree });
+  if (report.watchers === null) return { stopped: [], kept: [], supported: false };
+  const keepInbox = opts?.keepInbox ?? true;
+  const stopped = [];
+  const kept = [];
+  for (const w of report.watchers) {
+    if (w.isInbox && keepInbox) {
+      kept.push(w);
+      continue;
+    }
+    try {
+      process.kill(w.pid, "SIGTERM");
+      stopped.push(w);
+    } catch {
+    }
+  }
+  return { stopped, kept, supported: true };
+}
+function inboxMonitorAlive(stationId, notifyPath2) {
+  if (process.platform !== "linux") {
+    try {
+      const out3 = execFileSync4("pgrep", ["-f", `tail -F .*${stationId}\\.notify`], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5e3
+      });
+      return out3.trim().length > 0;
+    } catch (err) {
+      return err.status === 1 ? false : null;
+    }
+  }
+  return watchersFor(stationId, { notifyPath: notifyPath2 }).inboxAlive;
+}
+var LOOP_PATTERNS, WATCHER_BINARIES, SHELLS;
+var init_watchers = __esm({
+  "src/watchers.ts"() {
+    "use strict";
+    LOOP_PATTERNS = [/\bwhile\s+true\b/, /\buntil\s+\[/, /\bwhile\s+\[/];
+    WATCHER_BINARIES = /* @__PURE__ */ new Set(["tail", "inotifywait", "fswatch"]);
+    SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
+  }
+});
+
+// src/attest.ts
+import { execFileSync as execFileSync5 } from "node:child_process";
+import * as path10 from "node:path";
+function git3(cwd, args) {
+  try {
+    return execFileSync5("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 15e3
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+function assessReadiness(opts) {
+  const { worktree, agentId } = opts;
+  const checks = [];
+  const status = git3(worktree, ["status", "--porcelain", "--untracked-files=all"]);
+  if (status === null) {
+    checks.push({ name: "worktree", ok: false, detail: `cannot read git status in ${worktree}` });
+  } else {
+    const dirty = status.split("\n").filter(Boolean);
+    checks.push({
+      name: "clean",
+      ok: dirty.length === 0,
+      detail: dirty.length === 0 ? "working tree clean" : `${dirty.length} uncommitted change(s) \u2014 commit to the station branch or stash with a named message; do NOT discard`
+    });
+  }
+  const stashes = git3(worktree, ["stash", "list"]);
+  const stashCount = stashes ? stashes.split("\n").filter(Boolean).length : 0;
+  checks.push({
+    name: "stashes",
+    ok: stashCount === 0,
+    detail: stashCount === 0 ? "no stashes" : `${stashCount} stash(es) \u2014 an unclaimed stash is a question for the expo, not garbage`
+  });
+  const resuming = opts.resumingTickets ?? [];
+  checks.push({
+    name: "tickets",
+    ok: true,
+    detail: resuming.length === 0 ? "no tickets to resume" : `resuming ${resuming.join(", ")} from the previous shift`
+  });
+  const branch = git3(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
+  const expected = `hands/${agentId}`;
+  checks.push({
+    name: "branch",
+    ok: branch === expected,
+    detail: branch === expected ? `on ${branch}` : `on ${branch ?? "?"} \u2014 expected ${expected}`
+  });
+  if (!opts.offline) git3(worktree, ["fetch", "--quiet", "origin"]);
+  const headSha2 = git3(worktree, ["rev-parse", "HEAD"]);
+  const originSha = git3(worktree, ["rev-parse", "origin/main"]);
+  const behind = originSha && headSha2 ? Number(git3(worktree, ["rev-list", "--count", `HEAD..${originSha}`]) ?? "0") : 0;
+  checks.push({
+    name: "synced",
+    ok: behind === 0,
+    detail: behind === 0 ? "up to date with origin/main" : `${behind} behind origin/main \u2014 rebase`
+  });
+  const lock = readLock(worktree);
+  checks.push({
+    name: "lock",
+    ok: lock !== null,
+    detail: lock ? `worktree held by pid ${lock.pid}` : "worktree not claimed \u2014 run `hands claim`"
+  });
+  const inbox = inboxMonitorAlive(agentId, opts.notifyPath);
+  checks.push({
+    name: "monitor",
+    ok: inbox === true,
+    detail: inbox === true ? "inbox monitor armed" : inbox === false ? "inbox monitor DEAD \u2014 this station cannot be woken" : "inbox monitor state unknown on this platform"
+  });
+  const failed = checks.filter((c) => !c.ok);
+  return {
+    ok: failed.length === 0,
+    checks,
+    reason: failed.length === 0 ? null : failed.map((c) => c.detail).join("; "),
+    headSha: headSha2,
+    originSha,
+    lockPid: lock?.pid ?? null
+  };
+}
+function attestationValid(record2, now) {
+  if (!record2.ok) return { valid: false, reason: "the station declined to attest" };
+  if (record2.head_sha && now.headSha && record2.head_sha !== now.headSha) {
+    return { valid: false, reason: "the worktree has moved since it attested" };
+  }
+  if (record2.origin_sha && now.originSha && record2.origin_sha !== now.originSha) {
+    return { valid: false, reason: "origin/main has advanced since it attested" };
+  }
+  if (record2.lock_pid && now.lockPid && record2.lock_pid !== now.lockPid) {
+    return { valid: false, reason: "the worktree lock changed hands since it attested" };
+  }
+  if (now.shiftStartedAt && record2.at < now.shiftStartedAt) {
+    return { valid: false, reason: "attested in a previous shift" };
+  }
+  return { valid: true, reason: null };
+}
+function currentWorktreeFacts(worktree) {
+  return {
+    headSha: git3(worktree, ["rev-parse", "HEAD"]),
+    originSha: git3(worktree, ["rev-parse", "origin/main"]),
+    lockPid: readLock(worktree)?.pid ?? null
+  };
+}
+var init_attest = __esm({
+  "src/attest.ts"() {
+    "use strict";
+    init_worktree_lock();
+    init_watchers();
+  }
+});
+
+// src/seed-permissions.ts
+import * as fs12 from "node:fs";
+import * as path11 from "node:path";
+function stationSettings() {
+  return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
+}
+function unseedStationPermissions(dir) {
+  const file2 = path11.join(dir, SEEDED_RELPATH);
+  if (!fs12.existsSync(file2)) return false;
+  fs12.rmSync(file2, { force: true });
+  const parent = path11.dirname(file2);
+  try {
+    if (fs12.readdirSync(parent).length === 0) fs12.rmdirSync(parent);
+  } catch {
+  }
+  return true;
+}
+function seedStationPermissions(dir) {
+  const file2 = path11.join(dir, ".claude", "settings.local.json");
+  if (fs12.existsSync(file2)) return { path: file2, written: false };
+  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
+  fs12.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+`);
+  return { path: file2, written: true };
+}
+function mergeStationSettings(dir, patch) {
+  const file2 = path11.join(dir, SEEDED_RELPATH);
+  let existing = {};
+  try {
+    const raw = fs12.readFileSync(file2, "utf8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object") existing = parsed;
+  } catch {
+    existing = {};
+  }
+  let changed = false;
+  for (const [key, value] of Object.entries(patch)) {
+    if (!(key in existing)) {
+      existing[key] = value;
+      changed = true;
+    }
+  }
+  if (!changed) return { path: file2, written: false };
+  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
+  fs12.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
+`);
+  return { path: file2, written: true };
+}
+var ALLOW, DENY, SEEDED_RELPATH;
+var init_seed_permissions = __esm({
+  "src/seed-permissions.ts"() {
+    "use strict";
+    ALLOW = [
+      "Read",
+      "Glob",
+      "Grep",
+      "Monitor",
+      "Bash(git log *)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git show *)",
+      "Bash(git blame *)",
+      "Bash(git branch *)",
+      "Bash(git rev-list *)",
+      "Bash(git rev-parse *)",
+      "Bash(gh issue view *)",
+      "Bash(gh issue list *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr list *)",
+      "Bash(rg *)",
+      "Bash(ls *)",
+      "Bash(cat *)",
+      "Bash(head *)",
+      "Bash(tail *)",
+      "Bash(wc *)",
+      "Bash(find *)",
+      "Bash(hands paths *)",
+      "Bash(hands station ls *)",
+      "mcp__plugin_hands_hands__hands_paths",
+      "mcp__plugin_hands_hands__hands_receive",
+      "mcp__plugin_hands_hands__hands_send",
+      "mcp__plugin_hands_hands__hands_tasks",
+      "mcp__plugin_hands_hands__hands_task_update",
+      "mcp__plugin_hands_hands__hands_focus",
+      "mcp__plugin_hands_hands__hands_ask",
+      "mcp__plugin_hands_hands__hands_peers",
+      "mcp__plugin_hands_hands__hands_board",
+      "mcp__plugin_hands_hands__hands_history",
+      "mcp__plugin_hands_hands__hands_priorities",
+      "mcp__plugin_hands_hands__hands_questions",
+      "mcp__plugin_hands_hands__hands_todos"
+    ];
+    DENY = [
+      "Bash(git push *)",
+      "Bash(git reset --hard *)",
+      "Bash(gh pr merge *)",
+      "mcp__plugin_hands_hands__hands_scale",
+      "mcp__plugin_hands_hands__hands_station_remove"
+    ];
+    SEEDED_RELPATH = ".claude/settings.local.json";
+  }
+});
+
+// src/theming.ts
+import * as os6 from "node:os";
+import * as path12 from "node:path";
 function themeColorForIndex(index) {
   const n = THEME_PALETTE.length;
   const i = ((index - 1) % n + n) % n;
@@ -23357,11 +23810,11 @@ function themeFileName(repoSlug, index) {
   return `${repoSlug}-station-${index}`;
 }
 function themesDir(env = process.env) {
-  const home = env.HANDS_TEST_HOME?.trim() || os5.homedir();
-  return path9.join(home, ".claude", "themes");
+  const home = env.HANDS_TEST_HOME?.trim() || os6.homedir();
+  return path12.join(home, ".claude", "themes");
 }
 function themeFilePath(repoSlug, index, env = process.env) {
-  return path9.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
+  return path12.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
 }
 function assignStationTheme(opts) {
   const color = themeColorForIndex(opts.index);
@@ -23398,8 +23851,273 @@ var init_theming = __esm({
   }
 });
 
+// src/provision.ts
+var provision_exports = {};
+__export(provision_exports, {
+  ProvisionError: () => ProvisionError,
+  addStations: () => addStations,
+  launch: () => launch,
+  launchCommand: () => launchCommand,
+  listStations: () => listStations,
+  removeStation: () => removeStation,
+  scaleStations: () => scaleStations,
+  stationBranch: () => stationBranch,
+  stationRoot: () => stationRoot
+});
+import { execFileSync as execFileSync6, spawn } from "node:child_process";
+import * as fs13 from "node:fs";
+import * as os7 from "node:os";
+import * as path13 from "node:path";
+function git4(cwd, args) {
+  return execFileSync6("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 3e4
+  }).trim();
+}
+function requireRepo(cwd) {
+  const info = repoInfo(cwd);
+  if (!info) throw new ProvisionError(`not inside a git repo: ${cwd}`);
+  return info;
+}
+function stationRoot(cwd = process.cwd(), config2) {
+  const cfg = config2 ?? loadConfig({ cwd });
+  if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
+  return path13.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+}
+function stationBranch(index) {
+  return `hands/station-${index}`;
+}
+function listStations(cwd = process.cwd(), config2) {
+  const root = stationRoot(cwd, config2);
+  let names = [];
+  try {
+    names = fs13.readdirSync(root);
+  } catch {
+    return [];
+  }
+  const stations = [];
+  for (const name of names) {
+    const m = name.match(/^station-(\d+)$/);
+    if (!m) continue;
+    const index = Number.parseInt(m[1], 10);
+    stations.push({
+      id: `station-${index}`,
+      index,
+      dir: path13.join(root, name),
+      branch: stationBranch(index),
+      present: true
+    });
+  }
+  return stations.sort((a, b) => a.index - b.index);
+}
+function onlyDirtInWorktreeIsOurs(dir) {
+  let status;
+  try {
+    status = git4(dir, ["status", "--porcelain", "--untracked-files=all"]);
+  } catch {
+    return false;
+  }
+  const paths = status.split("\n").map((line) => line.slice(3).trim()).filter(Boolean);
+  if (paths.length === 0) return false;
+  return paths.every((p) => p === SEEDED_RELPATH);
+}
+function branchExists(cwd, branch) {
+  try {
+    git4(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+function launchCommand(target, mode = "station") {
+  const skill = mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
+  const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
+  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
+}
+function shellQuote(s) {
+  return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
+}
+function tmuxAvailable() {
+  try {
+    execFileSync6("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+function launch(plan, launcher, env = process.env, launchMode = "station") {
+  const command = launchCommand(plan, launchMode);
+  const mode = launcher === "auto" ? env.TMUX || tmuxAvailable() ? "tmux" : "manual" : launcher;
+  if (mode === "tmux") {
+    try {
+      if (env.TMUX) {
+        execFileSync6("tmux", ["new-window", "-d", "-n", plan.id, command], {
+          stdio: "ignore",
+          timeout: 1e4
+        });
+      } else {
+        execFileSync6(
+          "tmux",
+          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
+          { stdio: "ignore", timeout: 1e4 }
+        );
+      }
+      return { launcher: "tmux", launched: true };
+    } catch {
+      return { launcher: "manual", launched: false };
+    }
+  }
+  if (mode === "iterm") {
+    const script = `tell application "iTerm"
+  activate
+  set newWindow to (create window with default profile)
+  tell current session of newWindow to write text ${JSON.stringify(command)}
+end tell`;
+    try {
+      const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
+      child.unref();
+      return { launcher: "iterm", launched: true };
+    } catch {
+      return { launcher: "manual", launched: false };
+    }
+  }
+  return { launcher: "manual", launched: false };
+}
+function addStations(count, opts) {
+  const cwd = opts?.cwd ?? process.cwd();
+  const cfg = opts?.config ?? loadConfig({ cwd });
+  const info = requireRepo(cwd);
+  const root = stationRoot(cwd, cfg);
+  fs13.mkdirSync(root, { recursive: true });
+  const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
+  const plans = [];
+  let index = 1;
+  for (let created = 0; created < count; index++) {
+    if (taken.has(index)) continue;
+    const id = `station-${index}`;
+    const dir = path13.join(root, id);
+    const branch = stationBranch(index);
+    const base = cfg.stations.baseBranch ?? "HEAD";
+    if (branchExists(info.repoRoot, branch)) {
+      git4(info.repoRoot, ["worktree", "add", dir, branch]);
+    } else {
+      git4(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
+    }
+    const model = cfg.stations.overrides[id] ?? cfg.stations.model;
+    seedStationPermissions(dir);
+    let themeColor;
+    let sessionName;
+    if (cfg.stations.theming) {
+      const assignment = assignStationTheme({
+        repoLabel: path13.basename(info.repoRoot),
+        repoSlug: info.slug,
+        index,
+        env: opts?.env
+      });
+      fs13.mkdirSync(path13.dirname(assignment.file), { recursive: true });
+      fs13.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+`);
+      mergeStationSettings(dir, { theme: assignment.themeId });
+      themeColor = assignment.color.hex;
+      sessionName = assignment.sessionName;
+    }
+    materializeCraftAgents(cfg, dir, opts?.env, cwd);
+    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
+    plans.push({
+      id,
+      dir,
+      branch,
+      model,
+      command: launchCommand({ id, dir, model }),
+      launcher: res.launcher,
+      launched: res.launched,
+      ...themeColor ? { themeColor } : {},
+      ...sessionName ? { sessionName } : {}
+    });
+    created++;
+  }
+  return plans;
+}
+function removeStation(id, opts) {
+  const cwd = opts?.cwd ?? process.cwd();
+  const cfg = opts?.config ?? loadConfig({ cwd });
+  const m = id.match(/^station-(\d+)$/);
+  if (!m) throw new ProvisionError(`not a station id: ${id} (expected station-<n>)`);
+  const index = Number.parseInt(m[1], 10);
+  const info = requireRepo(cwd);
+  const root = stationRoot(cwd, cfg);
+  const dir = path13.join(root, `station-${index}`);
+  if (cfg.stations.theming) {
+    try {
+      fs13.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+    } catch {
+    }
+  }
+  try {
+    execFileSync6("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
+  } catch {
+  }
+  try {
+    execFileSync6("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
+  } catch {
+  }
+  let removed = false;
+  if (fs13.existsSync(dir)) {
+    if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
+    const args = ["worktree", "remove", dir];
+    if (opts?.force) args.splice(2, 0, "--force");
+    try {
+      git4(info.repoRoot, args);
+    } catch (err) {
+      throw new ProvisionError(
+        `could not remove ${id}: ${err instanceof Error ? err.message.split("\n")[0] : String(err)} (uncommitted work? re-run with --force to discard it)`
+      );
+    }
+    removed = true;
+  }
+  git4(info.repoRoot, ["worktree", "prune"]);
+  const branch = stationBranch(index);
+  if (branchExists(info.repoRoot, branch)) {
+    try {
+      git4(info.repoRoot, ["branch", "-D", branch]);
+    } catch {
+    }
+  }
+  return { id: `station-${index}`, removed };
+}
+function scaleStations(target, opts) {
+  if (!Number.isInteger(target) || target < 0) throw new ProvisionError(`bad target: ${target}`);
+  const cwd = opts?.cwd ?? process.cwd();
+  const cfg = opts?.config ?? loadConfig({ cwd });
+  const current = listStations(cwd, cfg);
+  if (current.length < target) {
+    return { added: addStations(target - current.length, { cwd, config: cfg, env: opts?.env }), removed: [] };
+  }
+  const removed = [];
+  for (const w of current.slice(target)) {
+    removeStation(w.id, { cwd, config: cfg, force: opts?.force, env: opts?.env });
+    removed.push(w.id);
+  }
+  return { added: [], removed };
+}
+var ProvisionError;
+var init_provision = __esm({
+  "src/provision.ts"() {
+    "use strict";
+    init_config();
+    init_crafts();
+    init_paths();
+    init_seed_permissions();
+    init_theming();
+    ProvisionError = class extends Error {
+    };
+  }
+});
+
 // src/snapshot.ts
-import * as path10 from "node:path";
+import * as path14 from "node:path";
 function stationIndex(id) {
   const m = /^station-(\d+)$/.exec(id);
   return m ? Number.parseInt(m[1], 10) : null;
@@ -23424,15 +24142,30 @@ function activity(raw) {
     return { files: [], ticket: null };
   }
 }
+function readinessOf(store, agentId, worktree) {
+  if (!/^station-\d+$/.test(agentId)) return { ready: "ready", readyReason: null };
+  const record2 = store.getAttestation(agentId);
+  if (!record2) return { ready: "unattested", readyReason: null };
+  if (!record2.ok) return { ready: "declined", readyReason: record2.reason };
+  if (!worktree) return { ready: "ready", readyReason: null };
+  const verdict = attestationValid(record2, currentWorktreeFacts(worktree));
+  return verdict.valid ? { ready: "ready", readyReason: null } : { ready: "expired", readyReason: verdict.reason };
+}
 function buildSnapshot(store, now = Date.now(), env = process.env) {
   const peers = store.listPeers(now);
   const wakes = store.wakeCounts(now);
+  const stationDirs = /* @__PURE__ */ new Map();
+  try {
+    for (const st of listStations()) stationDirs.set(st.id, st.dir);
+  } catch {
+  }
   const agents = peers.map((p) => {
     const { files, ticket } = activity(p.activity);
     const activeAge = p.last_active ? now - p.last_active : Number.POSITIVE_INFINITY;
     const state = !p.online ? "offline" : activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle";
     const index = stationIndex(p.id);
     return {
+      ...readinessOf(store, p.id, stationDirs.get(p.id)),
       id: p.id,
       state,
       online: p.online,
@@ -23459,7 +24192,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       const b = online[j];
       const shared = a.files.find((f) => b.files.includes(f));
       if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path10.basename(shared) });
+        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path14.basename(shared) });
       } else if (a.ticket && a.ticket === b.ticket) {
         collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
       }
@@ -23586,7 +24319,9 @@ function buildPublicSnapshot(store, opts) {
 var init_snapshot = __esm({
   "src/snapshot.ts"() {
     "use strict";
+    init_attest();
     init_board();
+    init_provision();
     init_priorities();
     init_store();
     init_theming();
@@ -23594,12 +24329,12 @@ var init_snapshot = __esm({
 });
 
 // src/remote.ts
-import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs10 from "node:fs";
-import * as os6 from "node:os";
-import * as path11 from "node:path";
-function git3(cwd, args) {
-  return execFileSync4("git", args, {
+import { execFileSync as execFileSync7 } from "node:child_process";
+import * as fs14 from "node:fs";
+import * as os8 from "node:os";
+import * as path15 from "node:path";
+function git5(cwd, args) {
+  return execFileSync7("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -23608,7 +24343,7 @@ function git3(cwd, args) {
 }
 function tryGit(cwd, args) {
   try {
-    return git3(cwd, args);
+    return git5(cwd, args);
   } catch {
     return null;
   }
@@ -23641,13 +24376,13 @@ function resolveProject(config2, cwd = process.cwd()) {
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
   const origin = tryGit(root, ["remote", "get-url", "origin"]);
   if (origin) project = projectFromOrigin(origin);
-  if (!project) project = sanitizeSegment(path11.basename(root));
+  if (!project) project = sanitizeSegment(path15.basename(root));
   projectCache.set(cwd, project);
   return project;
 }
 function githubUsername() {
   try {
-    const out3 = execFileSync4("gh", ["api", "user", "-q", ".login"], {
+    const out3 = execFileSync7("gh", ["api", "user", "-q", ".login"], {
       encoding: "utf8",
       timeout: 5e3,
       stdio: ["ignore", "pipe", "ignore"]
@@ -23661,23 +24396,23 @@ function resolveHandle(config2) {
   const h = config2.remote.handle?.trim();
   if (h) return sanitizeSegment(h, "local");
   try {
-    return sanitizeSegment(os6.userInfo().username, "local");
+    return sanitizeSegment(os8.userInfo().username, "local");
   } catch {
     return "local";
   }
 }
 function journalDir(env = process.env, cwd = process.cwd()) {
-  return path11.join(coordinationDir(env, cwd), "remote");
+  return path15.join(coordinationDir(env, cwd), "remote");
 }
 function localBooksOriginPath(env = process.env, cwd = process.cwd()) {
-  return path11.join(coordinationDir(env, cwd), "books-origin.git");
+  return path15.join(coordinationDir(env, cwd), "books-origin.git");
 }
 function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
   const dir = localBooksOriginPath(env, cwd);
   try {
-    if (!fs10.existsSync(path11.join(dir, "HEAD"))) {
-      fs10.mkdirSync(dir, { recursive: true, mode: 448 });
-      git3(dir, ["init", "-q", "--bare", "-b", "main", dir]);
+    if (!fs14.existsSync(path15.join(dir, "HEAD"))) {
+      fs14.mkdirSync(dir, { recursive: true, mode: 448 });
+      git5(dir, ["init", "-q", "--bare", "-b", "main", dir]);
     }
     return dir;
   } catch {
@@ -23686,16 +24421,16 @@ function ensureLocalBooksOrigin(env = process.env, cwd = process.cwd()) {
 }
 function ensureRepo(dir, url2) {
   try {
-    fs10.mkdirSync(dir, { recursive: true, mode: 448 });
-    if (!fs10.existsSync(path11.join(dir, ".git"))) {
-      git3(dir, ["init", "-q", "-b", "main"]);
-      git3(dir, ["config", "user.name", "hands"]);
-      git3(dir, ["config", "user.email", "hands@localhost"]);
+    fs14.mkdirSync(dir, { recursive: true, mode: 448 });
+    if (!fs14.existsSync(path15.join(dir, ".git"))) {
+      git5(dir, ["init", "-q", "-b", "main"]);
+      git5(dir, ["config", "user.name", "hands"]);
+      git5(dir, ["config", "user.email", "hands@localhost"]);
     }
     if (tryGit(dir, ["remote", "get-url", "origin"]) === null) {
-      git3(dir, ["remote", "add", "origin", url2]);
+      git5(dir, ["remote", "add", "origin", url2]);
     } else {
-      git3(dir, ["remote", "set-url", "origin", url2]);
+      git5(dir, ["remote", "set-url", "origin", url2]);
     }
     return true;
   } catch {
@@ -23726,10 +24461,10 @@ function syncPull(dir) {
   return { ok: false, reason: "conflict" };
 }
 function readMarker(dir) {
-  const file2 = path11.join(dir, MARKER_FILE);
+  const file2 = path15.join(dir, MARKER_FILE);
   let raw;
   try {
-    raw = fs10.readFileSync(file2, "utf8");
+    raw = fs14.readFileSync(file2, "utf8");
   } catch {
     return null;
   }
@@ -23763,7 +24498,7 @@ function validateJournal(dir, opts) {
   if (!opts?.write) return { ok: true };
   let entries = [];
   try {
-    entries = fs10.readdirSync(dir).filter((e) => e !== ".git");
+    entries = fs14.readdirSync(dir).filter((e) => e !== ".git");
   } catch {
     return { ok: false, reason: `journal dir unreadable: ${dir}` };
   }
@@ -23775,26 +24510,26 @@ function validateJournal(dir, opts) {
       reason: "the configured remote.url is not an hands journal (no hands.json marker \u2014 either this is the wrong repo, or the marker was deleted) and it is not empty. If this repo is really where the journal should live, run `hands sync --adopt` once to initialize the journal structure alongside the existing content."
     };
   }
-  fs10.writeFileSync(path11.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
+  fs14.writeFileSync(path15.join(dir, MARKER_FILE), `${JSON.stringify({ journal: JOURNAL_LAYOUT })}
 `);
   return { ok: true, bootstrapped: true };
 }
 function debounceMarkerPath(dir) {
-  return path11.join(dir, ".git", "hands-last-push");
+  return path15.join(dir, ".git", "hands-last-push");
 }
 function syncStatusPath(dir) {
-  return path11.join(dir, ".git", "hands-sync-status");
+  return path15.join(dir, ".git", "hands-sync-status");
 }
 function writeSyncStatus(dir, result, now) {
   try {
-    fs10.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
+    fs14.writeFileSync(syncStatusPath(dir), `${JSON.stringify({ ...result, at: now })}
 `);
   } catch {
   }
 }
 function readSyncStatus(dir) {
   try {
-    return JSON.parse(fs10.readFileSync(syncStatusPath(dir), "utf8"));
+    return JSON.parse(fs14.readFileSync(syncStatusPath(dir), "utf8"));
   } catch {
     return null;
   }
@@ -23806,22 +24541,22 @@ function changedLogDates(dir, head0, journal) {
     "--name-only",
     `${head0}..HEAD`,
     "--",
-    path11.join("journal", journal.project, journal.handle, "log")
+    path15.join("journal", journal.project, journal.handle, "log")
   ]);
   if (diff === null) return void 0;
   const dates = /* @__PURE__ */ new Set();
   for (const line of diff.split("\n")) {
-    const m = path11.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
+    const m = path15.basename(line).match(/^(\d{4}-\d{2}-\d{2})(?:\..*)?\.ndjson$/);
     if (m) dates.add(m[1]);
   }
   return dates;
 }
 function writeIfChanged(file2, content) {
   try {
-    if (fs10.readFileSync(file2, "utf8") === content) return false;
+    if (fs14.readFileSync(file2, "utf8") === content) return false;
   } catch {
   }
-  fs10.writeFileSync(file2, content);
+  fs14.writeFileSync(file2, content);
   return true;
 }
 function syncPush(journal, opts) {
@@ -23830,7 +24565,7 @@ function syncPush(journal, opts) {
   const marker = debounceMarkerPath(dir);
   if (!opts?.force) {
     try {
-      if (now - fs10.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
+      if (now - fs14.statSync(marker).mtimeMs < PUSH_DEBOUNCE_MS) return { status: "debounced" };
     } catch {
     }
   }
@@ -23840,12 +24575,12 @@ function syncPush(journal, opts) {
   };
   try {
     const head0 = tryGit(dir, ["rev-parse", "--verify", "HEAD"]);
-    const ownPaths = [path11.join("journal", project, handle), MARKER_FILE];
-    const own = ownPaths.filter((p) => fs10.existsSync(path11.join(dir, p)));
-    if (own.length > 0) git3(dir, ["add", "-A", "--", ...own]);
-    let dirty = own.length > 0 && git3(dir, ["status", "--porcelain", "--", ...own]) !== "";
+    const ownPaths = [path15.join("journal", project, handle), MARKER_FILE];
+    const own = ownPaths.filter((p) => fs14.existsSync(path15.join(dir, p)));
+    if (own.length > 0) git5(dir, ["add", "-A", "--", ...own]);
+    let dirty = own.length > 0 && git5(dir, ["status", "--porcelain", "--", ...own]) !== "";
     if (dirty) {
-      git3(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
+      git5(dir, ["commit", "-q", "-m", `journal: ${new Date(now).toISOString()}`]);
     }
     const pulled = syncPull(dir);
     if (!pulled.ok) {
@@ -23857,36 +24592,36 @@ function syncPush(journal, opts) {
     const validation = validateJournal(dir, { write: true, adopt: opts?.adopt });
     if (!validation.ok) return finish({ status: "invalid", detail: validation.reason });
     if (validation.bootstrapped) {
-      git3(dir, ["add", "--", MARKER_FILE]);
-      git3(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
+      git5(dir, ["add", "--", MARKER_FILE]);
+      git5(dir, ["commit", "-q", "-m", `journal: layout v${JOURNAL_LAYOUT} marker`]);
       dirty = true;
     }
     const digestDates = changedLogDates(dir, head0, journal);
     const changedDigests = regenerateDigests(journal, digestDates);
     if (changedDigests.length > 0) {
-      git3(dir, ["add", "--", path11.join("journal", project, handle)]);
-      git3(dir, ["commit", "-q", "-m", "journal: digests"]);
+      git5(dir, ["add", "--", path15.join("journal", project, handle)]);
+      git5(dir, ["commit", "-q", "-m", "journal: digests"]);
       dirty = true;
     }
     if (opts?.store) {
-      const handleDir2 = path11.join(dir, "journal", project, handle);
-      fs10.mkdirSync(handleDir2, { recursive: true });
-      const snapshotFile = path11.join(handleDir2, "dashboard.json");
+      const handleDir2 = path15.join(dir, "journal", project, handle);
+      fs14.mkdirSync(handleDir2, { recursive: true });
+      const snapshotFile = path15.join(handleDir2, "dashboard.json");
       const pub = buildPublicSnapshot(opts.store, { handle, project, now });
       if (writeIfChanged(snapshotFile, `${JSON.stringify(pub, null, 2)}
 `)) {
-        git3(dir, ["add", "--", snapshotFile]);
-        git3(dir, ["commit", "-q", "-m", "journal: dashboard snapshot"]);
+        git5(dir, ["add", "--", snapshotFile]);
+        git5(dir, ["commit", "-q", "-m", "journal: dashboard snapshot"]);
         dirty = true;
       }
     }
     const ahead = tryGit(dir, ["rev-list", "--count", "origin/main..HEAD"]);
     if (!dirty && ahead === "0") {
-      fs10.writeFileSync(marker, "");
+      fs14.writeFileSync(marker, "");
       return finish({ status: "clean" });
     }
-    git3(dir, ["push", "-q", "-u", "origin", "main"]);
-    fs10.writeFileSync(marker, "");
+    git5(dir, ["push", "-q", "-u", "origin", "main"]);
+    fs14.writeFileSync(marker, "");
     return finish({ status: "pushed" });
   } catch (err) {
     return finish({
@@ -23907,7 +24642,7 @@ function openJournal(options) {
   const project = resolveProject(config2, cwd);
   const handle = resolveHandle(config2);
   const agentId = options?.agentId ?? null;
-  const logDir = path11.join(dir, "journal", project, handle, "log");
+  const logDir = path15.join(dir, "journal", project, handle, "log");
   return {
     dir,
     project,
@@ -23917,7 +24652,7 @@ function openJournal(options) {
     append(type, data) {
       if (type === "cursor") return;
       try {
-        fs10.mkdirSync(logDir, { recursive: true });
+        fs14.mkdirSync(logDir, { recursive: true });
         const day = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
         const event = {
           v: JOURNAL_VERSION,
@@ -23926,7 +24661,7 @@ function openJournal(options) {
           ...agentId ? { agent: agentId } : {},
           data
         };
-        fs10.appendFileSync(path11.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
+        fs14.appendFileSync(path15.join(logDir, `${day}.ndjson`), `${JSON.stringify(event)}
 `, {
           mode: 384
         });
@@ -23938,7 +24673,7 @@ function openJournal(options) {
 function readEventsFromDir(logDir, into, onlyFile) {
   let files = [];
   try {
-    files = fs10.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
+    files = fs14.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort();
   } catch {
     return;
   }
@@ -23946,7 +24681,7 @@ function readEventsFromDir(logDir, into, onlyFile) {
   for (const file2 of files) {
     let body;
     try {
-      body = fs10.readFileSync(path11.join(logDir, file2), "utf8");
+      body = fs14.readFileSync(path15.join(logDir, file2), "utf8");
     } catch {
       continue;
     }
@@ -23962,30 +24697,30 @@ function readEventsFromDir(logDir, into, onlyFile) {
 }
 function readEvents(dir, project, handle) {
   const events = [];
-  readEventsFromDir(path11.join(dir, "journal", project, handle, "log"), events);
+  readEventsFromDir(path15.join(dir, "journal", project, handle, "log"), events);
   return events.sort((a, b) => a.ts - b.ts);
 }
 function sharedCraftsDir(config2, cwd = process.cwd()) {
   const root = repoInfo(cwd)?.repoRoot;
   if (!root) return null;
-  return path11.join(root, config2.crafts.sharedDir?.trim() || ".hands/crafts");
+  return path15.join(root, config2.crafts.sharedDir?.trim() || ".hands/crafts");
 }
 function personalCraftsDir(config2, env = process.env, cwd = process.cwd()) {
   const booksOn = Boolean(config2.remote.url?.trim());
-  return booksOn ? path11.join(journalDir(env, cwd), "journal", resolveProject(config2, cwd), resolveHandle(config2), "crafts") : path11.join(coordinationDir(env, cwd), "crafts");
+  return booksOn ? path15.join(journalDir(env, cwd), "journal", resolveProject(config2, cwd), resolveHandle(config2), "crafts") : path15.join(coordinationDir(env, cwd), "crafts");
 }
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
   const slug = sanitizeSegment(craft, "unnamed");
   const shared = sharedCraftsDir(config2, cwd);
-  const scope = shared && fs10.existsSync(path11.join(shared, `${slug}.md`)) ? "shared" : "personal";
+  const scope = shared && fs14.existsSync(path15.join(shared, `${slug}.md`)) ? "shared" : "personal";
   const dir = scope === "shared" && shared ? shared : personalCraftsDir(config2, env, cwd);
   return {
     dir,
     slug,
-    book: path11.join(dir, `${slug}.md`),
-    mise: path11.join(dir, `${slug}.mise.md`),
-    skill: path11.join(dir, `${slug}.skill.md`),
+    book: path15.join(dir, `${slug}.md`),
+    mise: path15.join(dir, `${slug}.mise.md`),
+    skill: path15.join(dir, `${slug}.skill.md`),
     scope
   };
 }
@@ -24029,16 +24764,16 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
   const limit = opts?.limitPerHandle ?? 15;
   let handles = [];
   try {
-    handles = fs10.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs14.readdirSync(path15.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const kitchens = [];
   for (const handle of handles) {
-    const logDir = path11.join(dir, "journal", project, handle, "log");
+    const logDir = path15.join(dir, "journal", project, handle, "log");
     let files = [];
     try {
-      files = fs10.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
+      files = fs14.readdirSync(logDir).filter((f) => f.endsWith(".ndjson")).sort().slice(-days);
     } catch {
     }
     const events = [];
@@ -24061,23 +24796,23 @@ function readOtherKitchens(dir, project, ownHandle, opts) {
 function readOtherCrafts(dir, project, ownHandle) {
   let handles = [];
   try {
-    handles = fs10.readdirSync(path11.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
+    handles = fs14.readdirSync(path15.join(dir, "journal", project), { withFileTypes: true }).filter((e) => e.isDirectory() && e.name !== ownHandle).map((e) => e.name).sort();
   } catch {
     return [];
   }
   const read = (file2) => {
     try {
-      return fs10.readFileSync(file2, "utf8");
+      return fs14.readFileSync(file2, "utf8");
     } catch {
       return null;
     }
   };
   const crafts = [];
   for (const handle of handles) {
-    const craftsDir = path11.join(dir, "journal", project, handle, "crafts");
+    const craftsDir = path15.join(dir, "journal", project, handle, "crafts");
     let files = [];
     try {
-      files = fs10.readdirSync(craftsDir);
+      files = fs14.readdirSync(craftsDir);
     } catch {
       continue;
     }
@@ -24088,8 +24823,8 @@ function readOtherCrafts(dir, project, ownHandle) {
       crafts.push({
         handle,
         slug,
-        book: read(path11.join(craftsDir, `${slug}.md`)),
-        skill: read(path11.join(craftsDir, `${slug}.skill.md`))
+        book: read(path15.join(craftsDir, `${slug}.md`)),
+        skill: read(path15.join(craftsDir, `${slug}.skill.md`))
       });
     }
   }
@@ -24097,7 +24832,7 @@ function readOtherCrafts(dir, project, ownHandle) {
 }
 function listProjects(dir) {
   try {
-    return fs10.readdirSync(path11.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    return fs14.readdirSync(path15.join(dir, "journal"), { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
   } catch {
     return [];
   }
@@ -24146,8 +24881,8 @@ var init_remote = __esm({
 });
 
 // src/crafts.ts
-import * as fs11 from "node:fs";
-import * as path12 from "node:path";
+import * as fs15 from "node:fs";
+import * as path16 from "node:path";
 function parseCraftHeader(bookContent) {
   if (!bookContent) return { covers: null, distilled: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
@@ -24158,7 +24893,7 @@ function parseCraftHeader(bookContent) {
 }
 function readFileSafe(p) {
   try {
-    const body = fs11.readFileSync(p, "utf8").trim();
+    const body = fs15.readFileSync(p, "utf8").trim();
     return body || null;
   } catch {
     return null;
@@ -24175,7 +24910,7 @@ function listSlugsIn(dir) {
   if (!dir) return [];
   let entries;
   try {
-    entries = fs11.readdirSync(dir);
+    entries = fs15.readdirSync(dir);
   } catch {
     return [];
   }
@@ -24191,7 +24926,7 @@ function listCraftFiles(config2, env = process.env, cwd = process.cwd()) {
   ]) {
     for (const slug of listSlugsIn(dir)) {
       if (seen.has(slug) || !dir) continue;
-      const { covers, distilled } = parseCraftHeader(readFileSafe(path12.join(dir, `${slug}.md`)));
+      const { covers, distilled } = parseCraftHeader(readFileSafe(path16.join(dir, `${slug}.md`)));
       seen.set(slug, { slug, scope, covers, distilled });
     }
   }
@@ -24204,10 +24939,10 @@ function listCrafts(store, config2, env = process.env, cwd = process.cwd()) {
   }));
 }
 function craftAgentPath(targetDir, slug) {
-  return path12.join(targetDir, ".claude", "agents", `craft-${slug}.md`);
+  return path16.join(targetDir, ".claude", "agents", `craft-${slug}.md`);
 }
 function craftSkillPath(targetDir, slug) {
-  return path12.join(targetDir, ".claude", "skills", `craft-${slug}`, "SKILL.md");
+  return path16.join(targetDir, ".claude", "skills", `craft-${slug}`, "SKILL.md");
 }
 function generatedCraftAgent(entry) {
   return `---
@@ -24266,43 +25001,43 @@ correct and welcome \u2014 never invent learnings to fill the block.
 }
 function materializeCraftAgents(config2, targetDir, env = process.env, cwd = process.cwd()) {
   const roster = listCraftFiles(config2, env, cwd);
-  const agentsDir = path12.join(targetDir, ".claude", "agents");
-  const skillsDir = path12.join(targetDir, ".claude", "skills");
-  fs11.mkdirSync(agentsDir, { recursive: true });
-  fs11.mkdirSync(skillsDir, { recursive: true });
+  const agentsDir = path16.join(targetDir, ".claude", "agents");
+  const skillsDir = path16.join(targetDir, ".claude", "skills");
+  fs15.mkdirSync(agentsDir, { recursive: true });
+  fs15.mkdirSync(skillsDir, { recursive: true });
   const written = [];
   for (const entry of roster) {
     const files = craftFiles(entry.slug, env, cwd);
     const skillFile = craftSkillPath(targetDir, entry.slug);
-    fs11.mkdirSync(path12.dirname(skillFile), { recursive: true });
-    fs11.writeFileSync(craftAgentPath(targetDir, entry.slug), generatedCraftAgent(entry));
-    fs11.writeFileSync(skillFile, generatedCraftSkill(entry, readFileSafe(files.skill)));
+    fs15.mkdirSync(path16.dirname(skillFile), { recursive: true });
+    fs15.writeFileSync(craftAgentPath(targetDir, entry.slug), generatedCraftAgent(entry));
+    fs15.writeFileSync(skillFile, generatedCraftSkill(entry, readFileSafe(files.skill)));
     written.push(entry.slug);
   }
   const wantSlugs = new Set(roster.map((c) => c.slug));
   const removed = [];
   let agentFiles = [];
   try {
-    agentFiles = fs11.readdirSync(agentsDir);
+    agentFiles = fs15.readdirSync(agentsDir);
   } catch {
     agentFiles = [];
   }
   for (const name of agentFiles) {
     const m = /^craft-(.+)\.md$/.exec(name);
     if (m && !wantSlugs.has(m[1])) {
-      fs11.rmSync(path12.join(agentsDir, name), { force: true });
+      fs15.rmSync(path16.join(agentsDir, name), { force: true });
       removed.push(m[1]);
     }
   }
   let skillDirs = [];
   try {
-    skillDirs = fs11.readdirSync(skillsDir);
+    skillDirs = fs15.readdirSync(skillsDir);
   } catch {
     skillDirs = [];
   }
   for (const name of skillDirs) {
     const m = /^craft-(.+)$/.exec(name);
-    if (m && !wantSlugs.has(m[1])) fs11.rmSync(path12.join(skillsDir, name), { recursive: true, force: true });
+    if (m && !wantSlugs.has(m[1])) fs15.rmSync(path16.join(skillsDir, name), { recursive: true, force: true });
   }
   return { written, removed };
 }
@@ -24313,7 +25048,7 @@ function formatRosterContext(entries, targetDir) {
   const lines = entries.map((e) => {
     const staleness = e.distilled ? "" : " (never distilled)";
     const pending = e.pendingNotes ? ` \xB7 ${e.pendingNotes} pending note(s)` : "";
-    const ready = fs11.existsSync(craftAgentPath(targetDir, e.slug));
+    const ready = fs15.existsSync(craftAgentPath(targetDir, e.slug));
     return `- craft-${e.slug} [${e.scope}${ready ? "" : ", not yet synced"}] \u2014 ${e.covers ?? "no covers stated yet"}${staleness}${pending}`;
   });
   const cap = 1500;
@@ -24439,8 +25174,8 @@ function applyImmediateCraftNote(store, files, note, holder) {
     const leaseKey = `${files.slug}:mise`;
     if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
     try {
-      fs11.mkdirSync(files.dir, { recursive: true });
-      fs11.writeFileSync(files.mise, upsertMiseLine(readFileSafe(files.mise), note.body));
+      fs15.mkdirSync(files.dir, { recursive: true });
+      fs15.writeFileSync(files.mise, upsertMiseLine(readFileSafe(files.mise), note.body));
       store.markCraftNoteFolded(note.id);
       return true;
     } finally {
@@ -24450,8 +25185,8 @@ function applyImmediateCraftNote(store, files, note, holder) {
   const target = note.kind === "skill" ? files.skill : files.book;
   if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
   try {
-    fs11.mkdirSync(files.dir, { recursive: true });
-    fs11.writeFileSync(target, appendRawNote(readFileSafe(target), formatRawTaggedLine(note)));
+    fs15.mkdirSync(files.dir, { recursive: true });
+    fs15.writeFileSync(target, appendRawNote(readFileSafe(target), formatRawTaggedLine(note)));
     return true;
   } finally {
     store.releaseCraftFoldLease(files.slug, holder);
@@ -24503,374 +25238,6 @@ var init_crafts = __esm({
     RAW_NOTES_HEADING = "## Raw notes (unfolded)";
     IMMEDIATE_WRITE_LEASE_TTL_MS = 15e3;
     FOLD_INSTRUCTIONS = "Distill: rewrite the book/skill IN PLACE from the pending notes below plus what's already there \u2014 never append. The book/skill text you were given already contains a `## Raw notes (unfolded)` section (the same entries listed in pendingNotes below) \u2014 fold them into the curated prose above, then remove that section entirely as part of your rewrite. Placement rule: a sequence of steps is SKILL; a decision, a why, or a fact is BOOK. (mise.md maintains itself automatically now \u2014 nothing to do there unless correcting something wrong.) Discard notes that merely restate what's already written \u2014 that discard step is what keeps a craft from turning into a growing log instead of a distillation. Keep the book \u2264150 lines. Stamp the header when done: `> covers: <domains> \xB7 distilled: <today> from <n> learnings`. Then run `hands craft fold-done <craft> --through <n>` with the same throughNoteId this printed.";
-  }
-});
-
-// src/seed-permissions.ts
-import * as fs16 from "node:fs";
-import * as path16 from "node:path";
-function stationSettings() {
-  return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
-}
-function unseedStationPermissions(dir) {
-  const file2 = path16.join(dir, SEEDED_RELPATH);
-  if (!fs16.existsSync(file2)) return false;
-  fs16.rmSync(file2, { force: true });
-  const parent = path16.dirname(file2);
-  try {
-    if (fs16.readdirSync(parent).length === 0) fs16.rmdirSync(parent);
-  } catch {
-  }
-  return true;
-}
-function seedStationPermissions(dir) {
-  const file2 = path16.join(dir, ".claude", "settings.local.json");
-  if (fs16.existsSync(file2)) return { path: file2, written: false };
-  fs16.mkdirSync(path16.dirname(file2), { recursive: true });
-  fs16.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
-`);
-  return { path: file2, written: true };
-}
-function mergeStationSettings(dir, patch) {
-  const file2 = path16.join(dir, SEEDED_RELPATH);
-  let existing = {};
-  try {
-    const raw = fs16.readFileSync(file2, "utf8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") existing = parsed;
-  } catch {
-    existing = {};
-  }
-  let changed = false;
-  for (const [key, value] of Object.entries(patch)) {
-    if (!(key in existing)) {
-      existing[key] = value;
-      changed = true;
-    }
-  }
-  if (!changed) return { path: file2, written: false };
-  fs16.mkdirSync(path16.dirname(file2), { recursive: true });
-  fs16.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
-`);
-  return { path: file2, written: true };
-}
-var ALLOW, DENY, SEEDED_RELPATH;
-var init_seed_permissions = __esm({
-  "src/seed-permissions.ts"() {
-    "use strict";
-    ALLOW = [
-      "Read",
-      "Glob",
-      "Grep",
-      "Monitor",
-      "Bash(git log *)",
-      "Bash(git status *)",
-      "Bash(git diff *)",
-      "Bash(git show *)",
-      "Bash(git blame *)",
-      "Bash(git branch *)",
-      "Bash(git rev-list *)",
-      "Bash(git rev-parse *)",
-      "Bash(gh issue view *)",
-      "Bash(gh issue list *)",
-      "Bash(gh pr view *)",
-      "Bash(gh pr list *)",
-      "Bash(rg *)",
-      "Bash(ls *)",
-      "Bash(cat *)",
-      "Bash(head *)",
-      "Bash(tail *)",
-      "Bash(wc *)",
-      "Bash(find *)",
-      "Bash(hands paths *)",
-      "Bash(hands station ls *)",
-      "mcp__plugin_hands_hands__hands_paths",
-      "mcp__plugin_hands_hands__hands_receive",
-      "mcp__plugin_hands_hands__hands_send",
-      "mcp__plugin_hands_hands__hands_tasks",
-      "mcp__plugin_hands_hands__hands_task_update",
-      "mcp__plugin_hands_hands__hands_focus",
-      "mcp__plugin_hands_hands__hands_ask",
-      "mcp__plugin_hands_hands__hands_peers",
-      "mcp__plugin_hands_hands__hands_board",
-      "mcp__plugin_hands_hands__hands_history",
-      "mcp__plugin_hands_hands__hands_priorities",
-      "mcp__plugin_hands_hands__hands_questions",
-      "mcp__plugin_hands_hands__hands_todos"
-    ];
-    DENY = [
-      "Bash(git push *)",
-      "Bash(git reset --hard *)",
-      "Bash(gh pr merge *)",
-      "mcp__plugin_hands_hands__hands_scale",
-      "mcp__plugin_hands_hands__hands_station_remove"
-    ];
-    SEEDED_RELPATH = ".claude/settings.local.json";
-  }
-});
-
-// src/provision.ts
-var provision_exports = {};
-__export(provision_exports, {
-  ProvisionError: () => ProvisionError,
-  addStations: () => addStations,
-  launch: () => launch,
-  launchCommand: () => launchCommand,
-  listStations: () => listStations,
-  removeStation: () => removeStation,
-  scaleStations: () => scaleStations,
-  stationBranch: () => stationBranch,
-  stationRoot: () => stationRoot
-});
-import { execFileSync as execFileSync8, spawn } from "node:child_process";
-import * as fs17 from "node:fs";
-import * as os8 from "node:os";
-import * as path17 from "node:path";
-function git5(cwd, args) {
-  return execFileSync8("git", args, {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 3e4
-  }).trim();
-}
-function requireRepo(cwd) {
-  const info = repoInfo(cwd);
-  if (!info) throw new ProvisionError(`not inside a git repo: ${cwd}`);
-  return info;
-}
-function stationRoot(cwd = process.cwd(), config2) {
-  const cfg = config2 ?? loadConfig({ cwd });
-  if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path17.join(os8.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
-}
-function stationBranch(index) {
-  return `hands/station-${index}`;
-}
-function listStations(cwd = process.cwd(), config2) {
-  const root = stationRoot(cwd, config2);
-  let names = [];
-  try {
-    names = fs17.readdirSync(root);
-  } catch {
-    return [];
-  }
-  const stations = [];
-  for (const name of names) {
-    const m = name.match(/^station-(\d+)$/);
-    if (!m) continue;
-    const index = Number.parseInt(m[1], 10);
-    stations.push({
-      id: `station-${index}`,
-      index,
-      dir: path17.join(root, name),
-      branch: stationBranch(index),
-      present: true
-    });
-  }
-  return stations.sort((a, b) => a.index - b.index);
-}
-function onlyDirtInWorktreeIsOurs(dir) {
-  let status;
-  try {
-    status = git5(dir, ["status", "--porcelain", "--untracked-files=all"]);
-  } catch {
-    return false;
-  }
-  const paths = status.split("\n").map((line) => line.slice(3).trim()).filter(Boolean);
-  if (paths.length === 0) return false;
-  return paths.every((p) => p === SEEDED_RELPATH);
-}
-function branchExists(cwd, branch) {
-  try {
-    git5(cwd, ["show-ref", "--verify", "--quiet", `refs/heads/${branch}`]);
-    return true;
-  } catch {
-    return false;
-  }
-}
-function launchCommand(target, mode = "station") {
-  const skill = mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
-  const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
-  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
-}
-function shellQuote(s) {
-  return /^[A-Za-z0-9_\-./]+$/.test(s) ? s : `'${s.replaceAll("'", `'\\''`)}'`;
-}
-function tmuxAvailable() {
-  try {
-    execFileSync8("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
-    return true;
-  } catch {
-    return false;
-  }
-}
-function launch(plan, launcher, env = process.env, launchMode = "station") {
-  const command = launchCommand(plan, launchMode);
-  const mode = launcher === "auto" ? env.TMUX || tmuxAvailable() ? "tmux" : "manual" : launcher;
-  if (mode === "tmux") {
-    try {
-      if (env.TMUX) {
-        execFileSync8("tmux", ["new-window", "-d", "-n", plan.id, command], {
-          stdio: "ignore",
-          timeout: 1e4
-        });
-      } else {
-        execFileSync8(
-          "tmux",
-          ["new-session", "-d", "-s", `hands-${plan.id}`, command],
-          { stdio: "ignore", timeout: 1e4 }
-        );
-      }
-      return { launcher: "tmux", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  if (mode === "iterm") {
-    const script = `tell application "iTerm"
-  activate
-  set newWindow to (create window with default profile)
-  tell current session of newWindow to write text ${JSON.stringify(command)}
-end tell`;
-    try {
-      const child = spawn("osascript", ["-e", script], { detached: true, stdio: "ignore" });
-      child.unref();
-      return { launcher: "iterm", launched: true };
-    } catch {
-      return { launcher: "manual", launched: false };
-    }
-  }
-  return { launcher: "manual", launched: false };
-}
-function addStations(count, opts) {
-  const cwd = opts?.cwd ?? process.cwd();
-  const cfg = opts?.config ?? loadConfig({ cwd });
-  const info = requireRepo(cwd);
-  const root = stationRoot(cwd, cfg);
-  fs17.mkdirSync(root, { recursive: true });
-  const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
-  const plans = [];
-  let index = 1;
-  for (let created = 0; created < count; index++) {
-    if (taken.has(index)) continue;
-    const id = `station-${index}`;
-    const dir = path17.join(root, id);
-    const branch = stationBranch(index);
-    const base = cfg.stations.baseBranch ?? "HEAD";
-    if (branchExists(info.repoRoot, branch)) {
-      git5(info.repoRoot, ["worktree", "add", dir, branch]);
-    } else {
-      git5(info.repoRoot, ["worktree", "add", "-b", branch, dir, base]);
-    }
-    const model = cfg.stations.overrides[id] ?? cfg.stations.model;
-    seedStationPermissions(dir);
-    let themeColor;
-    let sessionName;
-    if (cfg.stations.theming) {
-      const assignment = assignStationTheme({
-        repoLabel: path17.basename(info.repoRoot),
-        repoSlug: info.slug,
-        index,
-        env: opts?.env
-      });
-      fs17.mkdirSync(path17.dirname(assignment.file), { recursive: true });
-      fs17.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
-`);
-      mergeStationSettings(dir, { theme: assignment.themeId });
-      themeColor = assignment.color.hex;
-      sessionName = assignment.sessionName;
-    }
-    materializeCraftAgents(cfg, dir, opts?.env, cwd);
-    const res = launch({ id, dir, model }, cfg.stations.launcher, opts?.env);
-    plans.push({
-      id,
-      dir,
-      branch,
-      model,
-      command: launchCommand({ id, dir, model }),
-      launcher: res.launcher,
-      launched: res.launched,
-      ...themeColor ? { themeColor } : {},
-      ...sessionName ? { sessionName } : {}
-    });
-    created++;
-  }
-  return plans;
-}
-function removeStation(id, opts) {
-  const cwd = opts?.cwd ?? process.cwd();
-  const cfg = opts?.config ?? loadConfig({ cwd });
-  const m = id.match(/^station-(\d+)$/);
-  if (!m) throw new ProvisionError(`not a station id: ${id} (expected station-<n>)`);
-  const index = Number.parseInt(m[1], 10);
-  const info = requireRepo(cwd);
-  const root = stationRoot(cwd, cfg);
-  const dir = path17.join(root, `station-${index}`);
-  if (cfg.stations.theming) {
-    try {
-      fs17.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
-    } catch {
-    }
-  }
-  try {
-    execFileSync8("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
-  }
-  try {
-    execFileSync8("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
-  } catch {
-  }
-  let removed = false;
-  if (fs17.existsSync(dir)) {
-    if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
-    const args = ["worktree", "remove", dir];
-    if (opts?.force) args.splice(2, 0, "--force");
-    try {
-      git5(info.repoRoot, args);
-    } catch (err) {
-      throw new ProvisionError(
-        `could not remove ${id}: ${err instanceof Error ? err.message.split("\n")[0] : String(err)} (uncommitted work? re-run with --force to discard it)`
-      );
-    }
-    removed = true;
-  }
-  git5(info.repoRoot, ["worktree", "prune"]);
-  const branch = stationBranch(index);
-  if (branchExists(info.repoRoot, branch)) {
-    try {
-      git5(info.repoRoot, ["branch", "-D", branch]);
-    } catch {
-    }
-  }
-  return { id: `station-${index}`, removed };
-}
-function scaleStations(target, opts) {
-  if (!Number.isInteger(target) || target < 0) throw new ProvisionError(`bad target: ${target}`);
-  const cwd = opts?.cwd ?? process.cwd();
-  const cfg = opts?.config ?? loadConfig({ cwd });
-  const current = listStations(cwd, cfg);
-  if (current.length < target) {
-    return { added: addStations(target - current.length, { cwd, config: cfg, env: opts?.env }), removed: [] };
-  }
-  const removed = [];
-  for (const w of current.slice(target)) {
-    removeStation(w.id, { cwd, config: cfg, force: opts?.force, env: opts?.env });
-    removed.push(w.id);
-  }
-  return { added: [], removed };
-}
-var ProvisionError;
-var init_provision = __esm({
-  "src/provision.ts"() {
-    "use strict";
-    init_config();
-    init_crafts();
-    init_paths();
-    init_seed_permissions();
-    init_theming();
-    ProvisionError = class extends Error {
-    };
   }
 });
 
@@ -49209,11 +49576,11 @@ function runPublish(store, opts) {
 // src/subagent-stop.ts
 init_crafts();
 init_remote();
-import * as fs12 from "node:fs";
+import * as fs16 from "node:fs";
 function totalOutputTokens(transcriptPath) {
   let raw;
   try {
-    raw = fs12.readFileSync(transcriptPath, "utf8");
+    raw = fs16.readFileSync(transcriptPath, "utf8");
   } catch {
     return null;
   }
@@ -49239,7 +49606,7 @@ function totalOutputTokens(transcriptPath) {
 }
 function readMeta(transcriptPath) {
   try {
-    const raw = fs12.readFileSync(transcriptPath.replace(/\.jsonl$/, ".meta.json"), "utf8");
+    const raw = fs16.readFileSync(transcriptPath.replace(/\.jsonl$/, ".meta.json"), "utf8");
     return JSON.parse(raw);
   } catch {
     return {};
@@ -49248,7 +49615,7 @@ function readMeta(transcriptPath) {
 function assistantText(transcriptPath) {
   let raw;
   try {
-    raw = fs12.readFileSync(transcriptPath, "utf8");
+    raw = fs16.readFileSync(transcriptPath, "utf8");
   } catch {
     return "";
   }
@@ -49339,145 +49706,20 @@ function runSubagentStop(store, opts) {
 init_remote();
 init_crafts();
 init_store();
-
-// src/watchers.ts
-import { execFileSync as execFileSync5 } from "node:child_process";
-import * as fs13 from "node:fs";
-var LOOP_PATTERNS = [/\bwhile\s+true\b/, /\buntil\s+\[/, /\bwhile\s+\[/];
-var WATCHER_BINARIES = /* @__PURE__ */ new Set(["tail", "inotifywait", "fswatch"]);
-var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
-function argvOf(pid) {
-  try {
-    const parts = fs13.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
-    return parts.length > 0 ? parts : null;
-  } catch {
-    return null;
-  }
-}
-function classify(argv, inboxNeedle) {
-  const joined = argv.join(" ");
-  const bin = (argv[0] ?? "").split("/").pop() ?? "";
-  if (WATCHER_BINARIES.has(bin)) {
-    return {
-      pid: 0,
-      command: joined,
-      isInbox: bin === "tail" && joined.includes(inboxNeedle)
-    };
-  }
-  if (SHELLS.has(bin) && LOOP_PATTERNS.some((re) => re.test(joined))) {
-    return { pid: 0, command: joined, isInbox: false };
-  }
-  return null;
-}
-function cwdOf(pid) {
-  try {
-    return fs13.realpathSync(fs13.readlinkSync(`/proc/${pid}/cwd`));
-  } catch {
-    return null;
-  }
-}
-function selfLineage() {
-  const line = /* @__PURE__ */ new Set();
-  let pid = process.pid;
-  for (let hops = 0; pid > 1 && hops < 32; hops++) {
-    line.add(pid);
-    const stat = (() => {
-      try {
-        return fs13.readFileSync(`/proc/${pid}/stat`, "utf8");
-      } catch {
-        return null;
-      }
-    })();
-    if (stat === null) break;
-    const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-    if (!Number.isFinite(ppid) || ppid <= 0) break;
-    pid = ppid;
-  }
-  return line;
-}
-function allPids() {
-  try {
-    return fs13.readdirSync("/proc").filter((n) => /^\d+$/.test(n)).map(Number);
-  } catch {
-    return null;
-  }
-}
-function watchersFor(stationId, opts) {
-  const pids = allPids();
-  if (pids === null) {
-    return { stationId, watchers: null, inboxAlive: null };
-  }
-  const watchers = [];
-  const inboxNeedle = opts?.notifyPath ?? `${stationId}.notify`;
-  const worktree = opts?.worktree;
-  const mine = selfLineage();
-  for (const pid of pids) {
-    if (mine.has(pid)) continue;
-    const argv = argvOf(pid);
-    if (!argv) continue;
-    const hit = classify(argv, inboxNeedle);
-    if (!hit) continue;
-    const owned = hit.isInbox || worktree !== void 0 && cwdOf(pid) === worktree;
-    if (!owned) continue;
-    watchers.push({
-      pid,
-      command: hit.command.length > 160 ? `${hit.command.slice(0, 159)}\u2026` : hit.command,
-      isInbox: hit.isInbox
-    });
-  }
-  return {
-    stationId,
-    watchers,
-    inboxAlive: watchers.some((w) => w.isInbox)
-  };
-}
-function quiesce(stationId, opts) {
-  const report = watchersFor(stationId, { notifyPath: opts?.notifyPath, worktree: opts?.worktree });
-  if (report.watchers === null) return { stopped: [], kept: [], supported: false };
-  const keepInbox = opts?.keepInbox ?? true;
-  const stopped = [];
-  const kept = [];
-  for (const w of report.watchers) {
-    if (w.isInbox && keepInbox) {
-      kept.push(w);
-      continue;
-    }
-    try {
-      process.kill(w.pid, "SIGTERM");
-      stopped.push(w);
-    } catch {
-    }
-  }
-  return { stopped, kept, supported: true };
-}
-function inboxMonitorAlive(stationId, notifyPath2) {
-  if (process.platform !== "linux") {
-    try {
-      const out3 = execFileSync5("pgrep", ["-f", `tail -F .*${stationId}\\.notify`], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 5e3
-      });
-      return out3.trim().length > 0;
-    } catch (err) {
-      return err.status === 1 ? false : null;
-    }
-  }
-  return watchersFor(stationId, { notifyPath: notifyPath2 }).inboxAlive;
-}
+init_watchers();
 
 // src/journal-read.ts
 init_remote();
-import { execFileSync as execFileSync6 } from "node:child_process";
-import * as fs14 from "node:fs";
-import * as path13 from "node:path";
+import { execFileSync as execFileSync8 } from "node:child_process";
+import * as fs17 from "node:fs";
+import * as path17 from "node:path";
 var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 function mirrorHealth(dir, url2) {
   const isRemote = /^(https?:\/\/|git@|ssh:\/\/)/.test(url2 ?? "");
   if (!isRemote) return { behind: 0, ahead: 0, problem: null };
   const git6 = (args) => {
     try {
-      return execFileSync6("git", args, {
+      return execFileSync8("git", args, {
         cwd: dir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -49512,11 +49754,11 @@ function mirrorHealth(dir, url2) {
   return { behind: behind ?? 0, ahead: ahead ?? 0, problem: null };
 }
 function handleDir(journal) {
-  return path13.join(journal.dir, "journal", journal.project, journal.handle);
+  return path17.join(journal.dir, "journal", journal.project, journal.handle);
 }
 function availableDates(journal) {
   try {
-    return fs14.readdirSync(handleDir(journal)).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).filter((d) => DATE_RE.test(d)).sort().reverse();
+    return fs17.readdirSync(handleDir(journal)).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3)).filter((d) => DATE_RE.test(d)).sort().reverse();
   } catch {
     return [];
   }
@@ -49546,11 +49788,11 @@ function readJournal(opts) {
   const maxBytes = opts?.maxBytes ?? 24e3;
   const pages = [];
   for (const date5 of wanted) {
-    const rel = path13.join("journal", journal.project, journal.handle, `${date5}.md`);
-    const file2 = path13.join(journal.dir, rel);
+    const rel = path17.join("journal", journal.project, journal.handle, `${date5}.md`);
+    const file2 = path17.join(journal.dir, rel);
     let text;
     try {
-      text = fs14.readFileSync(file2, "utf8");
+      text = fs17.readFileSync(file2, "utf8");
     } catch {
       continue;
     }
@@ -49598,215 +49840,8 @@ function readPreviousPage(opts) {
   return readJournal({ date: previous, env: opts?.env, cwd: opts?.cwd, maxBytes: opts?.maxBytes });
 }
 
-// src/attest.ts
-import { execFileSync as execFileSync7 } from "node:child_process";
-import * as path15 from "node:path";
-
-// src/worktree-lock.ts
-init_paths();
-import * as crypto2 from "node:crypto";
-import * as fs15 from "node:fs";
-import * as os7 from "node:os";
-import * as path14 from "node:path";
-function lockPath(worktree, env = process.env, cwd) {
-  let resolved = worktree;
-  try {
-    resolved = fs15.realpathSync(worktree);
-  } catch {
-  }
-  const digest = crypto2.createHash("sha256").update(resolved).digest("hex").slice(0, 12);
-  return path14.join(
-    coordinationDir(env, cwd ?? resolved),
-    "locks",
-    `${path14.basename(resolved)}-${digest}.json`
-  );
-}
-function processStartTime(pid) {
-  try {
-    const stat = fs15.readFileSync(`/proc/${pid}/stat`, "utf8");
-    const after = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
-    const ticks = Number(after[19]);
-    return Number.isFinite(ticks) ? ticks : null;
-  } catch {
-    return null;
-  }
-}
-function isAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (err) {
-    return err.code === "EPERM";
-  }
-}
-function isStale(record2) {
-  if (!isAlive(record2.pid)) return true;
-  if (record2.startedAtBoot === null) return false;
-  const now = processStartTime(record2.pid);
-  return now !== null && now !== record2.startedAtBoot;
-}
-function readLock(worktree, env, cwd) {
-  try {
-    const raw = fs15.readFileSync(lockPath(worktree, env, cwd), "utf8");
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.pid !== "number" || typeof parsed.worktree !== "string") return null;
-    return {
-      pid: parsed.pid,
-      startedAtBoot: typeof parsed.startedAtBoot === "number" ? parsed.startedAtBoot : null,
-      claimedAt: typeof parsed.claimedAt === "number" ? parsed.claimedAt : 0,
-      agentId: typeof parsed.agentId === "string" ? parsed.agentId : "unknown",
-      worktree: parsed.worktree,
-      hostname: typeof parsed.hostname === "string" ? parsed.hostname : "unknown"
-    };
-  } catch {
-    return null;
-  }
-}
-function claimWorktree(opts) {
-  const pid = opts.pid ?? process.pid;
-  const file2 = lockPath(opts.worktree, opts.env, opts.cwd);
-  const existing = readLock(opts.worktree, opts.env, opts.cwd);
-  let previous = "none";
-  if (existing) {
-    if (existing.pid === pid) previous = "self";
-    else if (isStale(existing)) previous = "stale";
-    else if (opts.evict) {
-      try {
-        process.kill(existing.pid, "SIGTERM");
-      } catch {
-      }
-      previous = "evicted";
-    } else {
-      return { ok: false, heldBy: existing };
-    }
-  }
-  const record2 = {
-    pid,
-    startedAtBoot: processStartTime(pid),
-    claimedAt: opts.now ?? Date.now(),
-    agentId: opts.agentId,
-    worktree: opts.worktree,
-    hostname: os7.hostname()
-  };
-  fs15.mkdirSync(path14.dirname(file2), { recursive: true });
-  fs15.writeFileSync(file2, `${JSON.stringify(record2, null, 2)}
-`);
-  return { ok: true, record: record2, previous };
-}
-function releaseWorktree(worktree, pid = process.pid, env, cwd) {
-  const existing = readLock(worktree, env, cwd);
-  if (!existing || existing.pid !== pid) return false;
-  try {
-    fs15.rmSync(lockPath(worktree, env, cwd), { force: true });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// src/attest.ts
-function git4(cwd, args) {
-  try {
-    return execFileSync7("git", args, {
-      cwd,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 15e3
-    }).trim();
-  } catch {
-    return null;
-  }
-}
-function assessReadiness(opts) {
-  const { worktree, agentId } = opts;
-  const checks = [];
-  const status = git4(worktree, ["status", "--porcelain", "--untracked-files=all"]);
-  if (status === null) {
-    checks.push({ name: "worktree", ok: false, detail: `cannot read git status in ${worktree}` });
-  } else {
-    const dirty = status.split("\n").filter(Boolean);
-    checks.push({
-      name: "clean",
-      ok: dirty.length === 0,
-      detail: dirty.length === 0 ? "working tree clean" : `${dirty.length} uncommitted change(s) \u2014 commit to the station branch or stash with a named message; do NOT discard`
-    });
-  }
-  const stashes = git4(worktree, ["stash", "list"]);
-  const stashCount = stashes ? stashes.split("\n").filter(Boolean).length : 0;
-  checks.push({
-    name: "stashes",
-    ok: stashCount === 0,
-    detail: stashCount === 0 ? "no stashes" : `${stashCount} stash(es) \u2014 an unclaimed stash is a question for the expo, not garbage`
-  });
-  const resuming = opts.resumingTickets ?? [];
-  checks.push({
-    name: "tickets",
-    ok: true,
-    detail: resuming.length === 0 ? "no tickets to resume" : `resuming ${resuming.join(", ")} from the previous shift`
-  });
-  const branch = git4(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
-  const expected = `hands/${agentId}`;
-  checks.push({
-    name: "branch",
-    ok: branch === expected,
-    detail: branch === expected ? `on ${branch}` : `on ${branch ?? "?"} \u2014 expected ${expected}`
-  });
-  if (!opts.offline) git4(worktree, ["fetch", "--quiet", "origin"]);
-  const headSha2 = git4(worktree, ["rev-parse", "HEAD"]);
-  const originSha = git4(worktree, ["rev-parse", "origin/main"]);
-  const behind = originSha && headSha2 ? Number(git4(worktree, ["rev-list", "--count", `HEAD..${originSha}`]) ?? "0") : 0;
-  checks.push({
-    name: "synced",
-    ok: behind === 0,
-    detail: behind === 0 ? "up to date with origin/main" : `${behind} behind origin/main \u2014 rebase`
-  });
-  const lock = readLock(worktree);
-  checks.push({
-    name: "lock",
-    ok: lock !== null,
-    detail: lock ? `worktree held by pid ${lock.pid}` : "worktree not claimed \u2014 run `hands claim`"
-  });
-  const inbox = inboxMonitorAlive(agentId, opts.notifyPath);
-  checks.push({
-    name: "monitor",
-    ok: inbox === true,
-    detail: inbox === true ? "inbox monitor armed" : inbox === false ? "inbox monitor DEAD \u2014 this station cannot be woken" : "inbox monitor state unknown on this platform"
-  });
-  const failed = checks.filter((c) => !c.ok);
-  return {
-    ok: failed.length === 0,
-    checks,
-    reason: failed.length === 0 ? null : failed.map((c) => c.detail).join("; "),
-    headSha: headSha2,
-    originSha,
-    lockPid: lock?.pid ?? null
-  };
-}
-function attestationValid(record2, now) {
-  if (!record2.ok) return { valid: false, reason: "the station declined to attest" };
-  if (record2.head_sha && now.headSha && record2.head_sha !== now.headSha) {
-    return { valid: false, reason: "the worktree has moved since it attested" };
-  }
-  if (record2.origin_sha && now.originSha && record2.origin_sha !== now.originSha) {
-    return { valid: false, reason: "origin/main has advanced since it attested" };
-  }
-  if (record2.lock_pid && now.lockPid && record2.lock_pid !== now.lockPid) {
-    return { valid: false, reason: "the worktree lock changed hands since it attested" };
-  }
-  if (now.shiftStartedAt && record2.at < now.shiftStartedAt) {
-    return { valid: false, reason: "attested in a previous shift" };
-  }
-  return { valid: true, reason: null };
-}
-function currentWorktreeFacts(worktree) {
-  return {
-    headSha: git4(worktree, ["rev-parse", "HEAD"]),
-    originSha: git4(worktree, ["rev-parse", "origin/main"]),
-    lockPid: readLock(worktree)?.pid ?? null
-  };
-}
-
 // src/server.ts
+init_attest();
 init_provision();
 var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;
@@ -51060,6 +51095,7 @@ function describeSession(s) {
 }
 
 // src/doctor.ts
+init_attest();
 init_store();
 var IDLE_WARN_MS = 30 * 6e4;
 var WAL_RATIO_WARN = 10;
@@ -51212,6 +51248,12 @@ function runDoctor(opts) {
     if (stations.length === 0) {
       checks.push({ name: "stations", severity: "ok", detail: "none open" });
     }
+    const blockedStations = [];
+    let store = null;
+    try {
+      store = new Store({ env });
+    } catch {
+    }
     const scan = opts?.scan ?? scanClaudeSessions();
     if (scan.method === "unsupported") {
       checks.push({
@@ -51281,6 +51323,34 @@ function runDoctor(opts) {
           fixable: "seed the allowlist"
         });
       }
+      const attested = store ? store.getAttestation(station.id) : null;
+      if (!attested) {
+        checks.push({
+          name: `${station.id}.ready`,
+          severity: "warn",
+          detail: "UNATTESTED \u2014 has never declared itself clean; dispatch to it is blocked. Run /hands:ready there."
+        });
+        blockedStations.push(station.id);
+      } else if (!attested.ok) {
+        checks.push({
+          name: `${station.id}.ready`,
+          severity: "fail",
+          detail: `DECLINED \u2014 the station says: ${attested.reason ?? "(no reason recorded)"}`
+        });
+        blockedStations.push(station.id);
+      } else {
+        const verdict = attestationValid(attested, currentWorktreeFacts(station.dir));
+        if (verdict.valid) {
+          checks.push({ name: `${station.id}.ready`, severity: "ok", detail: "attested clean and ready" });
+        } else {
+          checks.push({
+            name: `${station.id}.ready`,
+            severity: "warn",
+            detail: `attestation EXPIRED \u2014 ${verdict.reason}. Re-run /hands:ready there.`
+          });
+          blockedStations.push(station.id);
+        }
+      }
       const idle = idleMs(station.dir, now);
       if (idle === null) {
         checks.push({
@@ -51302,6 +51372,16 @@ function runDoctor(opts) {
         });
       }
     }
+    if (stations.length > 0) {
+      checks.push(
+        blockedStations.length === 0 ? { name: "dispatch", severity: "ok", detail: `all ${stations.length} station(s) ready` } : {
+          name: "dispatch",
+          severity: "warn",
+          detail: `${blockedStations.length} of ${stations.length} station(s) BLOCKED \u2014 no tickets can go to ${blockedStations.join(", ")}`
+        }
+      );
+    }
+    store?.close();
   }
   if (cfg) {
     const shared = sharedCraftsDir(cfg, info.repoRoot);
@@ -51323,9 +51403,10 @@ function runDoctor(opts) {
         detail: `${shadowed.join(", ")} \u2014 personal craft${shadowed.length === 1 ? "" : "s"} shadowed by a same-named SHARED craft; the shared copy is what every dispatch actually reads`
       });
     }
-    let store = null;
+    let craftStore = null;
     try {
-      store = new Store({ env });
+      craftStore = new Store({ env });
+      const store = craftStore;
       const stale = store.pendingCraftSlugs().map((slug) => {
         const pending = store.pendingCraftNotes(slug);
         return { slug, count: pending.length, ageMs: now - (pending[0]?.created_at ?? now) };
@@ -51339,11 +51420,16 @@ function runDoctor(opts) {
       }
     } catch {
     } finally {
-      store?.close();
+      craftStore?.close();
     }
   }
   return { checks, worst: worstOf(checks) };
 }
+
+// src/cli.ts
+init_worktree_lock();
+init_watchers();
+init_attest();
 
 // src/version.ts
 import { execFileSync as execFileSync12 } from "node:child_process";
