@@ -21755,6 +21755,7 @@ var init_store = __esm({
         this.ensureColumn("questions", "outcome_note", "TEXT");
         this.ensureColumn("questions", "outcome_at", "INTEGER");
         this.ensureColumn("agents", "session_name", "TEXT");
+        this.ensureColumn("craft_briefs", "ticket_id", "INTEGER");
       }
       ensureColumn(table, column, ddl) {
         const cols = this.db.prepare(`PRAGMA table_info(${table})`).all();
@@ -22513,9 +22514,18 @@ var init_store = __esm({
         const expires = now + (input.ttlMs ?? 60 * 6e4);
         return this.withRetry(() => {
           const result = this.db.prepare(
-            `INSERT INTO craft_briefs (craft_slug, mode, cwd, opened_by, task, created_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`
-          ).run(input.craftSlug, input.mode, input.cwd ?? null, input.openedBy, input.task ?? null, now, expires);
+            `INSERT INTO craft_briefs (craft_slug, mode, cwd, opened_by, task, ticket_id, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            input.craftSlug,
+            input.mode,
+            input.cwd ?? null,
+            input.openedBy,
+            input.task ?? null,
+            input.ticketId ?? null,
+            now,
+            expires
+          );
           return Number(result.lastInsertRowid);
         });
       }
@@ -22582,6 +22592,15 @@ var init_store = __esm({
         return this.db.prepare("SELECT * FROM craft_notes WHERE id = ?").get(id);
       }
       /**
+       * Every note for a craft, newest first, pending AND folded (unlike pendingCraftNotes) — the
+       * dashboard's "note history" panel. This is the one universal, durable timeline: it survives
+       * folding (which rewrites the book/skill file in place) and exists regardless of whether the
+       * craft's files are ever git-tracked.
+       */
+      craftNoteHistory(craftSlug, limit = 50) {
+        return this.db.prepare("SELECT * FROM craft_notes WHERE craft_slug = ? ORDER BY id DESC LIMIT ?").all(craftSlug, limit);
+      }
+      /**
        * Every craft slug carrying at least one pending note — independent of whether a book file
        * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
        * doctor's backlog check doesn't miss a craft just because listCrafts()'s file-based roster
@@ -22628,6 +22647,59 @@ var init_store = __esm({
         this.withRetry(
           () => this.db.prepare("DELETE FROM craft_folds WHERE craft_slug = ? AND holder = ?").run(craftSlug, holder)
         );
+      }
+      /**
+       * Dispatch stats per craft, for the dashboard — craft_briefs is never trimmed, so dispatchCount
+       * is a real all-time total. avgDurationMs is over completedCount dispatches only (noted_at IS
+       * NOT NULL) — a dispatch whose sub-agent never completed the craft-note contract has no
+       * duration, not a zero one; the caller should show "N of M dispatches reported a duration,"
+       * never silently average nulls as zero.
+       */
+      craftUsageStats() {
+        const base = this.db.prepare("SELECT craft_slug, COUNT(*) as cnt, MAX(created_at) as last FROM craft_briefs GROUP BY craft_slug").all();
+        const stationRows = this.db.prepare("SELECT DISTINCT craft_slug, opened_by FROM craft_briefs").all();
+        const stationsBySlug = /* @__PURE__ */ new Map();
+        for (const r of stationRows) {
+          const list = stationsBySlug.get(r.craft_slug) ?? [];
+          list.push(r.opened_by);
+          stationsBySlug.set(r.craft_slug, list);
+        }
+        const durationRows = this.db.prepare(
+          `SELECT craft_slug, COUNT(*) as cnt, AVG(noted_at - created_at) as avgMs
+         FROM craft_briefs WHERE noted_at IS NOT NULL GROUP BY craft_slug`
+        ).all();
+        const durationBySlug = new Map(durationRows.map((r) => [r.craft_slug, r]));
+        const result = /* @__PURE__ */ new Map();
+        for (const row of base) {
+          const dur = durationBySlug.get(row.craft_slug);
+          result.set(row.craft_slug, {
+            dispatchCount: row.cnt,
+            lastDispatchedAt: row.last,
+            stations: stationsBySlug.get(row.craft_slug) ?? [],
+            completedCount: dur?.cnt ?? 0,
+            avgDurationMs: dur ? Math.round(dur.avgMs) : null
+          });
+        }
+        return result;
+      }
+      /**
+       * Token usage per craft, from subagent_samples — written on every sub-agent finish but never
+       * read anywhere until now. Only attributes calls where agent_type is literally "craft-<slug>"
+       * (the fast/synced dispatch path); the "not yet synced" fallback dispatches as
+       * "general-purpose" and isn't counted here — a real undercount the dashboard surfaces as a
+       * caveat, not something this method should paper over. subagent_samples self-trims to the
+       * trailing 7 days, so this is a recent window, not an all-time total.
+       */
+      craftTokenUsage() {
+        const rows = this.db.prepare(
+          `SELECT agent_type, SUM(output_tokens) as total, COUNT(*) as calls
+         FROM subagent_samples WHERE agent_type LIKE 'craft-%' GROUP BY agent_type`
+        ).all();
+        const result = /* @__PURE__ */ new Map();
+        for (const row of rows) {
+          result.set(row.agent_type.slice("craft-".length), { totalOutputTokens: row.total, calls: row.calls });
+        }
+        return result;
       }
       // --- journal replay (remote.ts restore path) ---
       /**
@@ -23956,6 +24028,13 @@ function readFileSafe(p) {
     return null;
   }
 }
+function readCraftFileCapped(p, cap = 6e3) {
+  const body = readFileSafe(p);
+  if (!body) return null;
+  const points = Array.from(body);
+  return points.length <= cap ? body : `${points.slice(0, cap).join("")}
+\u2026(truncated \u2014 trim this file)`;
+}
 function listSlugsIn(dir) {
   if (!dir) return [];
   let entries;
@@ -24002,8 +24081,9 @@ description: ${entry.covers ?? entry.slug} \u2014 dispatch for any work in this 
 
 You are the **${entry.slug}** craft, dispatched for one ticket-slice \u2014 not a generalist.
 
-1. Run \`hands craft brief ${entry.slug} --task "<one line \u2014 what you were asked to do>"\` first.
-   This registers the dispatch and PRINTS a chit \u2014 the first line names your \`briefId\`, note it,
+1. Run \`hands craft brief ${entry.slug} --task "<one line \u2014 what you were asked to do>"\` first
+   \u2014 add \`--ticket <id>\` too if the caller's prompt names a ticket id you're working. This
+   registers the dispatch and PRINTS a chit \u2014 the first line names your \`briefId\`, note it,
    you need it below.
 2. Invoke \`Skill({ skill: "craft-${entry.slug}" })\` \u2014 your operating manual. It tells you how to
    pull your current book/mise (\`hands craft mise <briefId>\`, from step 1) before you start.
@@ -24103,7 +24183,7 @@ function formatRosterContext(entries, targetDir) {
   const points = Array.from(body);
   if (points.length > cap) body = `${points.slice(0, cap).join("")}
 \u2026(see hands craft ls for the rest)`;
-  return "\n\n## Crafts available (dispatch as sub-agents \u2014 don't do their work yourself)\n" + body + '\nDispatch a synced craft: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) \u2014 it briefs and equips itself. "not yet synced" \u2192 fall back to `hands craft brief <slug>`, paste the printed chit into a general-purpose Agent\'s prompt instead. `hands craft ls` gives the full roster on demand.';
+  return "\n\n## Crafts available (dispatch as sub-agents \u2014 don't do their work yourself)\n" + body + '\nDispatch a synced craft: Agent({ agentType: "craft-<slug>", prompt: "<task>" }) \u2014 it briefs and equips itself. "not yet synced" \u2192 fall back to `hands craft brief <slug>` yourself (add `--ticket <id>` if you\'re working one), paste the printed chit into a general-purpose Agent\'s prompt instead. `hands craft ls` gives the full roster on demand.';
 }
 function composeChit(brief, covers) {
   const lines = [
@@ -25064,8 +25144,37 @@ function serve(opts) {
       };
     }
   };
+  const buildCraftRoster = () => {
+    const roster = listCrafts(store, config2, env);
+    const usage = store.craftUsageStats();
+    const tokenUsage = store.craftTokenUsage();
+    return roster.map((c) => {
+      const files = craftFiles(c.slug, env);
+      const u = usage.get(c.slug);
+      return {
+        slug: c.slug,
+        scope: c.scope,
+        covers: c.covers,
+        distilled: c.distilled,
+        pendingNotes: c.pendingNotes,
+        book: readCraftFileCapped(files.book),
+        mise: readCraftFileCapped(files.mise),
+        skill: readCraftFileCapped(files.skill),
+        history: store.craftNoteHistory(c.slug),
+        usage: {
+          dispatchCount: u?.dispatchCount ?? 0,
+          lastDispatchedAt: u?.lastDispatchedAt ?? null,
+          stations: u?.stations ?? [],
+          completedCount: u?.completedCount ?? 0,
+          avgDurationMs: u?.avgDurationMs ?? null
+        },
+        tokens: tokenUsage.get(c.slug) ?? null
+      };
+    });
+  };
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
+    const craftRoster = buildCraftRoster();
     return {
       json: JSON.stringify({
         ...snapshot,
@@ -25074,11 +25183,12 @@ function serve(opts) {
         principal,
         kitchens,
         crafts,
+        craftRoster,
         booksSync,
         tokens,
         taskCosts
       }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
     };
   };
   const clients = /* @__PURE__ */ new Set();
@@ -25299,6 +25409,7 @@ var init_serve = __esm({
   "src/serve.ts"() {
     "use strict";
     init_config();
+    init_crafts();
     init_feedback();
     init_paths();
     init_remote();
@@ -50291,7 +50402,11 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
     }
     if (sub === "brief") {
       const slug = argv[1];
-      if (!slug) fail("usage: hands craft brief <slug> [--task <text>] [--mode plan|execute] [--cwd <dir>]");
+      if (!slug) {
+        fail(
+          "usage: hands craft brief <slug> [--task <text>] [--ticket <id>] [--mode plan|execute] [--cwd <dir>]"
+        );
+      }
       const mode = strOpt(argv, "--mode") === "execute" ? "execute" : "plan";
       const cwd = strOpt(argv, "--cwd") ?? process.cwd();
       const files = craftFiles(slug);
@@ -50303,12 +50418,16 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
           );
         }
       }
+      const ticketArg = strOpt(argv, "--ticket");
+      const ticketId = ticketArg !== void 0 ? Number.parseInt(ticketArg, 10) : null;
+      if (ticketArg !== void 0 && !Number.isInteger(ticketId)) fail("--ticket must be an integer ticket id");
       const briefId = store.createCraftBrief({
         craftSlug: files.slug,
         mode,
         cwd,
         openedBy: resolveAgentId(),
-        task: strOpt(argv, "--task") ?? null
+        task: strOpt(argv, "--task") ?? null,
+        ticketId
       });
       const brief = store.getCraftBrief(briefId);
       const bookRaw = fs24.existsSync(files.book) ? fs24.readFileSync(files.book, "utf8") : null;
@@ -50322,20 +50441,9 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       if (!brief) fail(`no such brief: #${briefId}`);
       store.markCraftBriefPickedUp(briefId);
       const files = craftFiles(brief.craft_slug);
-      const read = (p, cap = 6e3) => {
-        try {
-          const body = fs24.readFileSync(p, "utf8").trim();
-          if (!body) return null;
-          const points = Array.from(body);
-          return points.length <= cap ? body : `${points.slice(0, cap).join("")}
-\u2026(truncated \u2014 trim this file)`;
-        } catch {
-          return null;
-        }
-      };
-      const book = read(files.book);
-      const mise = read(files.mise);
-      const skill = read(files.skill);
+      const book = readCraftFileCapped(files.book);
+      const mise = readCraftFileCapped(files.mise);
+      const skill = readCraftFileCapped(files.skill);
       const { covers, distilled } = parseCraftHeader(book);
       const distilledMs = distilled ? Date.parse(distilled) : Number.NaN;
       const staleness = !book && !mise && !skill ? "cold" : Number.isNaN(distilledMs) || Date.now() - distilledMs > 14 * 24 * 60 * 6e4 ? "stale" : "fresh";

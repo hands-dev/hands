@@ -15,6 +15,7 @@
  *   hands craft distill [<s>]  list a craft's unfolded book/skill notes (mise already applies
  *                              itself immediately on harvest — nothing to distill there)
  *   hands craft brief <s>      dispatch: open a brief, print the chit (for a general-purpose Agent)
+ *                              [--ticket <id>] names the tasks.id it's for, for the dashboard
  *   hands craft mise <id>      a craft sub-agent's first call: prints its book/mise/skill as JSON
  *   hands craft fold <s>       acquire the fold lease, print pending notes to distill (this also
  *                              catches up any mise notes that missed their immediate write)
@@ -78,6 +79,7 @@ import {
   listCrafts,
   materializeCraftAgents,
   parseCraftHeader,
+  readCraftFileCapped,
 } from "./crafts.js";
 import {
   booksMcpEntry,
@@ -387,7 +389,11 @@ function cmdCraft(argv: string[]): void {
 
     if (sub === "brief") {
       const slug = argv[1];
-      if (!slug) fail("usage: hands craft brief <slug> [--task <text>] [--mode plan|execute] [--cwd <dir>]");
+      if (!slug) {
+        fail(
+          "usage: hands craft brief <slug> [--task <text>] [--ticket <id>] [--mode plan|execute] [--cwd <dir>]",
+        );
+      }
       const mode = strOpt(argv, "--mode") === "execute" ? "execute" : "plan";
       const cwd = strOpt(argv, "--cwd") ?? process.cwd();
       const files = craftFiles(slug!);
@@ -400,12 +406,16 @@ function cmdCraft(argv: string[]): void {
           );
         }
       }
+      const ticketArg = strOpt(argv, "--ticket");
+      const ticketId = ticketArg !== undefined ? Number.parseInt(ticketArg, 10) : null;
+      if (ticketArg !== undefined && !Number.isInteger(ticketId)) fail("--ticket must be an integer ticket id");
       const briefId = store.createCraftBrief({
         craftSlug: files.slug,
         mode,
         cwd,
         openedBy: resolveAgentId(),
         task: strOpt(argv, "--task") ?? null,
+        ticketId,
       });
       const brief = store.getCraftBrief(briefId)!;
       const bookRaw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
@@ -422,19 +432,9 @@ function cmdCraft(argv: string[]): void {
       if (!brief) fail(`no such brief: #${briefId}`);
       store.markCraftBriefPickedUp(briefId);
       const files = craftFiles(brief!.craft_slug);
-      const read = (p: string, cap = 6000): string | null => {
-        try {
-          const body = fs.readFileSync(p, "utf8").trim();
-          if (!body) return null;
-          const points = Array.from(body);
-          return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
-        } catch {
-          return null;
-        }
-      };
-      const book = read(files.book);
-      const mise = read(files.mise);
-      const skill = read(files.skill);
+      const book = readCraftFileCapped(files.book);
+      const mise = readCraftFileCapped(files.mise);
+      const skill = readCraftFileCapped(files.skill);
       const { covers, distilled } = parseCraftHeader(book);
       const distilledMs = distilled ? Date.parse(distilled) : Number.NaN;
       const staleness =

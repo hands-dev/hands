@@ -146,6 +146,8 @@ export interface CraftBriefRow {
   cwd: string | null;
   opened_by: string;
   task: string | null;
+  /** the tasks.id this dispatch was for, when the dispatcher named one (hands#136-dashboard) */
+  ticket_id: number | null;
   /** stamped by `hands craft mise` — separates pickup compliance from note compliance */
   picked_up_at: number | null;
   /** stamped once the craft-note block is harvested (subagent-stop.ts) */
@@ -480,6 +482,10 @@ export class Store {
 
     // hands-owned session display name (hands#104) — see AgentRow.session_name.
     this.ensureColumn("agents", "session_name", "TEXT");
+
+    // Optional ticket correlation for a craft dispatch (dashboard "for what ticket" stat) —
+    // forward-looking only; a dispatch made before this column existed has no way to backfill it.
+    this.ensureColumn("craft_briefs", "ticket_id", "INTEGER");
   }
 
   private ensureColumn(table: string, column: string, ddl: string): void {
@@ -1512,6 +1518,7 @@ export class Store {
     cwd?: string | null;
     openedBy: string;
     task?: string | null;
+    ticketId?: number | null;
     ttlMs?: number;
     now?: number;
   }): number {
@@ -1520,10 +1527,19 @@ export class Store {
     return this.withRetry(() => {
       const result = this.db
         .prepare(
-          `INSERT INTO craft_briefs (craft_slug, mode, cwd, opened_by, task, created_at, expires_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO craft_briefs (craft_slug, mode, cwd, opened_by, task, ticket_id, created_at, expires_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-        .run(input.craftSlug, input.mode, input.cwd ?? null, input.openedBy, input.task ?? null, now, expires);
+        .run(
+          input.craftSlug,
+          input.mode,
+          input.cwd ?? null,
+          input.openedBy,
+          input.task ?? null,
+          input.ticketId ?? null,
+          now,
+          expires,
+        );
       return Number(result.lastInsertRowid);
     });
   }
@@ -1612,6 +1628,18 @@ export class Store {
   }
 
   /**
+   * Every note for a craft, newest first, pending AND folded (unlike pendingCraftNotes) — the
+   * dashboard's "note history" panel. This is the one universal, durable timeline: it survives
+   * folding (which rewrites the book/skill file in place) and exists regardless of whether the
+   * craft's files are ever git-tracked.
+   */
+  craftNoteHistory(craftSlug: string, limit = 50): CraftNoteRow[] {
+    return this.db
+      .prepare("SELECT * FROM craft_notes WHERE craft_slug = ? ORDER BY id DESC LIMIT ?")
+      .all(craftSlug, limit) as unknown as CraftNoteRow[];
+  }
+
+  /**
    * Every craft slug carrying at least one pending note — independent of whether a book file
    * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
    * doctor's backlog check doesn't miss a craft just because listCrafts()'s file-based roster
@@ -1674,6 +1702,89 @@ export class Store {
     this.withRetry(() =>
       this.db.prepare("DELETE FROM craft_folds WHERE craft_slug = ? AND holder = ?").run(craftSlug, holder),
     );
+  }
+
+  /**
+   * Dispatch stats per craft, for the dashboard — craft_briefs is never trimmed, so dispatchCount
+   * is a real all-time total. avgDurationMs is over completedCount dispatches only (noted_at IS
+   * NOT NULL) — a dispatch whose sub-agent never completed the craft-note contract has no
+   * duration, not a zero one; the caller should show "N of M dispatches reported a duration,"
+   * never silently average nulls as zero.
+   */
+  craftUsageStats(): Map<
+    string,
+    {
+      dispatchCount: number;
+      lastDispatchedAt: number | null;
+      stations: string[];
+      completedCount: number;
+      avgDurationMs: number | null;
+    }
+  > {
+    const base = this.db
+      .prepare("SELECT craft_slug, COUNT(*) as cnt, MAX(created_at) as last FROM craft_briefs GROUP BY craft_slug")
+      .all() as Array<{ craft_slug: string; cnt: number; last: number }>;
+    const stationRows = this.db.prepare("SELECT DISTINCT craft_slug, opened_by FROM craft_briefs").all() as Array<{
+      craft_slug: string;
+      opened_by: string;
+    }>;
+    const stationsBySlug = new Map<string, string[]>();
+    for (const r of stationRows) {
+      const list = stationsBySlug.get(r.craft_slug) ?? [];
+      list.push(r.opened_by);
+      stationsBySlug.set(r.craft_slug, list);
+    }
+    const durationRows = this.db
+      .prepare(
+        `SELECT craft_slug, COUNT(*) as cnt, AVG(noted_at - created_at) as avgMs
+         FROM craft_briefs WHERE noted_at IS NOT NULL GROUP BY craft_slug`,
+      )
+      .all() as Array<{ craft_slug: string; cnt: number; avgMs: number }>;
+    const durationBySlug = new Map(durationRows.map((r) => [r.craft_slug, r]));
+
+    const result = new Map<
+      string,
+      {
+        dispatchCount: number;
+        lastDispatchedAt: number | null;
+        stations: string[];
+        completedCount: number;
+        avgDurationMs: number | null;
+      }
+    >();
+    for (const row of base) {
+      const dur = durationBySlug.get(row.craft_slug);
+      result.set(row.craft_slug, {
+        dispatchCount: row.cnt,
+        lastDispatchedAt: row.last,
+        stations: stationsBySlug.get(row.craft_slug) ?? [],
+        completedCount: dur?.cnt ?? 0,
+        avgDurationMs: dur ? Math.round(dur.avgMs) : null,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Token usage per craft, from subagent_samples — written on every sub-agent finish but never
+   * read anywhere until now. Only attributes calls where agent_type is literally "craft-<slug>"
+   * (the fast/synced dispatch path); the "not yet synced" fallback dispatches as
+   * "general-purpose" and isn't counted here — a real undercount the dashboard surfaces as a
+   * caveat, not something this method should paper over. subagent_samples self-trims to the
+   * trailing 7 days, so this is a recent window, not an all-time total.
+   */
+  craftTokenUsage(): Map<string, { totalOutputTokens: number; calls: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT agent_type, SUM(output_tokens) as total, COUNT(*) as calls
+         FROM subagent_samples WHERE agent_type LIKE 'craft-%' GROUP BY agent_type`,
+      )
+      .all() as Array<{ agent_type: string; total: number; calls: number }>;
+    const result = new Map<string, { totalOutputTokens: number; calls: number }>();
+    for (const row of rows) {
+      result.set(row.agent_type.slice("craft-".length), { totalOutputTokens: row.total, calls: row.calls });
+    }
+    return result;
   }
 
   // --- journal replay (remote.ts restore path) ---

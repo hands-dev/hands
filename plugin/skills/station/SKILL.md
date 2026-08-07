@@ -101,7 +101,8 @@ chatty behavior is visible.
    `hands_ask` rather than guessing.
 5. **Does a craft cover this?** Check the ticket against the roster's `covers` lines (in your
    instructions, or `hands craft ls` for the full list). One craft covers it → `hands craft brief
-   <slug>`, paste the printed chit into an Agent-tool `prompt`, converge its return. Several
+   <slug> --ticket <id>` (cite your ticket id if you have one — feeds the dashboard's per-craft
+   usage stats), paste the printed chit into an Agent-tool `prompt`, converge its return. Several
    crafts cover slices of it (a cross-cutting dish, hands#81) → one brief per slice, dispatched in
    parallel where they don't touch the same files, all converged in THIS worktree — keep it one
    ticket, one station, one branch; don't split into per-craft tickets just because the work spans

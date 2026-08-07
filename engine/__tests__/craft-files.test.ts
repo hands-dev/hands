@@ -191,6 +191,7 @@ describe("composeChit + parseCraftNoteBlock (the dispatch/return round trip)", (
         cwd: null,
         opened_by: "expo",
         task: null,
+        ticket_id: null,
         picked_up_at: null,
         noted_at: null,
         created_at: Date.now(),
@@ -308,6 +309,102 @@ describe("Store: craft notes + fold lease + execute lease", () => {
     const store = new Store({ env });
     store.createCraftBrief({ craftSlug: "saucier", mode: "plan", cwd: "/repo", openedBy: "station-1" });
     expect(store.openExecuteBrief("saucier", "/repo")).toBeUndefined();
+    store.close();
+  });
+
+  it("createCraftBrief round-trips an optional ticketId (dashboard 'for what ticket' stat)", () => {
+    const store = new Store({ env });
+    const withTicket = store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: 47 });
+    expect(store.getCraftBrief(withTicket)?.ticket_id).toBe(47);
+    const withoutTicket = store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1" });
+    expect(store.getCraftBrief(withoutTicket)?.ticket_id).toBeNull();
+    store.close();
+  });
+});
+
+describe("Store.craftNoteHistory — full timeline, newest first (hands#136-dashboard)", () => {
+  it("includes both pending and folded notes, newest first", () => {
+    const store = new Store({ env });
+    const id1 = store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: "first" });
+    const id2 = store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "mise", body: "second" });
+    store.markCraftNoteFolded(id1);
+    const history = store.craftNoteHistory("saucier");
+    expect(history.map((n) => n.id)).toEqual([id2, id1]);
+    expect(history.find((n) => n.id === id1)?.folded_at).not.toBeNull();
+    store.close();
+  });
+
+  it("respects the limit", () => {
+    const store = new Store({ env });
+    for (let i = 0; i < 5; i++) {
+      store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: `n${i}` });
+    }
+    expect(store.craftNoteHistory("saucier", 2)).toHaveLength(2);
+    store.close();
+  });
+
+  it("is empty for a craft with no notes at all", () => {
+    const store = new Store({ env });
+    expect(store.craftNoteHistory("nobody-home")).toEqual([]);
+    store.close();
+  });
+});
+
+describe("Store.craftUsageStats — dispatch aggregation (hands#136-dashboard)", () => {
+  it("counts dispatches, tracks last-dispatched and distinct stations, and averages duration only over completed dispatches", () => {
+    const store = new Store({ env });
+    const a = store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", now: 1000 });
+    const b = store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-2", now: 2000 });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", now: 3000 }); // never completes
+    store.markCraftBriefNoted(a, 1500); // 500ms
+    store.markCraftBriefNoted(b, 2600); // 600ms
+
+    const stats = store.craftUsageStats().get("saucier");
+    expect(stats?.dispatchCount).toBe(3);
+    expect(stats?.lastDispatchedAt).toBe(3000);
+    expect(stats?.stations.sort()).toEqual(["station-1", "station-2"]);
+    expect(stats?.completedCount).toBe(2);
+    expect(stats?.avgDurationMs).toBe(550);
+    store.close();
+  });
+
+  it("a craft with zero completed dispatches reports null duration, not zero", () => {
+    const store = new Store({ env });
+    store.createCraftBrief({ craftSlug: "poissonnier", mode: "plan", openedBy: "station-1" });
+    const stats = store.craftUsageStats().get("poissonnier");
+    expect(stats?.dispatchCount).toBe(1);
+    expect(stats?.completedCount).toBe(0);
+    expect(stats?.avgDurationMs).toBeNull();
+    store.close();
+  });
+
+  it("a craft with zero dispatches at all is simply absent from the map", () => {
+    const store = new Store({ env });
+    expect(store.craftUsageStats().has("nobody-home")).toBe(false);
+    store.close();
+  });
+});
+
+describe("Store.craftTokenUsage — subagent_samples aggregation (hands#136-dashboard)", () => {
+  it("sums output tokens per craft, keyed by slug (agent_type prefix stripped)", () => {
+    const store = new Store({ env });
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "craft-saucier", spawnDepth: 1, outputTokens: 100 });
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "craft-saucier", spawnDepth: 1, outputTokens: 50 });
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "craft-poissonnier", spawnDepth: 1, outputTokens: 30 });
+    // the unsynced fallback path — deliberately NOT attributed to any craft (a real undercount,
+    // by design, not a bug — see the caveat on Store.craftTokenUsage's own doc comment).
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "general-purpose", spawnDepth: 1, outputTokens: 999 });
+
+    const usage = store.craftTokenUsage();
+    expect(usage.get("saucier")).toEqual({ totalOutputTokens: 150, calls: 2 });
+    expect(usage.get("poissonnier")).toEqual({ totalOutputTokens: 30, calls: 1 });
+    expect(usage.has("general-purpose")).toBe(false);
+    store.close();
+  });
+
+  it("is an empty map when no craft samples exist", () => {
+    const store = new Store({ env });
+    expect(store.craftTokenUsage().size).toBe(0);
     store.close();
   });
 });
