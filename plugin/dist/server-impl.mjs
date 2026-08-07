@@ -6910,12 +6910,12 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs19, exportName) {
+    function addFormats(ajv, list, fs20, exportName) {
       var _a2;
       var _b;
       (_a2 = (_b = ajv.opts.code).formats) !== null && _a2 !== void 0 ? _a2 : _b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`;
       for (const f of list)
-        ajv.addFormat(f, fs19[f]);
+        ajv.addFormat(f, fs20[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: true });
@@ -10000,27 +10000,27 @@ var init_crafts = __esm({
 });
 
 // src/seed-permissions.ts
-import * as fs13 from "node:fs";
+import * as fs14 from "node:fs";
 import * as path13 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function unseedStationPermissions(dir) {
   const file2 = path13.join(dir, SEEDED_RELPATH);
-  if (!fs13.existsSync(file2)) return false;
-  fs13.rmSync(file2, { force: true });
+  if (!fs14.existsSync(file2)) return false;
+  fs14.rmSync(file2, { force: true });
   const parent = path13.dirname(file2);
   try {
-    if (fs13.readdirSync(parent).length === 0) fs13.rmdirSync(parent);
+    if (fs14.readdirSync(parent).length === 0) fs14.rmdirSync(parent);
   } catch {
   }
   return true;
 }
 function seedStationPermissions(dir) {
   const file2 = path13.join(dir, ".claude", "settings.local.json");
-  if (fs13.existsSync(file2)) return { path: file2, written: false };
-  fs13.mkdirSync(path13.dirname(file2), { recursive: true });
-  fs13.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+  if (fs14.existsSync(file2)) return { path: file2, written: false };
+  fs14.mkdirSync(path13.dirname(file2), { recursive: true });
+  fs14.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -10028,7 +10028,7 @@ function mergeStationSettings(dir, patch) {
   const file2 = path13.join(dir, SEEDED_RELPATH);
   let existing = {};
   try {
-    const raw = fs13.readFileSync(file2, "utf8");
+    const raw = fs14.readFileSync(file2, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") existing = parsed;
   } catch {
@@ -10042,8 +10042,8 @@ function mergeStationSettings(dir, patch) {
     }
   }
   if (!changed) return { path: file2, written: false };
-  fs13.mkdirSync(path13.dirname(file2), { recursive: true });
-  fs13.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
+  fs14.mkdirSync(path13.dirname(file2), { recursive: true });
+  fs14.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -10115,12 +10115,12 @@ __export(provision_exports, {
   stationBranch: () => stationBranch,
   stationRoot: () => stationRoot
 });
-import { execFileSync as execFileSync5, spawn } from "node:child_process";
-import * as fs14 from "node:fs";
+import { execFileSync as execFileSync6, spawn } from "node:child_process";
+import * as fs15 from "node:fs";
 import * as os7 from "node:os";
 import * as path14 from "node:path";
 function git4(cwd, args) {
-  return execFileSync5("git", args, {
+  return execFileSync6("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -10144,7 +10144,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs14.readdirSync(root);
+    names = fs15.readdirSync(root);
   } catch {
     return [];
   }
@@ -10192,7 +10192,7 @@ function shellQuote(s) {
 }
 function tmuxAvailable() {
   try {
-    execFileSync5("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
+    execFileSync6("tmux", ["-V"], { stdio: "ignore", timeout: 5e3 });
     return true;
   } catch {
     return false;
@@ -10204,12 +10204,12 @@ function launch(plan, launcher, env = process.env, launchMode = "station") {
   if (mode === "tmux") {
     try {
       if (env.TMUX) {
-        execFileSync5("tmux", ["new-window", "-d", "-n", plan.id, command], {
+        execFileSync6("tmux", ["new-window", "-d", "-n", plan.id, command], {
           stdio: "ignore",
           timeout: 1e4
         });
       } else {
-        execFileSync5(
+        execFileSync6(
           "tmux",
           ["new-session", "-d", "-s", `hands-${plan.id}`, command],
           { stdio: "ignore", timeout: 1e4 }
@@ -10241,7 +10241,7 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs14.mkdirSync(root, { recursive: true });
+  fs15.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
@@ -10267,8 +10267,8 @@ function addStations(count, opts) {
         index,
         env: opts?.env
       });
-      fs14.mkdirSync(path14.dirname(assignment.file), { recursive: true });
-      fs14.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+      fs15.mkdirSync(path14.dirname(assignment.file), { recursive: true });
+      fs15.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
 `);
       mergeStationSettings(dir, { theme: assignment.themeId });
       themeColor = assignment.color.hex;
@@ -10302,20 +10302,20 @@ function removeStation(id, opts) {
   const dir = path14.join(root, `station-${index}`);
   if (cfg.stations.theming) {
     try {
-      fs14.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+      fs15.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
     } catch {
     }
   }
   try {
-    execFileSync5("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
+    execFileSync6("pkill", ["-f", `tail -F -n0 .*station-${index}\\.notify`], { stdio: "ignore", timeout: 5e3 });
   } catch {
   }
   try {
-    execFileSync5("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
+    execFileSync6("tmux", ["kill-session", "-t", `hands-station-${index}`], { stdio: "ignore", timeout: 5e3 });
   } catch {
   }
   let removed = false;
-  if (fs14.existsSync(dir)) {
+  if (fs15.existsSync(dir)) {
     if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
@@ -10368,20 +10368,20 @@ var init_provision = __esm({
 });
 
 // src/mcp-install.ts
-import * as fs15 from "node:fs";
+import * as fs16 from "node:fs";
 import * as os8 from "node:os";
 import * as path15 from "node:path";
 import { fileURLToPath } from "node:url";
 function resolveHandsServerEntry(here = path15.dirname(fileURLToPath(import.meta.url))) {
   const bundled = path15.join(here, "server.mjs");
-  if (fs15.existsSync(bundled)) return bundled;
+  if (fs16.existsSync(bundled)) return bundled;
   const devFallback = path15.resolve(here, "..", "..", "plugin", "dist", "server.mjs");
-  if (fs15.existsSync(devFallback)) return devFallback;
+  if (fs16.existsSync(devFallback)) return devFallback;
   return null;
 }
 function resolveAgentSdkEntry(here = path15.dirname(fileURLToPath(import.meta.url))) {
   const devOnly = path15.resolve(here, "..", "..", "engine", "node_modules", "@anthropic-ai", "claude-agent-sdk", "sdk.mjs");
-  if (fs15.existsSync(devOnly)) return devOnly;
+  if (fs16.existsSync(devOnly)) return devOnly;
   return null;
 }
 var init_mcp_install = __esm({
@@ -10472,7 +10472,7 @@ var init_chat = __esm({
 });
 
 // src/feedback.ts
-import { execFileSync as execFileSync6 } from "node:child_process";
+import { execFileSync as execFileSync7 } from "node:child_process";
 function githubHandle(cwd, gh2) {
   try {
     return gh2(["api", "user", "--jq", ".login"], cwd).trim() || null;
@@ -10529,7 +10529,7 @@ var init_feedback = __esm({
   "src/feedback.ts"() {
     "use strict";
     FEEDBACK_REPO = "hands-dev/hands";
-    runGh = (args, cwd) => execFileSync6("gh", args, {
+    runGh = (args, cwd) => execFileSync7("gh", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -10539,7 +10539,7 @@ var init_feedback = __esm({
 });
 
 // src/tokens.ts
-import * as fs16 from "node:fs";
+import * as fs17 from "node:fs";
 import * as os9 from "node:os";
 import * as path16 from "node:path";
 function encodeProjectDir(cwd) {
@@ -10570,7 +10570,7 @@ var init_tokens = __esm({
           const dir = path16.join(this.projectsDir, encodeProjectDir(agent.cwd));
           let names = [];
           try {
-            names = fs16.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
+            names = fs17.readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
           } catch {
             continue;
           }
@@ -10582,7 +10582,7 @@ var init_tokens = __esm({
           for (const name of names) {
             const file2 = path16.join(dir, name);
             try {
-              const stat = fs16.statSync(file2);
+              const stat = fs17.statSync(file2);
               if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
               this.readAppended(file2, stat.size, byMsg);
             } catch {
@@ -10590,21 +10590,21 @@ var init_tokens = __esm({
           }
           let sessionDirs = [];
           try {
-            sessionDirs = fs16.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path16.join(dir, e.name, "subagents"));
+            sessionDirs = fs17.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path16.join(dir, e.name, "subagents"));
           } catch {
             sessionDirs = [];
           }
           for (const subDir of sessionDirs) {
             let subNames = [];
             try {
-              subNames = fs16.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
+              subNames = fs17.readdirSync(subDir).filter((f) => f.endsWith(".jsonl"));
             } catch {
               continue;
             }
             for (const name of subNames) {
               const file2 = path16.join(subDir, name);
               try {
-                const stat = fs16.statSync(file2);
+                const stat = fs17.statSync(file2);
                 if (now - stat.mtimeMs > TOKEN_WINDOW_MS + MTIME_SLACK_MS) continue;
                 this.readAppended(file2, stat.size, byMsg, file2);
               } catch {
@@ -10632,11 +10632,11 @@ var init_tokens = __esm({
         if (size <= state.offset) return;
         const length = size - state.offset;
         const buffer = Buffer.alloc(length);
-        const fd = fs16.openSync(file2, "r");
+        const fd = fs17.openSync(file2, "r");
         try {
-          fs16.readSync(fd, buffer, 0, length, state.offset);
+          fs17.readSync(fd, buffer, 0, length, state.offset);
         } finally {
-          fs16.closeSync(fd);
+          fs17.closeSync(fd);
         }
         state.offset = size;
         let text = state.partial + buffer.toString("utf8");
@@ -10696,7 +10696,7 @@ var init_tokens = __esm({
         let label = path16.basename(callFile, ".jsonl");
         try {
           const meta3 = JSON.parse(
-            fs16.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
+            fs17.readFileSync(callFile.replace(/\.jsonl$/, ".meta.json"), "utf8")
           );
           if (meta3.description) label = meta3.agentType ? `${meta3.agentType}: ${meta3.description}` : meta3.description;
           else if (meta3.agentType) label = meta3.agentType;
@@ -10762,7 +10762,7 @@ __export(serve_exports, {
   serve: () => serve,
   snapshotKey: () => snapshotKey
 });
-import * as fs17 from "node:fs";
+import * as fs18 from "node:fs";
 import { createServer } from "node:http";
 import * as path17 from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
@@ -10815,7 +10815,7 @@ function defaultAssetsDir() {
     // plugin/dist/server-impl.mjs → sibling assets/
     path17.join(here, "..", "..", "plugin", "dist", "assets")
     // engine/src (tsx) + engine/dist (tsc)
-  ].find((d) => fs17.existsSync(d)) ?? null;
+  ].find((d) => fs18.existsSync(d)) ?? null;
 }
 function snapshotKey(snapshot) {
   const { now: _now, ...rest } = snapshot;
@@ -11002,7 +11002,7 @@ function serve(opts) {
         return;
       }
       try {
-        const body = fs17.readFileSync(path17.join(assetsDir, name));
+        const body = fs18.readFileSync(path17.join(assetsDir, name));
         res.writeHead(200, { "content-type": type, "cache-control": "no-store" });
         res.end(body);
       } catch {
@@ -11223,7 +11223,7 @@ function serve(opts) {
       const boundPort = typeof addr === "object" && addr ? addr.port : port;
       const pidFile = pidPath(env);
       try {
-        fs17.writeFileSync(pidFile, String(process.pid), { mode: 384 });
+        fs18.writeFileSync(pidFile, String(process.pid), { mode: 384 });
       } catch {
       }
       resolve3({
@@ -11248,7 +11248,7 @@ function serve(opts) {
           server.close();
           store.close();
           try {
-            if (fs17.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs17.unlinkSync(pidFile);
+            if (fs18.readFileSync(pidFile, "utf8").trim() === String(process.pid)) fs18.unlinkSync(pidFile);
           } catch {
           }
         }
@@ -11298,7 +11298,7 @@ var init_serve = __esm({
 });
 
 // src/server.ts
-import * as fs18 from "node:fs";
+import * as fs19 from "node:fs";
 import { fileURLToPath as fileURLToPath3, pathToFileURL as pathToFileURL2 } from "node:url";
 
 // node_modules/zod/v3/helpers/util.js
@@ -35077,6 +35077,115 @@ function runSubagentStop(store, opts) {
 init_remote();
 init_crafts();
 init_store();
+
+// src/watchers.ts
+import { execFileSync as execFileSync5 } from "node:child_process";
+import * as fs13 from "node:fs";
+var LOOP_PATTERNS = [/\bwhile\s+true\b/, /\buntil\s+\[/, /\bwhile\s+\[/];
+var WATCHER_BINARIES = /* @__PURE__ */ new Set(["tail", "inotifywait", "fswatch"]);
+var SHELLS = /* @__PURE__ */ new Set(["sh", "bash", "zsh", "dash"]);
+function argvOf(pid) {
+  try {
+    const parts = fs13.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    return parts.length > 0 ? parts : null;
+  } catch {
+    return null;
+  }
+}
+function classify(argv, inboxNeedle) {
+  const joined = argv.join(" ");
+  const bin = (argv[0] ?? "").split("/").pop() ?? "";
+  if (WATCHER_BINARIES.has(bin)) {
+    return {
+      pid: 0,
+      command: joined,
+      isInbox: bin === "tail" && joined.includes(inboxNeedle)
+    };
+  }
+  if (SHELLS.has(bin) && LOOP_PATTERNS.some((re) => re.test(joined))) {
+    return { pid: 0, command: joined, isInbox: false };
+  }
+  return null;
+}
+function cwdOf(pid) {
+  try {
+    return fs13.realpathSync(fs13.readlinkSync(`/proc/${pid}/cwd`));
+  } catch {
+    return null;
+  }
+}
+function selfLineage() {
+  const line = /* @__PURE__ */ new Set();
+  let pid = process.pid;
+  for (let hops = 0; pid > 1 && hops < 32; hops++) {
+    line.add(pid);
+    const stat = (() => {
+      try {
+        return fs13.readFileSync(`/proc/${pid}/stat`, "utf8");
+      } catch {
+        return null;
+      }
+    })();
+    if (stat === null) break;
+    const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+    if (!Number.isFinite(ppid) || ppid <= 0) break;
+    pid = ppid;
+  }
+  return line;
+}
+function allPids() {
+  try {
+    return fs13.readdirSync("/proc").filter((n) => /^\d+$/.test(n)).map(Number);
+  } catch {
+    return null;
+  }
+}
+function watchersFor(stationId, opts) {
+  const pids = allPids();
+  if (pids === null) {
+    return { stationId, watchers: null, inboxAlive: null };
+  }
+  const watchers = [];
+  const inboxNeedle = opts?.notifyPath ?? `${stationId}.notify`;
+  const worktree = opts?.worktree;
+  const mine = selfLineage();
+  for (const pid of pids) {
+    if (mine.has(pid)) continue;
+    const argv = argvOf(pid);
+    if (!argv) continue;
+    const hit = classify(argv, inboxNeedle);
+    if (!hit) continue;
+    const owned = hit.isInbox || worktree !== void 0 && cwdOf(pid) === worktree;
+    if (!owned) continue;
+    watchers.push({
+      pid,
+      command: hit.command.length > 160 ? `${hit.command.slice(0, 159)}\u2026` : hit.command,
+      isInbox: hit.isInbox
+    });
+  }
+  return {
+    stationId,
+    watchers,
+    inboxAlive: watchers.some((w) => w.isInbox)
+  };
+}
+function inboxMonitorAlive(stationId, notifyPath2) {
+  if (process.platform !== "linux") {
+    try {
+      const out = execFileSync5("pgrep", ["-f", `tail -F .*${stationId}\\.notify`], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 5e3
+      });
+      return out.trim().length > 0;
+    } catch (err) {
+      return err.status === 1 ? false : null;
+    }
+  }
+  return watchersFor(stationId, { notifyPath: notifyPath2 }).inboxAlive;
+}
+
+// src/server.ts
 var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;
 var MAX_WAIT_SECONDS = 120;
@@ -35304,7 +35413,12 @@ function buildServer(store, agentId, config2) {
           // wake accounting: each wake re-processes this agent's whole context,
           // so cost ≈ wakes × context size. Spot the chatty hotspots here.
           wakesLastHour: wakes.get(p2.id)?.lastHour ?? 0,
-          wakes24h: wakes.get(p2.id)?.last24h ?? 0
+          wakes24h: wakes.get(p2.id)?.last24h ?? 0,
+          // hands#133/#121: "idle" and "deaf" are indistinguishable without
+          // this. A station whose inbox tail died looks exactly like one with
+          // nothing to do — it simply never wakes again. null = couldn't look,
+          // which must not read as fine.
+          inboxMonitorAlive: /^station-\d+$/.test(p2.id) ? inboxMonitorAlive(p2.id) : void 0
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -35924,7 +36038,7 @@ function runCli(subcommand, argv, hookPayload) {
   if (subcommand === "paths") {
     const id = resolveSelf();
     let focus = null;
-    if (fs18.existsSync(dbPath())) {
+    if (fs19.existsSync(dbPath())) {
       const s = new Store();
       try {
         focus = s.getFocus(id);
@@ -36016,8 +36130,8 @@ var invokedDirectly = (() => {
   const argv1 = process.argv[1];
   if (argv1 === void 0) return false;
   try {
-    const entry = pathToFileURL2(fs18.realpathSync(argv1)).href;
-    const self = pathToFileURL2(fs18.realpathSync(fileURLToPath3(import.meta.url))).href;
+    const entry = pathToFileURL2(fs19.realpathSync(argv1)).href;
+    const self = pathToFileURL2(fs19.realpathSync(fileURLToPath3(import.meta.url))).href;
     return entry === self;
   } catch {
     return import.meta.url === pathToFileURL2(argv1).href;
