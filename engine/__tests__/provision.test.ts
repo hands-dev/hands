@@ -59,17 +59,24 @@ describe("station provisioning (manual launcher)", () => {
     const plans = addStations(2, { cwd: repo, config: cfg });
     expect(plans.map((p) => p.id)).toEqual(["station-1", "station-2"]);
     expect(plans.every((p) => p.launched === false && p.launcher === "manual")).toBe(true);
-    // model tier: default + per-station override
-    expect(plans[0]!.model).toBe("sonnet");
+    // model tier: default (null, inherit the principal's own) + per-station override
+    expect(plans[0]!.model).toBe(null);
     expect(plans[1]!.model).toBe("opus");
     // the worktrees exist under the managed root, on ephemeral branches
     for (const p of plans) {
       expect(fs.existsSync(path.join(p.dir, "README.md"))).toBe(true);
       expect(git(p.dir, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe(p.branch);
     }
-    // the paste command carries identity + loop
+    // the paste command carries identity + loop; no --model for the default-tier station
     expect(plans[0]!.command).toContain("HANDS_ID=station-1");
-    expect(plans[0]!.command).toContain("claude --model sonnet '/loop /hands:station'");
+    expect(plans[0]!.command).not.toContain("--model");
+    expect(plans[0]!.command).toContain("--dangerously-skip-permissions '/loop /hands:station'");
+    expect(plans[1]!.command).toContain("--model opus --dangerously-skip-permissions '/loop /hands:station'");
+  });
+
+  it("--without-bypass omits --dangerously-skip-permissions from the paste command", () => {
+    const plans = addStations(1, { cwd: repo, config: cfg, withoutBypass: true });
+    expect(plans[0]!.command).not.toContain("--dangerously-skip-permissions");
   });
 
   it("ls reflects the pool; add fills the lowest free index", () => {
@@ -175,9 +182,17 @@ describe("station provisioning (manual launcher)", () => {
 
   it("omits --model when none is given, so the expo inherits the principal's default", () => {
     expect(launchCommand({ id: "expo", dir: "/tmp/w" }, "expo")).not.toContain("--model");
+    expect(launchCommand({ id: "station-1", dir: "/tmp/w", model: null })).not.toContain("--model");
     expect(launchCommand({ id: "station-1", dir: "/tmp/w", model: "sonnet" })).toContain(
       "--model sonnet",
     );
+  });
+
+  it("includes --dangerously-skip-permissions by default; --without-bypass opts out", () => {
+    expect(launchCommand({ id: "station-1", dir: "/tmp/w" })).toContain("--dangerously-skip-permissions");
+    expect(
+      launchCommand({ id: "station-1", dir: "/tmp/w" }, "station", { withoutBypass: true }),
+    ).not.toContain("--dangerously-skip-permissions");
   });
 
   it("seeds a permission allowlist into every station worktree it creates", () => {

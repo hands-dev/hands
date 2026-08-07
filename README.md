@@ -53,7 +53,7 @@ it when the two disagree; `HANDS_USE_PLUGIN_CLI=1` forces the plugin's own.
 
 ```bash
 hands                     # open the pass here (expo) — the launcher does the rest
-hands station add -n 3    # open 3 stations (tmux/iTerm/paste-command)
+hands station add -n 3    # open 3 stations (paste-command — one terminal can't host all 3)
 /hands:dashboard          # live admin dashboard (SSE) → http://localhost:4319  (or: hands serve)
                           # incl. per-pane token burn, read from Claude Code's own transcripts
 /hands:rail               # the rail, right here — same deterministic format, same data as the dashboard
@@ -82,17 +82,19 @@ and stations pick it up on their next board check, no restart needed — and dis
 sub-agents see it too, in their own briefing. `/hands:normal-usage` resets it.
 
 Sessions the launcher opens come up **ready to work**: each station worktree is seeded with a
-permission allowlist (reads, read-only shell, the bus tools) before its session spawns, so a
-station never stalls on a permission prompt before it can read its own files. `Edit`/`Write` still
-prompt, and pushing, force-resetting, and merging are denied outright — a station proposes on its
-own branch; a human ships.
+permission allowlist (reads, read-only shell, the bus tools) before its session spawns, and
+launched sessions run with `--dangerously-skip-permissions` by default — hands sessions are the
+principal's own, already inside a managed worktree, so a station never stalls on a prompt at all.
+Pass `--without-bypass` to a seat-open command to opt back into normal prompting; the seeded
+allowlist still applies either way. Pushing, force-resetting, and merging remain the station's own
+job to never do — a station proposes on its own branch; a human ships.
 
 **When something's off:**
 
 ```bash
 hands doctor [--fix]      # what's actually wrong, and repair what's safe to repair
 hands logs station-2      # what that station is really doing, from its own transcript
-hands restart station-2   # recycle a wedged seat in its existing pane
+hands restart station-2   # recycle a wedged seat — a fresh in-place launch
 hands ls                  # registered kitchens
 hands version             # which build is running (and whether two installs disagree)
 ```
@@ -248,7 +250,7 @@ Scaffold it with `hands init`; attach the books to an existing config with
   "topology":  "strict-hub",                   // or "open"
   "expo":      { "basename": null },           // null = main-worktree autodetect
   "stations": {
-    "model": "sonnet",                         // default tier
+    "model": null,                              // default tier; null = inherit the principal's own default
     "overrides": { "station-4": "opus" },      // per-station tier
     "worktreeRoot": null,                      // null = ~/.hands/worktrees/<slug>
     "baseBranch": null,                        // null = current HEAD of the main checkout

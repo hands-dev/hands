@@ -25,8 +25,8 @@ export interface HandsConfig {
   /** basename: force a specific directory basename to be the expo (null = main-worktree autodetect). */
   expo: { basename: string | null };
   stations: {
-    /** default model tier for provisioned stations */
-    model: string;
+    /** default model tier for provisioned stations (null = inherit the principal's own default) */
+    model: string | null;
     /** per-station tier overrides, keyed by canonical id ("station-4": "opus") */
     overrides: Record<string, string>;
     /** where managed station worktrees live (null = ~/.hands/worktrees/<slug>) */
@@ -120,7 +120,7 @@ export const DEFAULT_CONFIG: HandsConfig = {
   topology: "strict-hub",
   expo: { basename: null },
   stations: {
-    model: "sonnet",
+    model: null,
     overrides: {},
     worktreeRoot: null,
     baseBranch: null,
@@ -170,7 +170,7 @@ function merge(base: HandsConfig, layer: DeepPartial<HandsConfig> | null): Hands
       basename: expoLayer?.basename !== undefined ? expoLayer.basename : base.expo.basename,
     },
     stations: {
-      model: stationsLayer?.model ?? base.stations.model,
+      model: stationsLayer?.model !== undefined ? stationsLayer.model : base.stations.model,
       overrides,
       worktreeRoot:
         stationsLayer?.worktreeRoot !== undefined ? stationsLayer.worktreeRoot : base.stations.worktreeRoot,

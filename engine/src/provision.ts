@@ -36,7 +36,7 @@ export interface LaunchPlan {
   id: string;
   dir: string;
   branch: string;
-  model: string;
+  model: string | null;
   /** the exact command a human could paste into a fresh terminal */
   command: string;
   /** how it was (or wasn't) started: exec (this terminal) | manual (paste it) */
@@ -149,17 +149,39 @@ export function launchSkill(mode: LaunchMode): string {
   return mode === "expo" ? "/loop /hands:expo" : "/loop /hands:station";
 }
 
-export function launchCommand(
-  target: { id: string; dir: string; model?: string },
-  mode: LaunchMode = "station",
-): string {
-  const skill = launchSkill(mode);
+export interface LaunchOpts {
+  /** withoutBypass suppresses the default --dangerously-skip-permissions flag */
+  withoutBypass?: boolean;
+}
+
+/**
+ * The `claude` argv for a session — shared by the paste-able string below and
+ * the exec-in-place path, which passes this straight to spawnSync (no shell,
+ * no quoting to get wrong).
+ */
+function launchArgs(target: { id: string; dir: string; model?: string | null }, mode: LaunchMode, opts?: LaunchOpts): string[] {
+  const args: string[] = [];
   // No model → omit the flag entirely and inherit the principal's own default.
   // Stations get a configured tier (stations.model); the expo has no such
   // config field, and picking one on the principal's behalf would silently
   // downgrade the pass.
-  const modelFlag = target.model ? ` --model ${shellQuote(target.model)}` : "";
-  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude${modelFlag} ${shellQuote(skill)}`;
+  if (target.model) args.push("--model", target.model);
+  // On by default (hands sessions are the principal's own, already inside a
+  // managed worktree with a seeded permission allowlist) — --without-bypass
+  // opts back into normal prompting, which is why the allowlist stays seeded
+  // either way.
+  if (!opts?.withoutBypass) args.push("--dangerously-skip-permissions");
+  args.push(launchSkill(mode));
+  return args;
+}
+
+export function launchCommand(
+  target: { id: string; dir: string; model?: string | null },
+  mode: LaunchMode = "station",
+  opts?: LaunchOpts,
+): string {
+  const args = launchArgs(target, mode, opts);
+  return `cd ${shellQuote(target.dir)} && HANDS_ID=${target.id} claude ${args.map(shellQuote).join(" ")}`;
 }
 
 function shellQuote(s: string): string {
@@ -182,15 +204,14 @@ function shellQuote(s: string): string {
  * terminal at all.
  */
 export function launch(
-  plan: { id: string; dir: string; model?: string },
+  plan: { id: string; dir: string; model?: string | null },
   env: NodeJS.ProcessEnv = process.env,
   launchMode: LaunchMode = "station",
-  opts?: { exec?: boolean },
+  opts?: LaunchOpts & { exec?: boolean },
 ): { launcher: "exec" | "manual"; launched: boolean; exitCode?: number } {
   if (!opts?.exec || !process.stdin.isTTY) return { launcher: "manual", launched: false };
 
-  const args = [...(plan.model ? ["--model", plan.model] : []), launchSkill(launchMode)];
-  const res = spawnSync("claude", args, {
+  const res = spawnSync("claude", launchArgs(plan, launchMode, opts), {
     cwd: plan.dir,
     stdio: "inherit",
     env: { ...env, HANDS_ID: plan.id },
@@ -205,7 +226,7 @@ export function launch(
  */
 export function addStations(
   count: number,
-  opts?: { cwd?: string; config?: HandsConfig; env?: NodeJS.ProcessEnv },
+  opts?: { cwd?: string; config?: HandsConfig; env?: NodeJS.ProcessEnv; withoutBypass?: boolean },
 ): LaunchPlan[] {
   const cwd = opts?.cwd ?? process.cwd();
   const cfg = opts?.config ?? loadConfig({ cwd });
@@ -264,13 +285,13 @@ export function addStations(
 
     // Never exec here: `station add` can open several seats, and one terminal
     // cannot host them all. Each is reported with its paste command.
-    const res = launch({ id, dir, model }, opts?.env);
+    const res = launch({ id, dir, model }, opts?.env, "station", { withoutBypass: opts?.withoutBypass });
     plans.push({
       id,
       dir,
       branch,
       model,
-      command: launchCommand({ id, dir, model }),
+      command: launchCommand({ id, dir, model }, "station", { withoutBypass: opts?.withoutBypass }),
       launcher: res.launcher,
       launched: res.launched,
       ...(themeColor ? { themeColor } : {}),
