@@ -61,6 +61,94 @@ describe("questions lifecycle", () => {
     expect(store.listQuestions({ state: "needs_human" })).toHaveLength(1);
     store.close();
   });
+
+  it("structured options round-trip through ask and escalate (hands#84)", () => {
+    const store = new Store({ env });
+    const options = [
+      { label: "ship", description: "cuts over now", recommended: true },
+      { label: "wait", description: "hold for canary" },
+    ];
+    const id = store.askQuestion({
+      asker: "wt3",
+      question: "ship or wait?",
+      options,
+      multiSelect: false,
+      now: 1000,
+    });
+    let q = store.getQuestion(id)!;
+    expect(JSON.parse(q.options!)).toEqual(options);
+    expect(q.multi_select).toBe(0);
+
+    // Escalating WITHOUT options preserves what ask-time already attached (COALESCE, not overwrite).
+    store.escalateQuestion({ id, recommendation: "ship", now: 1500 });
+    q = store.getQuestion(id)!;
+    expect(JSON.parse(q.options!)).toEqual(options);
+
+    // Escalating WITH options overrides — the expo converting a prose recommendation into choices.
+    const revised = [{ label: "ship now", description: "no more waiting" }, { label: "hold", description: "still risky" }];
+    store.escalateQuestion({ id, recommendation: "ship now", options: revised, multiSelect: true, now: 1600 });
+    q = store.getQuestion(id)!;
+    expect(JSON.parse(q.options!)).toEqual(revised);
+    expect(q.multi_select).toBe(1);
+    store.close();
+  });
+
+  it("a free-text (option-less) question stores NULL options, unaffected by the feature", () => {
+    const store = new Store({ env });
+    const id = store.askQuestion({ asker: "wt3", question: "how should we phase this?", now: 1000 });
+    const q = store.getQuestion(id)!;
+    expect(q.options).toBeNull();
+    expect(q.multi_select).toBeFalsy();
+    store.close();
+  });
+
+  it("answering twice: the second call loses cleanly instead of overwriting the first (hands#84 concurrency fix)", () => {
+    const store = new Store({ env });
+    const id = store.askQuestion({ asker: "wt3", question: "ship it?", now: 1000 });
+    store.escalateQuestion({ id, now: 1200 });
+
+    const first = store.answerQuestion({
+      id,
+      answer: "ship",
+      resolvedBy: "human",
+      answeredVia: "dashboard",
+      answerOptions: { chosenLabels: ["ship"] },
+      now: 2000,
+    });
+    expect(first).toEqual({ ok: true });
+
+    // A second, later answer — the TUI racing the dashboard for the same escalated question.
+    const second = store.answerQuestion({
+      id,
+      answer: "wait",
+      resolvedBy: "human",
+      answeredVia: "tui",
+      now: 2100,
+    });
+    expect(second.ok).toBe(false);
+    if (!second.ok) {
+      expect(second.reason).toBe("already-answered");
+      // The loser learns WHO won, WHAT they answered, and VIA which surface — not just that it lost.
+      expect(second.existing.answer).toBe("ship");
+      expect(second.existing.resolved_by).toBe("human");
+      expect(second.existing.answered_via).toBe("dashboard");
+    }
+
+    // The row itself reflects only the winner — never silently clobbered by the later call.
+    const q = store.getQuestion(id)!;
+    expect(q.answer).toBe("ship");
+    expect(q.answered_via).toBe("dashboard");
+    expect(JSON.parse(q.answer_options!)).toEqual({ chosenLabels: ["ship"] });
+    store.close();
+  });
+
+  it("an expo auto-resolve stamps answered_via='expo' by default", () => {
+    const store = new Store({ env });
+    const id = store.askQuestion({ asker: "wt3", question: "bump the cache TTL?", now: 1000 });
+    store.answerQuestion({ id, answer: "yes", resolvedBy: "expo", answeredVia: "expo", now: 1500 });
+    expect(store.getQuestion(id)!.answered_via).toBe("expo");
+    store.close();
+  });
 });
 
 describe("board routing", () => {

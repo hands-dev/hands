@@ -75,9 +75,26 @@ function populate(store: Store): void {
   store.insertMessage({ from: "station-1", to: "expo", body: "returned early", subject: "status", now: 1000 });
   store.insertMessage({ from: "expo", to: null, body: "all hands", now: 2000 });
   store.setCursor("expo", 1);
-  const qid = store.askQuestion({ asker: "station-1", question: "ship it?", context: "ctx", now: 3000 });
+  const qid = store.askQuestion({
+    asker: "station-1",
+    question: "ship it?",
+    context: "ctx",
+    options: [
+      { label: "ship", description: "cuts staging over now", recommended: true },
+      { label: "wait", description: "hold for canary" },
+    ],
+    multiSelect: false,
+    now: 3000,
+  });
   store.escalateQuestion({ id: qid, recommendation: "ship", priorityRef: "P1", now: 3500 });
-  store.answerQuestion({ id: qid, answer: "yes", resolvedBy: "human", now: 4000 });
+  store.answerQuestion({
+    id: qid,
+    answer: "ship",
+    resolvedBy: "human",
+    answeredVia: "dashboard",
+    answerOptions: { chosenLabels: ["ship"] },
+    now: 4000,
+  });
   store.setQuestionOutcome({ id: qid, outcome: "validated", note: "held up", now: 4500 });
   const tid = store.createTask({ createdBy: "expo", assignee: "station-1", title: "plan X", body: "b", priority: "P1", now: 5000 });
   store.updateTaskState({ id: tid, state: "in_progress", now: 5500 });
@@ -492,7 +509,7 @@ describe("public dashboard snapshot", () => {
     expect(pub.todos).toHaveLength(1);
     expect(pub.todos[0]).toMatchObject({ state: "done", doneSignal: "PR #7 merged" });
     expect(pub.questions).toHaveLength(1);
-    expect(pub.questions[0]).toMatchObject({ answer: "yes", state: "answered" });
+    expect(pub.questions[0]).toMatchObject({ answer: "ship", state: "answered" });
 
     // redacted: message bodies and live/local-only fields never reach this file
     expect(raw).not.toContain("returned early");

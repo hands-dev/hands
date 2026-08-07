@@ -510,6 +510,21 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
 
   // --- expo / questions ---
 
+  // Shared shape for a structured question's choices — mirrors AskUserQuestion's own option
+  // shape (label/description) plus `recommended`, which that tool has no native field for: a
+  // renderer must translate it into "move it first, append '(Recommended)' to the label" itself.
+  const questionOptionSchema = z.object({
+    label: z.string(),
+    description: z.string().describe("the trade-off — why you'd pick this one, or not"),
+    recommended: z.boolean().optional(),
+  });
+  const questionOptionsSchema = z
+    .array(questionOptionSchema)
+    .min(2)
+    .max(4)
+    .optional()
+    .describe("2-4 concrete choices, if this decomposes into one — omit for a genuinely open-ended question");
+
   server.registerTool(
     "hands_ask",
     {
@@ -517,16 +532,25 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       description:
         "Raise an open question or decision you can't resolve alone. The expo (main checkout) " +
         `adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough ` +
-        "context to decide; propose options if you have them.",
+        "context to decide; propose options if you have them — structured, not just prose, when the " +
+        "decision cleanly decomposes into 2-4 choices.",
       inputSchema: {
         question: z.string(),
         context: z.string().optional().describe("what's blocked, options, your lean"),
+        options: questionOptionsSchema,
+        multiSelect: z.boolean().optional().describe("true if more than one option can be chosen at once"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
       store.touch(agentId);
-      const id = store.askQuestion({ asker: agentId, question: input.question, context: input.context ?? null });
+      const id = store.askQuestion({
+        asker: agentId,
+        question: input.question,
+        context: input.context ?? null,
+        options: input.options ?? null,
+        multiSelect: input.multiSelect,
+      });
       deliverWake(["expo"], { from: agentId, subject: "question" });
       return asToolResult({ ok: true, id, routedTo: "expo" });
     },
@@ -558,8 +582,12 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           state: q.state,
           answer: q.answer ?? undefined,
           resolvedBy: q.resolved_by ?? undefined,
+          answeredVia: q.answered_via ?? undefined,
+          answerOptions: q.answer_options ? JSON.parse(q.answer_options) : undefined,
           priority: q.priority_ref ?? undefined,
           recommendation: q.recommendation ?? undefined,
+          options: q.options ? JSON.parse(q.options) : undefined,
+          multiSelect: q.multi_select === 1,
           askedAt: new Date(q.created_at).toISOString(),
         })),
       });
@@ -572,11 +600,23 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       title: "Answer a question (resolve it)",
       description:
         "Resolve a question and route the answer back to the asker. Set by='human' when relaying " +
-        `${principal}'s decision, 'expo' when you (the expo) auto-resolved it. Cite which priority it mapped to.`,
+        `${principal}'s decision, 'expo' when you (the expo) auto-resolved it. Cite which priority it ` +
+        "mapped to. Pass chosenLabels for a structured question (matching its options' labels) or " +
+        "answer for free text — at least one is required. If the question was already answered by " +
+        "someone else (a race between two surfaces), this returns ok:false with what won rather than " +
+        "overwriting it — check for that before assuming your answer landed.",
       inputSchema: {
         id: z.number().int(),
-        answer: z.string(),
+        answer: z.string().optional().describe("free-text answer — required unless chosenLabels is set"),
+        chosenLabels: z
+          .array(z.string())
+          .optional()
+          .describe("which option label(s) were picked, for a structured question"),
         by: z.enum(["expo", "human"]).optional(),
+        answeredVia: z
+          .enum(["dashboard", "tui", "cli", "expo"])
+          .optional()
+          .describe("which surface produced this answer — omit when by='expo'"),
         priority: z.string().optional().describe("the priority this maps to"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -585,12 +625,31 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       store.touch(agentId);
       const q = store.getQuestion(input.id);
       if (!q) return { ...asToolResult({ ok: false, error: "no such question" }), isError: true };
-      store.answerQuestion({
+      if (!input.answer && !input.chosenLabels?.length) {
+        return {
+          ...asToolResult({ ok: false, error: "pass answer or chosenLabels" }),
+          isError: true,
+        };
+      }
+      const resolvedBy = input.by ?? "expo";
+      const displayAnswer = input.answer ?? (input.chosenLabels as string[]).join("; ");
+      const result = store.answerQuestion({
         id: input.id,
-        answer: input.answer,
-        resolvedBy: input.by ?? "expo",
+        answer: displayAnswer,
+        resolvedBy,
+        answeredVia: input.answeredVia ?? (resolvedBy === "expo" ? "expo" : null),
+        answerOptions: input.chosenLabels?.length ? { chosenLabels: input.chosenLabels } : null,
         priorityRef: input.priority ?? null,
       });
+      if (!result.ok) {
+        return asToolResult({
+          ok: false,
+          reason: "already-answered",
+          answer: result.existing.answer,
+          resolvedBy: result.existing.resolved_by,
+          answeredVia: result.existing.answered_via,
+        });
+      }
       deliverWake([q.asker], { from: "expo", subject: "answer" });
       return asToolResult({ ok: true, id: input.id, asker: q.asker });
     },
@@ -601,12 +660,17 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
     {
       title: "Bubble a question up to the principal",
       description:
-        `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane). ` +
-        "Include your recommendation and the priority it touches. Then present it to him and, once " +
-        "he decides, call hands_answer with by='human'.",
+        `Mark a question as needing ${principal}'s decision (shows in the dashboard 'Needs you' lane, ` +
+        "and to /hands:questions). Include your recommendation and the priority it touches — pass " +
+        "options if the decision decomposes into 2-4 concrete choices, so every surface (dashboard, " +
+        "the AskUserQuestion dialog) can render real buttons instead of a paragraph. Then present it " +
+        `via the AskUserQuestion tool in this same turn (recommended option first, labelled), not just ` +
+        "prose. Once he decides, call hands_answer with by='human'.",
       inputSchema: {
         id: z.number().int(),
         recommendation: z.string().optional(),
+        options: questionOptionsSchema,
+        multiSelect: z.boolean().optional(),
         priority: z.string().optional(),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
@@ -618,6 +682,8 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       store.escalateQuestion({
         id: input.id,
         recommendation: input.recommendation ?? null,
+        options: input.options ?? null,
+        multiSelect: input.multiSelect,
         priorityRef: input.priority ?? null,
       });
       return asToolResult({ ok: true, id: input.id });

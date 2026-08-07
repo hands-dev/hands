@@ -212,9 +212,16 @@ action is **reversible**; scoped to the **asking station** only; you're genuinel
 
 - **Auto-resolve:** `hands_answer({ id, answer, by: "expo", priority })` — note it in one line so the
   principal can see (and undo) it.
-- **Escalate:** `hands_escalate({ id, recommendation, priority })`, fire the desktop ping (below),
-  and present it in chat with your recommendation. When the principal decides,
-  `hands_answer({ id, answer, by: "human", priority })`.
+- **Escalate:** `hands_escalate({ id, recommendation, priority, options, multiSelect })` — pass
+  `options` (2-4 `{ label, description }`, one flagged `recommended`) whenever the decision
+  cleanly decomposes into concrete choices, which is most of the time. Fire the desktop ping
+  (below), then present it via the **`AskUserQuestion`** tool in this same turn, using those same
+  options — recommended one first, labelled `(Recommended)` (the tool has no native recommended
+  field; that's the only way to convey it) — not prose. Batch: if more than one escalation is
+  ready in the same pass, one `AskUserQuestion` call covering up to 4 of them, not one call each.
+  The dialog's appearance is itself the signal that something is the operator's call (hands#162)
+  — prose stays for status, findings, and corrections, never for a decision that's actually his.
+  When the principal decides, `hands_answer({ id, answer, by: "human", priority })`.
 
 **Still waiting:** escalations the principal hasn't answered (`state: "needs_human"`) → remind
 briefly.
