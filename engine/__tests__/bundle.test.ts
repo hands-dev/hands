@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 // @ts-expect-error plain-JS build script, no types
-import { buildBundles } from "../scripts/bundle.mjs";
+import { buildBundles, writeStamp } from "../scripts/bundle.mjs";
 
 /**
  * The plugin ships COMMITTED bundles (a plugin install is a plain copy — no
@@ -30,10 +30,12 @@ describe("committed plugin bundles", () => {
   it("are fresh relative to src/ (run `npm run bundle` if this fails)", async () => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), "hands-bundle-"));
     await buildBundles(tmp);
-    // BUILD.json is deliberately NOT in this list: it stamps commit + build
-    // time, so it differs on every run by design and would defeat the whole
-    // check. Don't add it. (Same reasoning as the VERSION file excluded from
-    // the change-detection in .github/workflows/sync-dashboard-assets.yml.)
+    // BUILD.json is deliberately NOT in this list, and buildBundles() doesn't
+    // even write it (see writeStamp() below and bundle.mjs's header) — it
+    // stamps commit + build time, so it differs on every run by design and
+    // would defeat the whole check. Don't add it. (Same reasoning as the
+    // VERSION file excluded from the change-detection in
+    // .github/workflows/sync-dashboard-assets.yml.)
     const files = [
       "server.mjs",
       "server-impl.mjs",
@@ -50,12 +52,12 @@ describe("committed plugin bundles", () => {
     }
   }, 60_000);
 
-  it("stamps the build so `hands version` can say which one is running", async () => {
+  it("stamps the build so `hands version` can say which one is running", () => {
     tmp ||= fs.mkdtempSync(path.join(os.tmpdir(), "hands-bundle-"));
-    if (!fs.existsSync(path.join(tmp, "BUILD.json"))) await buildBundles(tmp);
+    writeStamp(tmp);
     const stamp = JSON.parse(fs.readFileSync(path.join(tmp, "BUILD.json"), "utf8"));
     expect(typeof stamp.version).toBe("string");
     expect(typeof stamp.builtAt).toBe("string");
     expect(Number.isNaN(Date.parse(stamp.builtAt))).toBe(false);
-  }, 60_000);
+  });
 });

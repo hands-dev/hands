@@ -18,6 +18,12 @@ name: Bundle plugin for distribution
 # bundle.test.ts), and main carries no branch protection requiring a PR here.
 # The bot commit only touches plugin/dist/**, which isn't in this workflow's
 # own path filter, so it can't retrigger itself.
+#
+# This is also the ONLY place BUILD.json (the hands version/skew stamp) ever
+# gets refreshed — `npm run bundle:stamp`, not plain `npm run bundle` (see
+# bundle.mjs's header). A dev/station branch's own `npm run bundle` never
+# touches it, so it never diverges from what that branch forked from and there
+# is nothing for a later rebase onto main to conflict over (hands#166).
 on:
   push:
     branches: [main]
@@ -53,11 +59,11 @@ jobs:
           cache: npm
           cache-dependency-path: engine/package-lock.json
 
-      - name: Build the plugin bundles
+      - name: Build the plugin bundles + refresh the version stamp
         working-directory: engine
         run: |
           npm ci
-          npm run bundle
+          npm run bundle:stamp
 
       - name: Commit the refreshed bundle if it changed
         run: |

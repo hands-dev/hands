@@ -18,6 +18,10 @@ The plugin executes the committed bundles in `plugin/dist` — not your working 
 `npm run bundle` after a src/ change is the classic mistake; `bundle.test.ts` fails when the
 bundles are stale.
 
+`npm run bundle` deliberately never touches `plugin/dist/BUILD.json` (the `hands version`/skew
+stamp) — it's refreshed only by CI's `bundle:stamp` step right after a merge to main, so your
+branch's copy never diverges and needs no manual reconciling on rebase (hands#166).
+
 Test a local build without installing:
 
 ```bash
