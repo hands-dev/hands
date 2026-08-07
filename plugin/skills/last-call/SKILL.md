@@ -70,6 +70,10 @@ say it is on the pass.
 
 The station picks it straight back up on its next wake — `assigned` is where it looks.
 
+The server enforces this too: any ticket left `in_progress` by an offline station is parked
+automatically on the expo's next board read. This step is the deliberate version — do it with a
+status note attached, rather than letting the sweep do it silently with none.
+
 ## 6. Report
 
 One summary line to the principal: dishes merged, crafts distilled, stations parked, anything
