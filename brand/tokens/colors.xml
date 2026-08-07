@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="hands_aqua">#00E0C6</color>
+    <color name="hands_cobalt">#4D7CFF</color>
+    <color name="hands_orchid">#B85CFF</color>
+    <color name="hands_coral">#FF5C7A</color>
+    <color name="hands_amber">#FFB020</color>
+    <color name="hands_accent">#B85CFF</color>
+    <color name="hands_accent_on_light">#7A28C9</color>
+    <color name="hands_ink">#0B0B0C</color>
+    <color name="hands_paper">#F4F3F1</color>
+</resources>

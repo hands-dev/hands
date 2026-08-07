@@ -1,0 +1,18 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 279 78" fill="none" role="img" aria-label="Hands">
+  <g transform="translate(-12.11,3.98) scale(0.835)">
+  <g fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round">
+    <path d="M19 76 V42.5"></path>
+    <path d="M34 76 V23.5"></path>
+    <path d="M49 76 V14"></path>
+    <path d="M64 76 V20"></path>
+    <path d="M79 76 V63.5"></path>
+  </g>
+  <circle cx="19" cy="42.5" r="4.5" fill="var(--hands-nail-1, #00E0C6)"></circle>
+  <circle cx="34" cy="23.5" r="4.5" fill="var(--hands-nail-2, #4D7CFF)"></circle>
+  <circle cx="49" cy="14" r="4.5" fill="var(--hands-nail-3, #B85CFF)"></circle>
+  <circle cx="64" cy="20" r="4.5" fill="var(--hands-nail-4, #FF5C7A)"></circle>
+  <circle cx="79" cy="63.5" r="4.5" fill="var(--hands-nail-5, #FFB020)"></circle>
+  </g>
+  <text x="70.1" y="70.7" font-family="Archivo, Helvetica Neue, Arial, sans-serif" font-size="76" font-weight="700" fill="currentColor"><tspan>h</tspan><tspan dx="-2.3">a</tspan><tspan dx="-1.6">n</tspan><tspan dx="-2.3">d</tspan><tspan dx="-3">s</tspan></text>
+</svg>

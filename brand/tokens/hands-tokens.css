@@ -1,0 +1,20 @@
+:root{
+  /* Nail palette — left to right, thumb last. Semantic: one hue per station.
+     Tuned for dark ground first; every hue clears 5.6:1 on --hands-ink. */
+  --hands-nail-1:#00E0C6; /* aqua    1.68 on #FFF  · 12.48 on #0B0B0C */
+  --hands-nail-2:#4D7CFF; /* cobalt  3.72          ·  5.64 */
+  --hands-nail-3:#B85CFF; /* orchid  3.49          ·  6.01 */
+  --hands-nail-4:#FF5C7A; /* coral   2.97          ·  7.06 */
+  --hands-nail-5:#FFB020; /* amber   1.83          · 11.48 */
+
+  /* Site chrome */
+  --hands-accent:#B85CFF;          /* pivot: >=3:1 both grounds, body-safe on dark */
+  --hands-accent-on-light:#7A28C9; /* 7.06:1 on #FFFFFF */
+
+  --hands-ink:#0B0B0C;
+  --hands-paper:#F4F3F1;
+}
+
+/* Suggested TUI mapping — the palette doubles as status colour.
+   station/info  aqua   · running cobalt · queued orchid
+   failed        coral  · warning amber */
