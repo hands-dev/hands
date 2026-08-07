@@ -104,7 +104,11 @@ m=$C/expo.last-greeting
 find "$m" -mmin +1440 | grep -q . && echo DUE || echo skip
 ```
 
-**skip** → go straight to "Arm your wake signal" below. **DUE** → `touch "$m"`, then:
+**skip** → go straight to "Arm your wake signal" below. **DUE** → `touch "$m"`, then run
+**`/hands:line-check`** (hands#156/#157) *before anything else in this list*: it reads the previous
+shift's page, brings YOUR checkout current, and reports which stations are ready for service. A
+ticket is only as good as the picture behind it, and this is the pass where a stale picture becomes
+everyone's. Then:
 
 1. **Version check — best-effort, silent on any failure, never blocks or adds meaningful startup
    latency.** One Node process does the whole thing: reads the locally installed build (`hands
