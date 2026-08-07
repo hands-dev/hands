@@ -934,6 +934,19 @@ export class Store {
     }));
   }
 
+  /** contextSamples() for every agent in one call — the dashboard's "context length over time" tab. */
+  contextSamplesForAgents(
+    agentIds: readonly string[],
+    limit = 50,
+  ): Record<string, Array<{ inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; at: number }>> {
+    const result: Record<
+      string,
+      Array<{ inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; at: number }>
+    > = {};
+    for (const id of agentIds) result[id] = this.contextSamples(id, limit);
+    return result;
+  }
+
   /**
    * One row per SubagentStop (hands#103) — the completion the dashboard's
    * periodic transcript scan (tokens.ts) can't attribute to a specific

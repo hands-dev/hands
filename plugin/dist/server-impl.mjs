@@ -7623,6 +7623,12 @@ var init_store = __esm({
           at: r.created_at
         }));
       }
+      /** contextSamples() for every agent in one call — the dashboard's "context length over time" tab. */
+      contextSamplesForAgents(agentIds, limit = 50) {
+        const result = {};
+        for (const id of agentIds) result[id] = this.contextSamples(id, limit);
+        return result;
+      }
       /**
        * One row per SubagentStop (hands#103) — the completion the dashboard's
        * periodic transcript scan (tokens.ts) can't attribute to a specific
@@ -8937,6 +8943,9 @@ function stationIndex(id) {
   const m = /^station-(\d+)$/.exec(id);
   return m ? Number.parseInt(m[1], 10) : null;
 }
+function toSnapshotMessage(m) {
+  return { id: m.id, from: m.from_id, to: m.to_id ?? "*", subject: m.subject, body: m.body, at: m.created_at };
+}
 function activity(raw) {
   if (!raw) return { files: [], ticket: null };
   try {
@@ -8988,14 +8997,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     }
   }
   const journal = store.journalSince(0, 40).reverse().map((j) => ({ id: j.id, by: j.agent_id, kind: j.kind, text: j.text, ref: j.ref, at: j.created_at }));
-  const messages = store.history({ limit: 40 }).reverse().map((m) => ({
-    id: m.id,
-    from: m.from_id,
-    to: m.to_id ?? "*",
-    subject: m.subject,
-    body: m.body,
-    at: m.created_at
-  }));
+  const messages = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
   const priorities = readPriorities(env).items;
   const questions = store.listQuestions({ limit: 30 }).map((q) => ({
     id: q.id,
@@ -10725,9 +10727,20 @@ function serve(opts) {
       };
     });
   };
+  const buildContextUsage = (agentIds) => store.contextSamplesForAgents(agentIds);
+  const buildAgentMessages = (agentIds) => {
+    const result = {};
+    for (const id of agentIds) {
+      result[id] = store.history({ peer: id, limit: 50 }).reverse().map(toSnapshotMessage);
+    }
+    return result;
+  };
   const payload = () => {
     const snapshot = buildSnapshot(store, Date.now(), env);
     const craftRoster = buildCraftRoster();
+    const agentIds = snapshot.agents.map((a) => a.id);
+    const contextUsage = buildContextUsage(agentIds);
+    const agentMessages = buildAgentMessages(agentIds);
     return {
       json: JSON.stringify({
         ...snapshot,
@@ -10739,9 +10752,11 @@ function serve(opts) {
         craftRoster,
         booksSync,
         tokens,
-        taskCosts
+        taskCosts,
+        contextUsage,
+        agentMessages
       }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts)
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages)
     };
   };
   const clients = /* @__PURE__ */ new Set();
