@@ -2209,6 +2209,34 @@ export class Store {
     return result;
   }
 
+  /**
+   * hands#103c — subagent_samples has been written on every sub-agent finish since the
+   * SubagentStop hook landed, but craftTokenUsage() above only ever reads the "craft-<slug>"
+   * slice of it; a plain "general-purpose"/"Explore"/etc. dispatch (not routed through a synced
+   * craft) was invisible. This is the whole table, grouped by whatever agent_type it actually
+   * dispatched as — "which agents are used most/least, and is a craft earning its place" needs
+   * that comparison, not just the craft subset. Same 7-day self-trimmed window as the table.
+   */
+  subagentUsageSummary(): Array<{
+    agentType: string;
+    calls: number;
+    totalOutputTokens: number;
+    avgOutputTokens: number;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT COALESCE(agent_type, '(untyped)') as agent_type, SUM(output_tokens) as total, COUNT(*) as calls
+         FROM subagent_samples GROUP BY agent_type ORDER BY calls DESC, total DESC, agent_type ASC`,
+      )
+      .all() as Array<{ agent_type: string; total: number; calls: number }>;
+    return rows.map((row) => ({
+      agentType: row.agent_type,
+      calls: row.calls,
+      totalOutputTokens: row.total,
+      avgOutputTokens: row.calls > 0 ? Math.round(row.total / row.calls) : 0,
+    }));
+  }
+
   /** Every craft dispatch tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used." */
   listCraftBriefsByTicket(ticketId: number): CraftBriefRow[] {
     return this.db

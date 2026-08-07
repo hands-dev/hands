@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ChatEvent, hasAgentSdkInstalled, runChatTurn } from "./chat.js";
 import { type HandsConfig, loadConfig } from "./config.js";
+import { deriveContextSignals, type ContextSignals } from "./context-signals.js";
 import { listCrafts, readCraftFileCapped } from "./crafts.js";
 import { fileFeedback, type FeedbackResult, type GhRunner } from "./feedback.js";
 import { notify } from "./notify.js";
@@ -90,6 +91,10 @@ export type DashboardPayload = Snapshot & {
     string,
     Array<{ inputTokens: number; cacheReadTokens: number; cacheCreationTokens: number; at: number }>
   >;
+  /** hands#103a — derived from contextUsage: compaction thrashing, growth rate, ETA to the next compaction */
+  contextSignals: Record<string, ContextSignals>;
+  /** hands#103c — subagent_samples grouped by agent type, whole kitchen, 7-day window — which agents actually get used */
+  subagentUsage: Array<{ agentType: string; calls: number; totalOutputTokens: number; avgOutputTokens: number }>;
   /** this agent's own message history (peer-filtered), keyed by agent id — the Roles pages */
   agentMessages: Record<string, SnapshotMessage[]>;
   /** craft dispatches tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used" */
@@ -429,6 +434,20 @@ export function serve(opts?: {
   const buildContextUsage = (agentIds: string[]): DashboardPayload["contextUsage"] =>
     store.contextSamplesForAgents(agentIds);
 
+  // hands#103a — a pure function of contextUsage, so no extra SSE key term is
+  // needed: contextUsage's own JSON.stringify below already changes whenever
+  // this would.
+  const buildContextSignals = (
+    contextUsage: DashboardPayload["contextUsage"],
+    now: number,
+  ): DashboardPayload["contextSignals"] => {
+    const result: DashboardPayload["contextSignals"] = {};
+    for (const [agentId, samples] of Object.entries(contextUsage)) {
+      result[agentId] = deriveContextSignals(samples, now);
+    }
+    return result;
+  };
+
   const buildAgentMessages = (agentIds: string[]): Record<string, SnapshotMessage[]> => {
     const result: Record<string, SnapshotMessage[]> = {};
     for (const id of agentIds) {
@@ -459,8 +478,10 @@ export function serve(opts?: {
     const craftRoster = buildCraftRoster();
     const agentIds = snapshot.agents.map((a) => a.id);
     const contextUsage = buildContextUsage(agentIds);
+    const contextSignals = buildContextSignals(contextUsage, snapshot.now);
     const agentMessages = buildAgentMessages(agentIds);
     const craftBriefsByTicket = buildCraftBriefsByTicket();
+    const subagentUsage = store.subagentUsageSummary();
     const chatAvailable = hasAgentSdkInstalledFn();
     return {
       json: JSON.stringify({
@@ -475,8 +496,10 @@ export function serve(opts?: {
         tokens,
         taskCosts,
         contextUsage,
+        contextSignals,
         agentMessages,
         craftBriefsByTicket,
+        subagentUsage,
         chatAvailable,
       }),
       key:
@@ -490,6 +513,7 @@ export function serve(opts?: {
         JSON.stringify(contextUsage) +
         JSON.stringify(agentMessages) +
         JSON.stringify(craftBriefsByTicket) +
+        JSON.stringify(subagentUsage) +
         JSON.stringify(chatAvailable),
     };
   };
