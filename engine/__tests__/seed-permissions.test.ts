@@ -2,7 +2,15 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mergeStationSettings, seedStationPermissions, stationSettings } from "../src/seed-permissions.js";
+import {
+  mergeStationSettings,
+  PR_CREATE_RULE,
+  PUSH_RULE,
+  reconcileStationShipPermissions,
+  seedStationPermissions,
+  shipPermissionsStale,
+  stationSettings,
+} from "../src/seed-permissions.js";
 
 let dir: string;
 
@@ -106,13 +114,21 @@ describe("the grant itself", () => {
     }
   });
 
-  it("does not hand a station blanket git — push and reset must not ride in on a prefix", () => {
+  it("does not hand a station blanket git — only push is granted, reset must not ride in on a prefix (hands#86)", () => {
     expect(allow.allow).not.toContain("Bash(git *)");
-    expect(allow.deny).toContain("Bash(git push *)");
+    expect(allow.allow).toContain("Bash(git push *)");
+    expect(allow.deny).not.toContain("Bash(git push *)");
     expect(allow.deny).toContain("Bash(git reset --hard *)");
   });
 
-  it("leaves Edit and Write prompting — a station proposes, a human ships", () => {
+  it("grants opening a PR but not merging one (hands#86)", () => {
+    expect(allow.allow).not.toContain("Bash(gh *)");
+    expect(allow.allow).toContain("Bash(gh pr create *)");
+    expect(allow.deny).not.toContain("Bash(gh pr create *)");
+    expect(allow.deny).toContain("Bash(gh pr merge *)");
+  });
+
+  it("leaves Edit and Write prompting — a station ships its own branch and PR, a human still merges", () => {
     expect(allow.allow).not.toContain("Edit");
     expect(allow.allow).not.toContain("Write");
     expect(allow.deny).toContain("Bash(gh pr merge *)");
@@ -121,5 +137,72 @@ describe("the grant itself", () => {
   it("denies the tools that would let a station restructure the line", () => {
     expect(allow.deny).toContain("mcp__plugin_hands_hands__hands_scale");
     expect(allow.deny).toContain("mcp__plugin_hands_hands__hands_station_remove");
+  });
+});
+
+describe("shipPermissionsStale / reconcileStationShipPermissions — hands#86 catch-up for already-provisioned seats", () => {
+  it("a freshly seeded station is never stale", () => {
+    seedStationPermissions(dir);
+    expect(shipPermissionsStale(dir)).toBe(false);
+  });
+
+  it("a station with no settings file at all is not 'stale' — that's seedStationPermissions' job", () => {
+    expect(shipPermissionsStale(dir)).toBe(false);
+    expect(reconcileStationShipPermissions(dir)).toEqual({ path: settingsFile(), changed: false });
+    expect(fs.existsSync(settingsFile())).toBe(false); // reconcile never creates the file
+  });
+
+  it("flags the pre-hands#86 shape: push present in deny, absent from allow", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsFile(),
+      JSON.stringify({ permissions: { allow: ["Read", "HandTuned"], deny: [PUSH_RULE, "Bash(git reset --hard *)"] } }),
+    );
+    expect(shipPermissionsStale(dir)).toBe(true);
+  });
+
+  it("also flags a station that has push but predates the PR-create grant", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsFile(),
+      JSON.stringify({ permissions: { allow: ["Read", PUSH_RULE], deny: ["Bash(git reset --hard *)"] } }),
+    );
+    expect(shipPermissionsStale(dir)).toBe(true);
+  });
+
+  it("reconciles: drops both ship rules from deny, adds both to allow, leaves everything else untouched", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(
+      settingsFile(),
+      JSON.stringify({
+        permissions: { allow: ["Read", "HandTuned"], deny: [PUSH_RULE, "Bash(git reset --hard *)"] },
+        theme: "custom:hand-rolled",
+      }),
+    );
+
+    const res = reconcileStationShipPermissions(dir);
+    expect(res.changed).toBe(true);
+
+    const after = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(after.permissions.allow).toEqual(["Read", "HandTuned", PUSH_RULE, PR_CREATE_RULE]);
+    expect(after.permissions.deny).toEqual(["Bash(git reset --hard *)"]);
+    expect(after.theme).toBe("custom:hand-rolled"); // untouched top-level key
+    expect(shipPermissionsStale(dir)).toBe(false);
+  });
+
+  it("is a no-op (changed:false) once already reconciled", () => {
+    seedStationPermissions(dir); // current policy already has both ship rules in allow, not deny
+    const res = reconcileStationShipPermissions(dir);
+    expect(res.changed).toBe(false);
+  });
+
+  it("still adds both rules to allow even if simply absent from both lists (no deny entry at all)", () => {
+    fs.mkdirSync(path.join(dir, ".claude"), { recursive: true });
+    fs.writeFileSync(settingsFile(), JSON.stringify({ permissions: { allow: ["Read"], deny: [] } }));
+    expect(shipPermissionsStale(dir)).toBe(true);
+    reconcileStationShipPermissions(dir);
+    const after = JSON.parse(fs.readFileSync(settingsFile(), "utf8"));
+    expect(after.permissions.allow).toContain(PUSH_RULE);
+    expect(after.permissions.allow).toContain(PR_CREATE_RULE);
   });
 });

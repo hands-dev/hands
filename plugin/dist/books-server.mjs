@@ -30338,6 +30338,50 @@ import * as path10 from "node:path";
 // src/seed-permissions.ts
 import * as fs10 from "node:fs";
 import * as path11 from "node:path";
+var PUSH_RULE = "Bash(git push *)";
+var PR_CREATE_RULE = "Bash(gh pr create *)";
+var SHIP_RULES = [PUSH_RULE, PR_CREATE_RULE];
+var ALLOW = [
+  "Read",
+  "Glob",
+  "Grep",
+  "Monitor",
+  "Bash(git log *)",
+  "Bash(git status *)",
+  "Bash(git diff *)",
+  "Bash(git show *)",
+  "Bash(git blame *)",
+  "Bash(git branch *)",
+  "Bash(git rev-list *)",
+  "Bash(git rev-parse *)",
+  "Bash(gh issue view *)",
+  "Bash(gh issue list *)",
+  "Bash(gh pr view *)",
+  "Bash(gh pr list *)",
+  "Bash(rg *)",
+  "Bash(ls *)",
+  "Bash(cat *)",
+  "Bash(head *)",
+  "Bash(tail *)",
+  "Bash(wc *)",
+  "Bash(find *)",
+  "Bash(hands paths *)",
+  "Bash(hands station ls *)",
+  "mcp__plugin_hands_hands__hands_paths",
+  "mcp__plugin_hands_hands__hands_receive",
+  "mcp__plugin_hands_hands__hands_send",
+  "mcp__plugin_hands_hands__hands_tasks",
+  "mcp__plugin_hands_hands__hands_task_update",
+  "mcp__plugin_hands_hands__hands_focus",
+  "mcp__plugin_hands_hands__hands_ask",
+  "mcp__plugin_hands_hands__hands_peers",
+  "mcp__plugin_hands_hands__hands_board",
+  "mcp__plugin_hands_hands__hands_history",
+  "mcp__plugin_hands_hands__hands_priorities",
+  "mcp__plugin_hands_hands__hands_questions",
+  "mcp__plugin_hands_hands__hands_todos",
+  ...SHIP_RULES
+];
 
 // src/theming.ts
 import * as os5 from "node:os";
