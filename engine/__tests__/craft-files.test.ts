@@ -14,6 +14,7 @@ import {
   craftKnown,
   craftSkillPath,
   formatRosterContext,
+  isRoleCraft,
   listCrafts,
   materializeCraftAgents,
   nearestCraftSlugs,
@@ -305,6 +306,59 @@ describe("listCrafts", () => {
     expect(orderingApi?.scope).toBe("shared");
     expect(orderingApi?.covers).toBe("app.py");
     store.close();
+  });
+
+  it("excludes role crafts from the browsable roster (hands#139/#91/#95)", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+    fs.writeFileSync(path.join(shared, "saucier.md"), "> covers: sauces\n");
+
+    const store = new Store({ env });
+    const roster = listCrafts(store, loadConfig({ cwd: repo, env }), env, repo);
+    expect(roster.map((c) => c.slug)).toEqual(["saucier"]); // cdc never appears
+    store.close();
+  });
+});
+
+describe("role crafts — dispatch still works even though the roster hides them (hands#139/#91/#95)", () => {
+  it("isRoleCraft classifies cdc and nothing else", () => {
+    expect(isRoleCraft("cdc")).toBe(true);
+    expect(isRoleCraft("saucier")).toBe(false);
+    expect(isRoleCraft("issue-triage")).toBe(false);
+  });
+
+  it("craftKnown still resolves a role craft by EXACT slug — hands craft brief cdc keeps working", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+
+    const { known } = craftKnown("cdc", loadConfig({ cwd: repo, env }), env, repo);
+    expect(known).toBe(true); // a direct, correctly-spelled dispatch always resolves
+    const store = new Store({ env });
+    const roster = listCrafts(store, loadConfig({ cwd: repo, env }), env, repo);
+    expect(roster.map((c) => c.slug)).not.toContain("cdc");
+    store.close();
+  });
+
+  it("craftKnown does NOT suggest a role craft for a typo — a near-miss must not surface it (hands#204)", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+    fs.writeFileSync(path.join(shared, "cdo.md"), "> covers: something else\n"); // a close-by real craft
+
+    // "cdd" is a typo close to both "cdc" (role craft) and "cdo" (an ordinary, suggestable craft).
+    const { known, slugs } = craftKnown("cdd", loadConfig({ cwd: repo, env }), env, repo);
+    expect(known).toBe(false);
+    expect(slugs).not.toContain("cdc"); // role crafts aren't a typo-suggestion destination
+    expect(slugs).toContain("cdo"); // ordinary crafts still are
+    expect(nearestCraftSlugs("cdd", slugs, 1)).toEqual(["cdo"]);
   });
 });
 
@@ -881,6 +935,19 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     expect(after).not.toContain("saucier [personal, brief-only, plan-only]");
 
     store.close();
+  });
+
+  it("never materializes a role craft, even self-cleaning any pre-existing generated files (hands#139/#91/#95)", () => {
+    const files = craftFiles("cdc", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: whole-board judgment\n");
+    const target = fs.mkdtempSync(path.join(home, "target-"));
+    const cfg = loadConfig({ env });
+
+    const res = materializeCraftAgents(cfg, target, env);
+    expect(res.written).toEqual([]);
+    expect(fs.existsSync(craftAgentPath(target, "cdc"))).toBe(false);
+    expect(fs.existsSync(craftSkillPath(target, "cdc"))).toBe(false);
   });
 });
 

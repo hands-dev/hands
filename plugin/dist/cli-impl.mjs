@@ -21753,6 +21753,26 @@ var init_store = __esm({
       );
 
       CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
+
+      -- hands#139/#91/#95 \u2014 CDC's two whole-board checkpoints (pre-fire triage,
+      -- pre-ship sign-off) collapsed into one record shape, mirroring
+      -- wake_outcomes/rec_outcome's enum+note pattern rather than inventing a
+      -- second table for the second checkpoint. Written by the expo (the
+      -- identity actually running the CDC dispatch), never by CDC itself \u2014
+      -- CDC returns a verdict in its own response text, same as any craft's
+      -- craft-note contract; the caller records it.
+      CREATE TABLE IF NOT EXISTS task_signoffs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id     INTEGER NOT NULL,
+        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship
+        verdict     TEXT NOT NULL,      -- approved | rejected
+        note        TEXT,
+        origin_sha  TEXT,               -- origin/main HEAD at signoff time \u2014 the staleness anchor
+        by          TEXT NOT NULL,
+        created_at  INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_task_signoffs_task ON task_signoffs (task_id, created_at);
     `);
         this.db.exec(`
       CREATE TABLE IF NOT EXISTS craft_notes (
@@ -22359,6 +22379,44 @@ var init_store = __esm({
       /** Record that an obligation was just nudged, so the next pass doesn't immediately re-nudge it. */
       markChased(kind, id, now = Date.now()) {
         this.setWatermark("*", `chase:${kind}:${id}`, String(now));
+      }
+      // --- CDC checkpoint sign-offs (hands#139/#91/#95) ---
+      recordSignoff(input) {
+        const now = input.now ?? Date.now();
+        const id = this.withRetry(() => {
+          const result = this.db.prepare(
+            `INSERT INTO task_signoffs (task_id, checkpoint, verdict, note, origin_sha, by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            input.taskId,
+            input.checkpoint,
+            input.verdict,
+            input.note ?? null,
+            input.originSha ?? null,
+            input.by,
+            now
+          );
+          return Number(result.lastInsertRowid);
+        });
+        this.journal("task.signoff", {
+          id,
+          taskId: input.taskId,
+          checkpoint: input.checkpoint,
+          verdict: input.verdict,
+          note: input.note ?? null,
+          by: input.by,
+          at: now
+        });
+        return id;
+      }
+      /** The most recent sign-off for a task, optionally scoped to one checkpoint. */
+      latestSignoff(taskId, checkpoint) {
+        const clause = checkpoint ? "AND checkpoint = ?" : "";
+        const params = checkpoint ? [taskId, checkpoint] : [taskId];
+        return this.db.prepare(`SELECT * FROM task_signoffs WHERE task_id = ? ${clause} ORDER BY id DESC LIMIT 1`).get(...params);
+      }
+      signoffsForTask(taskId) {
+        return this.db.prepare("SELECT * FROM task_signoffs WHERE task_id = ? ORDER BY id ASC").all(taskId);
       }
       // --- questions (worktree → expo escalation) ---
       askQuestion(input) {
@@ -25182,6 +25240,9 @@ var init_remote = __esm({
 // src/crafts.ts
 import * as fs15 from "node:fs";
 import * as path16 from "node:path";
+function isRoleCraft(slug) {
+  return ROLE_CRAFT_SLUGS.has(slug);
+}
 function parseCraftHeader(bookContent) {
   if (!bookContent) return { covers: null, distilled: null, ready: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
@@ -25249,8 +25310,8 @@ function listCraftFiles(config2, env = process.env, cwd = process.cwd()) {
   return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
 }
 function craftKnown(slug, config2, env = process.env, cwd = process.cwd()) {
-  const slugs = listCraftFiles(config2, env, cwd).map((e) => e.slug);
-  return { known: slugs.includes(slug), slugs };
+  const all = listCraftFiles(config2, env, cwd).map((e) => e.slug);
+  return { known: all.includes(slug), slugs: all.filter((s) => !isRoleCraft(s)) };
 }
 function editDistance(a, b) {
   const rows = a.length + 1;
@@ -25269,7 +25330,7 @@ function nearestCraftSlugs(target, known, limit = 3) {
   return [...known].sort((a, b) => editDistance(target, a) - editDistance(target, b)).slice(0, limit);
 }
 function listCrafts(store, config2, env = process.env, cwd = process.cwd()) {
-  return listCraftFiles(config2, env, cwd).map((e) => ({
+  return listCraftFiles(config2, env, cwd).filter((e) => !isRoleCraft(e.slug)).map((e) => ({
     ...e,
     pendingNotes: store.pendingCraftNotes(e.slug).length
   }));
@@ -25344,7 +25405,7 @@ distinct from \`friction\`, which is about whether YOUR OWN book/skill/mise stee
 `;
 }
 function materializeCraftAgents(config2, targetDir, env = process.env, cwd = process.cwd()) {
-  const roster = listCraftFiles(config2, env, cwd);
+  const roster = listCraftFiles(config2, env, cwd).filter((e) => !isRoleCraft(e.slug));
   const agentsDir = path16.join(targetDir, ".claude", "agents");
   const skillsDir = path16.join(targetDir, ".claude", "skills");
   fs15.mkdirSync(agentsDir, { recursive: true });
@@ -25586,11 +25647,12 @@ function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) 
     instructions: FOLD_INSTRUCTIONS
   };
 }
-var COVERS_RE, DISTILLED_RE, READY_RE, READY_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, READY_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
     init_remote();
+    ROLE_CRAFT_SLUGS = /* @__PURE__ */ new Set(["cdc"]);
     COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
     DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
     READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
@@ -50804,6 +50866,41 @@ ${input.body}`, [agentId, ...recipients]);
     }
   );
   server.registerTool(
+    "hands_craft_signoff",
+    {
+      title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
+      description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved) or 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before you may act on \xA75 (review depth / merge) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh.",
+      inputSchema: {
+        taskId: external_exports3.number().int(),
+        checkpoint: external_exports3.enum(["pre-fire", "pre-ship"]),
+        verdict: external_exports3.enum(["approved", "rejected"]),
+        note: external_exports3.string().optional(),
+        originSha: external_exports3.string().optional().describe("origin/main HEAD at the moment CDC judged \u2014 the staleness anchor; omit if unavailable")
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      if (!isExpo(agentId)) {
+        return {
+          ...asToolResult({ ok: false, error: "Only the expo records a CDC signoff \u2014 it's the one running the dispatch." }),
+          isError: true
+        };
+      }
+      const task = store.getTask(input.taskId);
+      if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
+      const id = store.recordSignoff({
+        taskId: input.taskId,
+        checkpoint: input.checkpoint,
+        verdict: input.verdict,
+        note: input.note ?? null,
+        originSha: input.originSha ?? null,
+        by: agentId
+      });
+      return asToolResult({ ok: true, id });
+    }
+  );
+  server.registerTool(
     "hands_priorities",
     {
       title: "Read or set the menu \u2014 the expo's ranked priorities",
@@ -50941,18 +51038,33 @@ ${input.body ?? ""}`, [agentId, assignee]);
       });
       return asToolResult({
         count: rows.length,
-        tasks: rows.map((t) => ({
-          id: t.id,
-          title: t.title,
-          body: t.body ?? void 0,
-          from: t.created_by,
-          assignee: t.assignee ?? "queue",
-          state: t.state,
-          result: t.result ?? void 0,
-          priority: t.priority_ref ?? void 0,
-          dish: t.dish ?? void 0,
-          updatedAt: new Date(t.updated_at).toISOString()
-        }))
+        tasks: rows.map((t) => {
+          const signoff = store.latestSignoff(t.id);
+          return {
+            id: t.id,
+            title: t.title,
+            body: t.body ?? void 0,
+            from: t.created_by,
+            assignee: t.assignee ?? "queue",
+            state: t.state,
+            result: t.result ?? void 0,
+            priority: t.priority_ref ?? void 0,
+            dish: t.dish ?? void 0,
+            updatedAt: new Date(t.updated_at).toISOString(),
+            // hands#139/#91/#95 — the most recent CDC checkpoint verdict, if
+            // any. `originSha` is the staleness anchor: compare against the
+            // CURRENT origin/main HEAD yourself before trusting an
+            // "approved" pre-ship signoff — a stale one is not a signoff.
+            signoff: signoff ? {
+              checkpoint: signoff.checkpoint,
+              verdict: signoff.verdict,
+              note: signoff.note ?? void 0,
+              originSha: signoff.origin_sha ?? void 0,
+              by: signoff.by,
+              at: new Date(signoff.created_at).toISOString()
+            } : void 0
+          };
+        })
       });
     }
   );
@@ -52384,6 +52496,11 @@ ${distilledCount} book(s) distilled in the last 7 days.`);
       const slug = argv[1];
       if (!slug) fail(`usage: hands craft ${sub} <slug>`);
       const files = craftFiles(slug);
+      if (isRoleCraft(files.slug)) {
+        fail(
+          `"${files.slug}" is a role craft (hands#139) \u2014 it judges, it never writes files, so it never needs execute mode. Not a missing certification; not markable.`
+        );
+      }
       if (!fs28.existsSync(files.book)) {
         fail(`unknown craft "${files.slug}" \u2014 no book found for it (\`hands craft ls\` for the roster)`);
       }
@@ -52409,6 +52526,9 @@ ${distilledCount} book(s) distilled in the last 7 days.`);
       const slug = argv[1];
       if (!slug) fail(`usage: hands craft ${sub} <slug>`);
       const files = craftFiles(slug);
+      if (isRoleCraft(files.slug)) {
+        fail(`"${files.slug}" is a role craft (hands#139) \u2014 not tier-mutable. It lives in the shared tier by construction.`);
+      }
       const wantScope = sub === "promote" ? "shared" : "personal";
       if (files.scope === wantScope) fail(`"${files.slug}" is already ${wantScope}`);
       const info = repoInfo(process.cwd());

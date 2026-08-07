@@ -457,6 +457,71 @@ describe("hands_escalate wakes sous when configured (hands#87/#171 phase b)", ()
   });
 });
 
+describe("hands_craft_signoff (hands#139/#91/#95)", () => {
+  it("records CDC's verdict for a ticket, and hands_tasks surfaces it back", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const taskId = del.body.id as number;
+
+    const res = await call(expo, "hands_craft_signoff", {
+      taskId,
+      checkpoint: "pre-fire",
+      verdict: "approved",
+      note: "board clean",
+      originSha: "abc123",
+    });
+    expect(res.isError).toBe(false);
+
+    const tasks = await call(expo, "hands_tasks", { assignee: "station-1" });
+    const mine = (tasks.body.tasks as Array<{ id: number; signoff?: Record<string, unknown> }>).find(
+      (t) => t.id === taskId,
+    );
+    expect(mine?.signoff).toMatchObject({
+      checkpoint: "pre-fire",
+      verdict: "approved",
+      note: "board clean",
+      originSha: "abc123",
+      by: "expo",
+    });
+  });
+
+  it("is expo-only — a station is rejected", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const w1 = await connect("station-1");
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+
+    const res = await call(w1, "hands_craft_signoff", {
+      taskId: del.body.id as number,
+      checkpoint: "pre-ship",
+      verdict: "approved",
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("Only the expo");
+  });
+
+  it("rejects an unknown task id rather than silently recording a phantom signoff", async () => {
+    const expo = await connect("expo");
+    const res = await call(expo, "hands_craft_signoff", {
+      taskId: 999999,
+      checkpoint: "pre-ship",
+      verdict: "approved",
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("no such task");
+  });
+
+  it("hands_tasks reports no signoff field for a ticket that's never been judged", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const tasks = await call(expo, "hands_tasks", { assignee: "station-1" });
+    const mine = (tasks.body.tasks as Array<{ signoff?: unknown }>)[0];
+    expect(mine?.signoff).toBeUndefined();
+  });
+});
+
 describe("board stateHash + full bundle", () => {
   it("is stable when nothing changes and moves when assignments change", async () => {
     const expo = await connect("expo");

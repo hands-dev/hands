@@ -165,6 +165,39 @@ export interface Obligation {
   lastChasedAt: number | null;
 }
 
+/** One CDC checkpoint verdict (hands#139/#91/#95) — see `Store.recordSignoff`. */
+export interface TaskSignoffRow {
+  id: number;
+  task_id: number;
+  /** pre-fire (before the expo hands the ticket to a station) | pre-ship (before the expo may call hands) */
+  checkpoint: "pre-fire" | "pre-ship";
+  verdict: "approved" | "rejected";
+  note: string | null;
+  /** origin/main HEAD at signoff time — null if the caller didn't have one (non-git context) */
+  origin_sha: string | null;
+  /** the identity that recorded it — the expo, never CDC itself */
+  by: string;
+  created_at: number;
+}
+
+/**
+ * Whether a sign-off is still trustworthy (hands#139/#91/#95). A whole-board
+ * judgment goes stale the moment the board it judged moves — the check is
+ * mechanical, not a re-run of CDC's own reasoning: `origin/main` advancing
+ * past the sha captured at signoff time, or a caller-supplied `hasCollision`
+ * (from the SAME collision detection `hands_board` already runs) touching
+ * the signed-off ticket. Either alone is enough to invalidate.
+ */
+export function isSignoffStale(
+  signoff: Pick<TaskSignoffRow, "origin_sha">,
+  currentOriginSha: string | null,
+  hasNewCollision = false,
+): boolean {
+  if (hasNewCollision) return true;
+  if (!signoff.origin_sha || !currentOriginSha) return false; // nothing to compare — not stale by this check
+  return signoff.origin_sha !== currentOriginSha;
+}
+
 export interface TodoRow {
   id: number;
   title: string;
@@ -496,6 +529,26 @@ export class Store {
       );
 
       CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
+
+      -- hands#139/#91/#95 — CDC's two whole-board checkpoints (pre-fire triage,
+      -- pre-ship sign-off) collapsed into one record shape, mirroring
+      -- wake_outcomes/rec_outcome's enum+note pattern rather than inventing a
+      -- second table for the second checkpoint. Written by the expo (the
+      -- identity actually running the CDC dispatch), never by CDC itself —
+      -- CDC returns a verdict in its own response text, same as any craft's
+      -- craft-note contract; the caller records it.
+      CREATE TABLE IF NOT EXISTS task_signoffs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id     INTEGER NOT NULL,
+        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship
+        verdict     TEXT NOT NULL,      -- approved | rejected
+        note        TEXT,
+        origin_sha  TEXT,               -- origin/main HEAD at signoff time — the staleness anchor
+        by          TEXT NOT NULL,
+        created_at  INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_task_signoffs_task ON task_signoffs (task_id, created_at);
     `);
 
     // Crafts as sub-agent-deployed specializations (hands#81/#96/#49). Sub-agents never write
@@ -1303,6 +1356,62 @@ export class Store {
   /** Record that an obligation was just nudged, so the next pass doesn't immediately re-nudge it. */
   markChased(kind: "task" | "question", id: number, now: number = Date.now()): void {
     this.setWatermark("*", `chase:${kind}:${id}`, String(now));
+  }
+
+  // --- CDC checkpoint sign-offs (hands#139/#91/#95) ---
+
+  recordSignoff(input: {
+    taskId: number;
+    checkpoint: "pre-fire" | "pre-ship";
+    verdict: "approved" | "rejected";
+    note?: string | null;
+    originSha?: string | null;
+    by: string;
+    now?: number;
+  }): number {
+    const now = input.now ?? Date.now();
+    const id = this.withRetry(() => {
+      const result = this.db
+        .prepare(
+          `INSERT INTO task_signoffs (task_id, checkpoint, verdict, note, origin_sha, by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.taskId,
+          input.checkpoint,
+          input.verdict,
+          input.note ?? null,
+          input.originSha ?? null,
+          input.by,
+          now,
+        );
+      return Number(result.lastInsertRowid);
+    });
+    this.journal("task.signoff", {
+      id,
+      taskId: input.taskId,
+      checkpoint: input.checkpoint,
+      verdict: input.verdict,
+      note: input.note ?? null,
+      by: input.by,
+      at: now,
+    });
+    return id;
+  }
+
+  /** The most recent sign-off for a task, optionally scoped to one checkpoint. */
+  latestSignoff(taskId: number, checkpoint?: "pre-fire" | "pre-ship"): TaskSignoffRow | undefined {
+    const clause = checkpoint ? "AND checkpoint = ?" : "";
+    const params = checkpoint ? [taskId, checkpoint] : [taskId];
+    return this.db
+      .prepare(`SELECT * FROM task_signoffs WHERE task_id = ? ${clause} ORDER BY id DESC LIMIT 1`)
+      .get(...params) as TaskSignoffRow | undefined;
+  }
+
+  signoffsForTask(taskId: number): TaskSignoffRow[] {
+    return this.db
+      .prepare("SELECT * FROM task_signoffs WHERE task_id = ? ORDER BY id ASC")
+      .all(taskId) as unknown as TaskSignoffRow[];
   }
 
   // --- questions (worktree → expo escalation) ---
