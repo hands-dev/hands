@@ -23,7 +23,8 @@ server also conform to the [Agent Plugins](https://agent-plugins.org) open stand
 That registers everything: the MCP server (`hands_*` tools), the passive-standup hooks
 (`Stop → publish`, `UserPromptSubmit → board`), the `/hands:expo` · `/hands:station` · `/hands:init` ·
 `/hands:crafts` · `/hands:dashboard` · `/hands:feedback` · `/hands:login` · `/hands:rail` ·
-`/hands:hands` · `/hands:install-cli` · `/hands:low-usage` · `/hands:normal-usage` skills, and the
+`/hands:hands` · `/hands:ready` · `/hands:install-cli` · `/hands:low-usage` · `/hands:normal-usage` skills,
+and the
 `hands` CLI on your Bash PATH. Requires Node ≥ 22.5.
 
 Then, per repo (from its main checkout) — one slash command:

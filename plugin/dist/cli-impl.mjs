@@ -51232,11 +51232,11 @@ function assessReadiness(opts) {
     ok: stashCount === 0,
     detail: stashCount === 0 ? "no stashes" : `${stashCount} stash(es) \u2014 an unclaimed stash is a question for the expo, not garbage`
   });
-  const stranded = opts.strandedTickets ?? [];
+  const resuming = opts.resumingTickets ?? [];
   checks.push({
     name: "tickets",
-    ok: stranded.length === 0,
-    detail: stranded.length === 0 ? "no half-made dishes" : `ticket(s) ${stranded.join(", ")} are in_progress with nobody working them`
+    ok: true,
+    detail: resuming.length === 0 ? "no tickets to resume" : `resuming ${resuming.join(", ")} from the previous shift`
   });
   const branch = git5(worktree, ["rev-parse", "--abbrev-ref", "HEAD"]);
   const expected = `hands/${agentId}`;
@@ -52096,11 +52096,11 @@ function cmdAttest(argv) {
   }
   const store = new Store();
   try {
-    const stranded = store.listTasks({ assignee: agentId, state: "in_progress" }).map((t) => `#${t.id}`);
+    const resuming = store.listTasks({ assignee: agentId, state: "in_progress" }).map((t) => `#${t.id}`);
     const readiness = assessReadiness({
       worktree: process.cwd(),
       agentId,
-      strandedTickets: flag(argv, "--assume-working") ? [] : stranded,
+      resumingTickets: resuming,
       offline: flag(argv, "--offline")
     });
     store.setAttestation({
