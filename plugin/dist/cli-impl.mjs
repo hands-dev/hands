@@ -23306,6 +23306,33 @@ var init_board = __esm({
   }
 });
 
+// src/notify.ts
+import * as fs5 from "node:fs";
+function notify(recipients, meta3, env = process.env) {
+  const iso = new Date(meta3.now ?? Date.now()).toISOString();
+  const subject = (meta3.subject ?? "").replace(/[\t\n\r]/g, " ");
+  const line = `${iso}	${meta3.from}	${subject}
+`;
+  const notified = [];
+  const failed = [];
+  for (const recipient of recipients) {
+    try {
+      fs5.appendFileSync(notifyPath(recipient, env), line, { mode: 384 });
+      fs5.chmodSync(notifyPath(recipient, env), 384);
+      notified.push(recipient);
+    } catch {
+      failed.push(recipient);
+    }
+  }
+  return { notified, failed };
+}
+var init_notify = __esm({
+  "src/notify.ts"() {
+    "use strict";
+    init_paths();
+  }
+});
+
 // src/priorities.ts
 import * as fs6 from "node:fs";
 import * as path6 from "node:path";
@@ -24402,11 +24429,14 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     state: q.state,
     answer: q.answer,
     resolvedBy: q.resolved_by,
+    answeredVia: q.answered_via,
     recommendation: q.recommendation,
     priority: q.priority_ref,
     outcome: q.outcome,
     outcomeNote: q.outcome_note,
     outcomeAt: q.outcome_at,
+    options: q.options ? JSON.parse(q.options) : null,
+    multiSelect: q.multi_select === 1,
     at: q.created_at
   }));
   const github = store.listGithubPrs({ limit: 40 }).map((pr) => {
@@ -26064,7 +26094,16 @@ function serve(opts) {
   const hasAgentSdkInstalledFn = opts?.chatAvailable ?? hasAgentSdkInstalled;
   let feedbackRequestTimes = [];
   let chatRequestTimes = [];
+  let answerRequestTimes = [];
   const store = new Store({ env });
+  const deliverWake = (recipients, meta3) => {
+    const result = notify(recipients, meta3, env);
+    if (result.notified.length > 0) {
+      store.recordWakes(result.notified);
+      store.markWakePending(result.notified);
+    }
+    return result;
+  };
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
   const config2 = opts?.config ?? loadConfig({ env });
@@ -26443,6 +26482,83 @@ function serve(opts) {
       });
       return;
     }
+    const answerMatch = req.method === "POST" ? QUESTION_ANSWER_ROUTE.exec(url2) : null;
+    if (answerMatch) {
+      if (!isTrustedOrigin(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "cross-origin request rejected" }));
+        return;
+      }
+      const id = Number(answerMatch[1]);
+      const now = Date.now();
+      answerRequestTimes = answerRequestTimes.filter((t) => now - t < ANSWER_RATE_LIMIT_WINDOW_MS);
+      if (answerRequestTimes.length >= ANSWER_RATE_LIMIT_MAX) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "too many answers \u2014 try again in a minute" }));
+        return;
+      }
+      const chunks = [];
+      let tooLarge = false;
+      req.on("data", (chunk) => {
+        if (tooLarge) return;
+        chunks.push(chunk);
+        if (chunks.reduce((n, c) => n + c.length, 0) > MAX_ANSWER_BODY_BYTES) {
+          tooLarge = true;
+          res.writeHead(413, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "answer body too large" }));
+          req.destroy();
+        }
+      });
+      req.on("end", () => {
+        if (tooLarge) return;
+        let parsed;
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+        const chosenLabels = Array.isArray(parsed.chosenLabels) ? parsed.chosenLabels.filter((v) => typeof v === "string") : void 0;
+        const freeText = typeof parsed.freeText === "string" ? parsed.freeText.trim() : void 0;
+        if (!chosenLabels?.length && !freeText) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "chosenLabels or freeText is required" }));
+          return;
+        }
+        const q = store.getQuestion(id);
+        if (!q) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "no such question" }));
+          return;
+        }
+        answerRequestTimes.push(now);
+        const answer = chosenLabels?.length ? chosenLabels.join("; ") : freeText;
+        const result = store.answerQuestion({
+          id,
+          answer,
+          resolvedBy: "human",
+          answeredVia: "dashboard",
+          answerOptions: chosenLabels?.length ? { chosenLabels } : { chosenLabels: [], freeText }
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        if (!result.ok) {
+          res.end(
+            JSON.stringify({
+              ok: false,
+              reason: "already-answered",
+              answer: result.existing.answer,
+              resolvedBy: result.existing.resolved_by,
+              answeredVia: result.existing.answered_via
+            })
+          );
+          return;
+        }
+        deliverWake([q.asker], { from: "expo", subject: "answer" });
+        res.end(JSON.stringify({ ok: true, answer, resolvedBy: "human", answeredVia: "dashboard" }));
+      });
+      return;
+    }
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
@@ -26487,7 +26603,7 @@ function serve(opts) {
     });
   });
 }
-var ASSETS, MAX_FEEDBACK_BODY_BYTES, MAX_FEEDBACK_TITLE_BYTES, FEEDBACK_RATE_LIMIT_MAX, FEEDBACK_RATE_LIMIT_WINDOW_MS, MAX_CHAT_PROMPT_BYTES, CHAT_RATE_LIMIT_MAX, CHAT_RATE_LIMIT_WINDOW_MS, ServeError;
+var ASSETS, MAX_FEEDBACK_BODY_BYTES, MAX_FEEDBACK_TITLE_BYTES, FEEDBACK_RATE_LIMIT_MAX, FEEDBACK_RATE_LIMIT_WINDOW_MS, MAX_CHAT_PROMPT_BYTES, CHAT_RATE_LIMIT_MAX, CHAT_RATE_LIMIT_WINDOW_MS, MAX_ANSWER_BODY_BYTES, ANSWER_RATE_LIMIT_MAX, ANSWER_RATE_LIMIT_WINDOW_MS, QUESTION_ANSWER_ROUTE, ServeError;
 var init_serve = __esm({
   "src/serve.ts"() {
     "use strict";
@@ -26495,6 +26611,7 @@ var init_serve = __esm({
     init_config();
     init_crafts();
     init_feedback();
+    init_notify();
     init_paths();
     init_remote();
     init_snapshot();
@@ -26525,6 +26642,10 @@ var init_serve = __esm({
     MAX_CHAT_PROMPT_BYTES = 1e5;
     CHAT_RATE_LIMIT_MAX = 20;
     CHAT_RATE_LIMIT_WINDOW_MS = 6e4;
+    MAX_ANSWER_BODY_BYTES = 2e3;
+    ANSWER_RATE_LIMIT_MAX = 20;
+    ANSWER_RATE_LIMIT_WINDOW_MS = 6e4;
+    QUESTION_ANSWER_ROUTE = /^\/api\/questions\/(\d+)\/answer$/;
     ServeError = class extends Error {
     };
   }
@@ -49686,30 +49807,7 @@ function pollGithub(store, opts) {
 
 // src/server.ts
 init_identity();
-
-// src/notify.ts
-init_paths();
-import * as fs5 from "node:fs";
-function notify(recipients, meta3, env = process.env) {
-  const iso = new Date(meta3.now ?? Date.now()).toISOString();
-  const subject = (meta3.subject ?? "").replace(/[\t\n\r]/g, " ");
-  const line = `${iso}	${meta3.from}	${subject}
-`;
-  const notified = [];
-  const failed = [];
-  for (const recipient of recipients) {
-    try {
-      fs5.appendFileSync(notifyPath(recipient, env), line, { mode: 384 });
-      fs5.chmodSync(notifyPath(recipient, env), 384);
-      notified.push(recipient);
-    } catch {
-      failed.push(recipient);
-    }
-  }
-  return { notified, failed };
-}
-
-// src/server.ts
+init_notify();
 init_paths();
 init_priorities();
 

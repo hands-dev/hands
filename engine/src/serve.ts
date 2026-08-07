@@ -6,6 +6,7 @@ import { type ChatEvent, hasAgentSdkInstalled, runChatTurn } from "./chat.js";
 import { type HandsConfig, loadConfig } from "./config.js";
 import { listCrafts, readCraftFileCapped } from "./crafts.js";
 import { fileFeedback, type FeedbackResult, type GhRunner } from "./feedback.js";
+import { notify } from "./notify.js";
 import { dbPath, pidPath } from "./paths.js";
 import {
   craftFiles,
@@ -143,9 +144,16 @@ const MAX_CHAT_PROMPT_BYTES = 100_000;
 const CHAT_RATE_LIMIT_MAX = 20;
 const CHAT_RATE_LIMIT_WINDOW_MS = 60_000;
 
+/** An answer is a button click (plus maybe a short free-text fallback), not prose — small cap. */
+const MAX_ANSWER_BODY_BYTES = 2_000;
+/** A batch of escalations answered in one pass is a handful of clicks, not dozens — still headroom above any real single-operator burst. */
+const ANSWER_RATE_LIMIT_MAX = 20;
+const ANSWER_RATE_LIMIT_WINDOW_MS = 60_000;
+const QUESTION_ANSWER_ROUTE = /^\/api\/questions\/(\d+)\/answer$/;
+
 /**
- * Same-origin check for state-changing routes (currently just POST
- * /api/feedback). Binding to 127.0.0.1 stops a remote attacker but NOT a
+ * Same-origin check for state-changing routes (POST /api/feedback,
+ * /api/chat, /api/questions/:id/answer). Binding to 127.0.0.1 stops a remote attacker but NOT a
  * same-machine cross-origin request — any webpage open in the same browser
  * while `hands serve` runs could otherwise POST here and file an issue
  * under the operator's own `gh` identity. Origin is checked first: it's
@@ -242,8 +250,10 @@ export function snapshotKey(snapshot: Snapshot): string {
 /**
  * Start the dashboard server. Binds to localhost only — that keeps remote
  * attackers out, but NOT another page in the operator's own browser, which
- * is why the one write route (POST /api/feedback) has its own same-origin
- * check and rate limit (see isTrustedOrigin above). Everything else is
+ * is why every state-changing route (POST /api/feedback, /api/chat,
+ * /api/questions/:id/answer) has its own same-origin check and rate limit
+ * (see isTrustedOrigin above) — the same threat model, applied identically
+ * to a third route rather than inventing new auth for it. Everything else is
  * read-only. Does NOT register itself as an agent — it's a viewer/reporter,
  * not a participant. Live updates ride /api/events (SSE): a lazy ~1s tick
  * rebuilds the snapshot while at least one client is connected and pushes
@@ -300,7 +310,20 @@ export function serve(opts?: {
   const hasAgentSdkInstalledFn = opts?.chatAvailable ?? hasAgentSdkInstalled;
   let feedbackRequestTimes: number[] = [];
   let chatRequestTimes: number[] = [];
+  let answerRequestTimes: number[] = [];
   const store = new Store({ env });
+  // Same shape as server.ts's deliverWake (hands#173): a wake write that throws must not be
+  // reported as delivered. The dashboard answering a question is the first write path that
+  // needs to wake someone else — everything else here is either read-only or, for feedback/chat,
+  // self-contained to the requester's own turn.
+  const deliverWake = (recipients: readonly string[], meta: { from: string; subject?: string | null }) => {
+    const result = notify(recipients, meta, env);
+    if (result.notified.length > 0) {
+      store.recordWakes(result.notified);
+      store.markWakePending(result.notified);
+    }
+    return result;
+  };
   const db = dbPath(env);
   const shell = shellHtml(kitchenName(db));
   const config = opts?.config ?? loadConfig({ env });
@@ -728,6 +751,92 @@ export function serve(opts?: {
             res.end();
           }
         })();
+      });
+      return;
+    }
+
+    const answerMatch = req.method === "POST" ? QUESTION_ANSWER_ROUTE.exec(url) : null;
+    if (answerMatch) {
+      if (!isTrustedOrigin(req)) {
+        res.writeHead(403, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "cross-origin request rejected" }));
+        return;
+      }
+      const id = Number(answerMatch[1]);
+      // Same check-but-don't-yet-consume shape as /api/feedback and /api/chat above.
+      const now = Date.now();
+      answerRequestTimes = answerRequestTimes.filter((t) => now - t < ANSWER_RATE_LIMIT_WINDOW_MS);
+      if (answerRequestTimes.length >= ANSWER_RATE_LIMIT_MAX) {
+        res.writeHead(429, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: "too many answers — try again in a minute" }));
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      let tooLarge = false;
+      req.on("data", (chunk: Buffer) => {
+        if (tooLarge) return;
+        chunks.push(chunk);
+        if (chunks.reduce((n, c) => n + c.length, 0) > MAX_ANSWER_BODY_BYTES) {
+          tooLarge = true;
+          res.writeHead(413, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "answer body too large" }));
+          req.destroy();
+        }
+      });
+      req.on("end", () => {
+        if (tooLarge) return;
+        let parsed: { chosenLabels?: unknown; freeText?: unknown };
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        } catch {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "invalid JSON body" }));
+          return;
+        }
+        const chosenLabels = Array.isArray(parsed.chosenLabels)
+          ? parsed.chosenLabels.filter((v): v is string => typeof v === "string")
+          : undefined;
+        const freeText = typeof parsed.freeText === "string" ? parsed.freeText.trim() : undefined;
+        if (!chosenLabels?.length && !freeText) {
+          res.writeHead(400, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "chosenLabels or freeText is required" }));
+          return;
+        }
+        const q = store.getQuestion(id);
+        if (!q) {
+          res.writeHead(404, { "content-type": "application/json" });
+          res.end(JSON.stringify({ error: "no such question" }));
+          return;
+        }
+        // validation passed — NOW this request counts against the window
+        answerRequestTimes.push(now);
+        const answer = chosenLabels?.length ? chosenLabels.join("; ") : (freeText as string);
+        const result = store.answerQuestion({
+          id,
+          answer,
+          resolvedBy: "human",
+          answeredVia: "dashboard",
+          answerOptions: chosenLabels?.length ? { chosenLabels } : { chosenLabels: [], freeText },
+        });
+        res.writeHead(200, { "content-type": "application/json" });
+        if (!result.ok) {
+          // The loser learns who won, what they answered, and via which surface — not just that
+          // it lost (hands#84): a caller told "already answered" with nothing else would just ask
+          // again.
+          res.end(
+            JSON.stringify({
+              ok: false,
+              reason: "already-answered",
+              answer: result.existing.answer,
+              resolvedBy: result.existing.resolved_by,
+              answeredVia: result.existing.answered_via,
+            }),
+          );
+          return;
+        }
+        deliverWake([q.asker], { from: "expo", subject: "answer" });
+        res.end(JSON.stringify({ ok: true, answer, resolvedBy: "human", answeredVia: "dashboard" }));
       });
       return;
     }

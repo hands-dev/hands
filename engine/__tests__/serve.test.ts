@@ -934,3 +934,149 @@ describe("POST /api/chat", () => {
     });
   });
 });
+
+describe("POST /api/questions/:id/answer (hands#84 — the dashboard's first write path beyond feedback/chat)", () => {
+  /** Seed a question and, when asked, escalate it — mirrors a real expo pass. */
+  function seedQuestion(opts?: { escalate?: boolean; options?: boolean; multiSelect?: boolean }): number {
+    const store = new Store({ env });
+    const id = store.askQuestion({
+      asker: "station-1",
+      question: "ship it?",
+      options: opts?.options
+        ? [
+            { label: "ship", description: "cuts over now", recommended: true },
+            { label: "wait", description: "hold for canary" },
+          ]
+        : null,
+      multiSelect: opts?.multiSelect,
+    });
+    if (opts?.escalate !== false) store.escalateQuestion({ id, recommendation: "ship" });
+    store.close();
+    return id;
+  }
+
+  it("answers via chosenLabels, updates the row, and wakes the asker", async () => {
+    const id = seedQuestion({ options: true });
+    handle = await serve({ port: 0, env });
+
+    const res = await post(`${handle.url}api/questions/${id}/answer`, JSON.stringify({ chosenLabels: ["ship"] }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true, answer: "ship", resolvedBy: "human", answeredVia: "dashboard" });
+
+    const store = new Store({ env });
+    const q = store.getQuestion(id)!;
+    expect(q.state).toBe("answered");
+    expect(q.answer).toBe("ship");
+    expect(q.resolved_by).toBe("human");
+    expect(q.answered_via).toBe("dashboard");
+    expect(JSON.parse(q.answer_options!)).toEqual({ chosenLabels: ["ship"] });
+    store.close();
+
+    const notifyLine = fs.readFileSync(path.join(home, "station-1.notify"), "utf8");
+    expect(notifyLine).toContain("expo");
+  });
+
+  it("answers via freeText (the escape hatch, parity with the TUI's built-in Other)", async () => {
+    const id = seedQuestion({ options: true });
+    handle = await serve({ port: 0, env });
+
+    const res = await post(`${handle.url}api/questions/${id}/answer`, JSON.stringify({ freeText: "actually, split the difference" }));
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)).toMatchObject({ ok: true, answer: "actually, split the difference" });
+
+    const store = new Store({ env });
+    expect(JSON.parse(store.getQuestion(id)!.answer_options!)).toEqual({
+      chosenLabels: [],
+      freeText: "actually, split the difference",
+    });
+    store.close();
+  });
+
+  it("a second answer to the same question loses cleanly — the concurrent-answer race this ticket exists to close", async () => {
+    const id = seedQuestion({ options: true });
+    handle = await serve({ port: 0, env });
+
+    const first = await post(`${handle.url}api/questions/${id}/answer`, JSON.stringify({ chosenLabels: ["ship"] }));
+    expect(JSON.parse(first.body).ok).toBe(true);
+
+    // Simulates the TUI answering the same escalated question moments later.
+    const second = await post(`${handle.url}api/questions/${id}/answer`, JSON.stringify({ chosenLabels: ["wait"] }));
+    expect(second.status).toBe(200); // a legitimate outcome, not a transport error
+    expect(JSON.parse(second.body)).toEqual({
+      ok: false,
+      reason: "already-answered",
+      answer: "ship",
+      resolvedBy: "human",
+      answeredVia: "dashboard",
+    });
+
+    // The row reflects only the winner.
+    const store = new Store({ env });
+    expect(store.getQuestion(id)!.answer).toBe("ship");
+    store.close();
+  });
+
+  it("returns 400 when neither chosenLabels nor freeText is given", async () => {
+    const id = seedQuestion({ options: true });
+    handle = await serve({ port: 0, env });
+    const res = await post(`${handle.url}api/questions/${id}/answer`, JSON.stringify({}));
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 404 for an unknown question id", async () => {
+    handle = await serve({ port: 0, env });
+    const res = await post(`${handle.url}api/questions/999999/answer`, JSON.stringify({ freeText: "x" }));
+    expect(res.status).toBe(404);
+  });
+
+  it("returns 400 for malformed JSON", async () => {
+    seedQuestion({ options: true });
+    handle = await serve({ port: 0, env });
+    const res = await post(`${handle.url}api/questions/1/answer`, "not json");
+    expect(res.status).toBe(400);
+  });
+
+  it("a GET to the same path is not treated as the answer route (falls through to 404)", async () => {
+    const id = seedQuestion({ options: true });
+    handle = await serve({ port: 0, env });
+    const res = await get(`${handle.url}api/questions/${id}/answer`);
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a cross-origin POST — same CSRF guard as /api/feedback and /api/chat, not a new auth scheme", async () => {
+    const id = seedQuestion({ options: true });
+    handle = await serve({ port: 0, env });
+    const res = await post(
+      `${handle.url}api/questions/${id}/answer`,
+      JSON.stringify({ chosenLabels: ["ship"] }),
+      { origin: "https://evil.example" },
+    );
+    expect(res.status).toBe(403);
+    const store = new Store({ env });
+    expect(store.getQuestion(id)!.state).not.toBe("answered");
+    store.close();
+  });
+
+  it("rate limits, and does not consume a slot for a request that fails validation first", async () => {
+    handle = await serve({ port: 0, env });
+    // A validation failure (no such question) must not burn the window — mirrors feedback's
+    // "typo'd request retried a few times shouldn't trip the limit" guarantee.
+    for (let i = 0; i < 5; i++) {
+      const res = await post(`${handle.url}api/questions/999999/answer`, JSON.stringify({ freeText: "x" }));
+      expect(res.status).toBe(404);
+    }
+
+    const ids = Array.from({ length: 20 }, () => seedQuestion({ options: true }));
+    for (const id of ids) {
+      const res = await post(`${handle.url}api/questions/${id}/answer`, JSON.stringify({ chosenLabels: ["ship"] }));
+      expect(res.status).toBe(200);
+    }
+    const overLimitId = seedQuestion({ options: true });
+    const res = await post(`${handle.url}api/questions/${overLimitId}/answer`, JSON.stringify({ chosenLabels: ["ship"] }));
+    expect(res.status).toBe(429);
+
+    const store = new Store({ env });
+    expect(store.getQuestion(overLimitId)!.state).toBe("needs_human"); // never reached the throttled write
+    store.close();
+  });
+});
