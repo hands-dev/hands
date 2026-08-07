@@ -8,6 +8,7 @@ import {
   appendRawNote,
   applyImmediateCraftNote,
   applyPendingMiseNotes,
+  booksDistilledRecently,
   composeChit,
   craftAgentPath,
   craftKnown,
@@ -18,6 +19,7 @@ import {
   nearestCraftSlugs,
   parseCraftHeader,
   parseCraftNoteBlock,
+  stampCraftReadiness,
   sweepHeldSeatHeader,
   upsertMiseLine,
 } from "../src/crafts.js";
@@ -212,19 +214,73 @@ describe("parseCraftHeader", () => {
   it("parses covers + distilled from the header line", () => {
     expect(
       parseCraftHeader("> covers: app.py, orders/ · distilled: 2026-08-01 from 4 learnings\nbody text"),
-    ).toEqual({ covers: "app.py, orders/", distilled: "2026-08-01" });
+    ).toEqual({ covers: "app.py, orders/", distilled: "2026-08-01", ready: null });
   });
 
   it("tolerates the pre-cutover 'last held' key (parse tolerance, not a compat shim)", () => {
     expect(parseCraftHeader("> covers: app.py · last held: 2026-08-01 by station-1\n")).toEqual({
       covers: "app.py",
       distilled: "2026-08-01",
+      ready: null,
+    });
+  });
+
+  it("parses the ready clause (hands#92)", () => {
+    expect(parseCraftHeader("> covers: app.py · distilled: 2026-08-01 · ready: 2026-08-07 by sous\n")).toEqual({
+      covers: "app.py",
+      distilled: "2026-08-01",
+      ready: { at: "2026-08-07", by: "sous" },
     });
   });
 
   it("returns nulls for missing/absent content", () => {
-    expect(parseCraftHeader(null)).toEqual({ covers: null, distilled: null });
-    expect(parseCraftHeader("no header line here")).toEqual({ covers: null, distilled: null });
+    expect(parseCraftHeader(null)).toEqual({ covers: null, distilled: null, ready: null });
+    expect(parseCraftHeader("no header line here")).toEqual({ covers: null, distilled: null, ready: null });
+  });
+});
+
+describe("stampCraftReadiness — hands#92's sous-owned execute-mode gate", () => {
+  it("adds a ready clause to a header with none", () => {
+    const result = stampCraftReadiness("> covers: app.py\nbody", { at: "2026-08-07", by: "sous" });
+    expect(result).toBe("> covers: app.py · ready: 2026-08-07 by sous\nbody");
+    expect(parseCraftHeader(result).ready).toEqual({ at: "2026-08-07", by: "sous" });
+  });
+
+  it("adds after an existing distilled clause, not replacing it", () => {
+    const result = stampCraftReadiness("> covers: app.py · distilled: 2026-08-01\n", { at: "2026-08-07", by: "sous" });
+    expect(parseCraftHeader(result)).toEqual({ covers: "app.py", distilled: "2026-08-01", ready: { at: "2026-08-07", by: "sous" } });
+  });
+
+  it("replaces an existing ready clause rather than duplicating it", () => {
+    const once = stampCraftReadiness("> covers: app.py\n", { at: "2026-08-06", by: "station-2" });
+    const twice = stampCraftReadiness(once, { at: "2026-08-07", by: "sous" });
+    expect(parseCraftHeader(twice).ready).toEqual({ at: "2026-08-07", by: "sous" });
+    expect(twice.match(/ready:/g)).toHaveLength(1);
+  });
+
+  it("revokes (ready: null) drops the clause, reverting to plan-mode only", () => {
+    const stamped = stampCraftReadiness("> covers: app.py\n", { at: "2026-08-07", by: "sous" });
+    const revoked = stampCraftReadiness(stamped, null);
+    expect(parseCraftHeader(revoked).ready).toBeNull();
+    expect(revoked).not.toContain("ready:");
+  });
+
+  it("revoking a header with no ready clause is a harmless no-op", () => {
+    const input = "> covers: app.py\nbody";
+    expect(stampCraftReadiness(input, null)).toBe(input);
+  });
+
+  it("leaves body prose untouched, header line only", () => {
+    const result = stampCraftReadiness("> covers: app.py\n\n## A section\nsome real content\n", {
+      at: "2026-08-07",
+      by: "sous",
+    });
+    expect(result).toContain("## A section\nsome real content");
+  });
+
+  it("prepends a header line rather than losing the stamp when there's no header at all", () => {
+    const result = stampCraftReadiness("no header here", { at: "2026-08-07", by: "sous" });
+    expect(result).toBe("> ready: 2026-08-07 by sous\nno header here");
   });
 });
 
@@ -268,8 +324,8 @@ describe("craftRosterContext (roster injection, not full content — hands#81/#9
       `> covers: sauces, stocks · distilled: 2026-08-01 from 3 learnings\n${"x".repeat(5000)}`,
     );
     const ctx = craftRosterContext(loadConfig({ env }), store, env);
-    expect(ctx).toContain("saucier [personal, brief-only] — sauces, stocks");
-    expect(ctx.length).toBeLessThan(2000); // roster summary, not the 5000-char book itself
+    expect(ctx).toContain("saucier [personal, brief-only, plan-only] — sauces, stocks");
+    expect(ctx.length).toBeLessThan(2500); // roster summary, not the 5000-char book itself
     store.close();
   });
 
@@ -296,7 +352,7 @@ describe("craftRosterContext (roster injection, not full content — hands#81/#9
     store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", ticketId: id, now: 2000 });
 
     const after = craftRosterContext(loadConfig({ env }), store, env, undefined, 10_000);
-    expect(after).toContain("Dispatch rate (7d): 1 of 1 finished ticket(s) went through a craft.");
+    expect(after).toContain("Dispatch rate (7d): 1 of 1 finished ticket(s) went through a craft (0 execute, 1 plan).");
     store.close();
   });
 });
@@ -325,6 +381,7 @@ describe("composeChit + parseCraftNoteBlock (the dispatch/return round trip)", (
     expect(chit).toContain("hands craft mise 4711");
     expect(chit).toContain("```craft-note");
     expect(chit).toContain("PLAN MODE: read, reason, propose");
+    expect(chit).toContain("refactor:"); // hands#92 — the principal's "what could have made this easier" ask
     expect(chit).not.toContain("Usage mode:"); // "normal" is silent — no line at all
   });
 
@@ -370,6 +427,23 @@ describe("composeChit + parseCraftNoteBlock (the dispatch/return round trip)", (
       { kind: "mise", body: "engine/src/orders/validate.ts — moved here from routes.ts" },
       { kind: "book", body: "menu validation runs before auth middleware" },
       { kind: "spillover", body: "the read path hits a cache layer I don't own", spilloverCraft: "db-caching" },
+    ]);
+  });
+
+  it("parses a refactor entry, distinct from friction (hands#92)", () => {
+    const text = [
+      "```craft-note",
+      "brief: 1",
+      "craft: saucier",
+      "nothing-new: false",
+      "refactor: the sauce-reduction step is duplicated in three call sites, worth extracting",
+      "friction: my own skill's step 2 pointed at a path that no longer exists",
+      "```",
+    ].join("\n");
+    const parsed = parseCraftNoteBlock(text);
+    expect(parsed?.entries).toEqual([
+      { kind: "refactor", body: "the sauce-reduction step is duplicated in three call sites, worth extracting" },
+      { kind: "friction", body: "my own skill's step 2 pointed at a path that no longer exists" },
     ]);
   });
 
@@ -587,8 +661,53 @@ describe("Store.craftDispatchRate — visibility for underuse (hands#168)", () =
     const a = store.createTask({ createdBy: "expo", title: "a", now: 1000 });
     store.updateTaskState({ id: a, state: "returned", result: "r", now: 2000 });
     const rate = store.craftDispatchRate(0, []);
-    expect(rate).toEqual({ ticketsFinished: 1, ticketsWithCraftBrief: 0 });
+    expect(rate).toEqual({ ticketsFinished: 1, ticketsWithCraftBrief: 0, executeDispatches: 0, planDispatches: 0 });
     store.close();
+  });
+
+  it("splits execute vs plan dispatches (hands#92) — a 100% plan-mode rate is now visible, not hidden inside a healthy-looking count", () => {
+    const store = new Store({ env });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "execute", openedBy: "station-1", now: 1000 });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-1", now: 1000 });
+    store.createCraftBrief({ craftSlug: "saucier", mode: "plan", openedBy: "station-2", now: 1000 });
+    store.createCraftBrief({ craftSlug: "craft-fleet-runtime", mode: "execute", openedBy: "station-1", now: 1000 }); // phantom, excluded
+
+    const rate = store.craftDispatchRate(0, ["saucier"]);
+    expect(rate.executeDispatches).toBe(1);
+    expect(rate.planDispatches).toBe(2);
+    store.close();
+  });
+});
+
+describe("booksDistilledRecently — visible compounding, not just activity (hands#92)", () => {
+  const entry = (slug: string, distilled: string | null) => ({
+    slug,
+    scope: "personal" as const,
+    covers: null,
+    distilled,
+    ready: null,
+    pendingNotes: 0,
+  });
+
+  it("counts crafts distilled within the window", () => {
+    const now = Date.parse("2026-08-07T00:00:00Z");
+    const entries = [
+      entry("saucier", "2026-08-06"), // 1 day ago — in window
+      entry("poissonnier", "2026-08-01"), // 6 days ago — in window
+      entry("ordering-api", "2026-07-20"), // ~18 days ago — outside window
+      entry("never-distilled", null),
+    ];
+    expect(booksDistilledRecently(entries, now)).toBe(2);
+  });
+
+  it("is 0 when nothing has ever been distilled — the honest signal for an unproven loop", () => {
+    const now = Date.parse("2026-08-07T00:00:00Z");
+    expect(booksDistilledRecently([entry("saucier", null)], now)).toBe(0);
+  });
+
+  it("ignores an unparseable distilled value rather than throwing", () => {
+    const now = Date.parse("2026-08-07T00:00:00Z");
+    expect(booksDistilledRecently([entry("saucier", "not-a-date")], now)).toBe(0);
   });
 });
 
@@ -679,16 +798,34 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     expect(agentBody).toContain("name: craft-saucier");
     expect(agentBody).toContain("hands craft brief saucier");
     expect(agentBody).toContain('Skill({ skill: "craft-saucier" })');
+    // hands#92: no readiness stamp on this book → plan-mode only, no exceptions.
+    expect(agentBody).toContain("PLAN MODE ONLY");
+    expect(agentBody).not.toContain("--mode execute");
 
     const skillBody = fs.readFileSync(craftSkillPath(target, "saucier"), "utf8");
     expect(skillBody).toContain("name: craft-saucier");
     expect(skillBody).toContain("hands craft mise <briefId>");
     expect(skillBody).toContain("Always taste before plating.");
     expect(skillBody).toContain("```craft-note");
+    expect(skillBody).toContain("refactor:"); // hands#92 — distinct from friction
     // Points at the LIVE usageMode in its own chit/mise output, not a snapshotted value
     // (Skill/Agent discovery is fixed at session start — baking a mode in here would go stale).
     expect(agentBody).toContain("Usage mode: low");
     expect(skillBody).toContain("usageMode");
+  });
+
+  it("hands#92: a craft marked ready generates an execute-mode dispatch template", () => {
+    const files = craftFiles("saucier", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: sauces · ready: 2026-08-07 by sous\n");
+    const target = fs.mkdtempSync(path.join(home, "target-"));
+    materializeCraftAgents(loadConfig({ env }), target, env);
+
+    const agentBody = fs.readFileSync(craftAgentPath(target, "saucier"), "utf8");
+    expect(agentBody).toContain("Cleared for EXECUTE mode");
+    expect(agentBody).toContain("2026-08-07 by sous");
+    expect(agentBody).toContain("--mode execute");
+    expect(agentBody).not.toContain("PLAN MODE ONLY");
   });
 
   it("a craft with no skill.md yet still generates, with a founding-message placeholder", () => {
@@ -733,14 +870,15 @@ describe("materializeCraftAgents — real, session-discoverable Agent types + Sk
     const target = fs.mkdtempSync(path.join(home, "target-"));
 
     const before = formatRosterContext(listCrafts(store, cfg, env), target);
-    expect(before).toContain("saucier [personal, brief-only]");
+    expect(before).toContain("saucier [personal, brief-only, plan-only]");
 
     materializeCraftAgents(cfg, target, env);
     const after = formatRosterContext(listCrafts(store, cfg, env), target);
-    // the craft's own line drops the annotation once synced — the static help text below it
-    // still mentions "craft-<slug>" generically, so assert the specific line, not "anywhere at all".
-    expect(after).toMatch(/- saucier \[personal\] —/);
-    expect(after).not.toContain("saucier [personal, brief-only]");
+    // the craft's own line drops the "brief-only" annotation once synced (still plan-only — no
+    // readiness was ever stamped) — the static help text below it still mentions "craft-<slug>"
+    // generically, so assert the specific line, not "anywhere at all".
+    expect(after).toMatch(/- saucier \[personal, plan-only\] —/);
+    expect(after).not.toContain("saucier [personal, brief-only, plan-only]");
 
     store.close();
   });
@@ -842,6 +980,22 @@ describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
     expect(bookText).toContain("## Raw notes (unfolded)");
     expect(bookText).toContain("- [book] beurre blanc breaks over 58C");
     expect(store.pendingCraftNotes("saucier").map((n) => n.id)).toEqual([id]); // still pending
+    store.close();
+  });
+
+  it("refactor: routes to book.md (like book/friction), tagged [refactor] (hands#92)", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    const id = store.insertCraftNote({
+      craftSlug: "saucier",
+      sourceAgent: "subagent:saucier",
+      kind: "refactor",
+      body: "the reduction step is duplicated in three call sites",
+    });
+    const note = store.getCraftNote(id)!;
+    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    const bookText = fs.readFileSync(files.book, "utf8");
+    expect(bookText).toContain("- [refactor] the reduction step is duplicated in three call sites");
     store.close();
   });
 

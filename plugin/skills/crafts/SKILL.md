@@ -97,8 +97,12 @@ empty operating manual is noise; the craft writes its own as it works). If the b
 configured, personal-tier charters ride the next sync automatically; shared-tier charters need a
 commit + PR like any other repo file.
 
+A fresh charter is plan-mode only, by design (hands#92) — `hands craft ready <slug>` is a separate,
+later, judgment call (the sous's, once one exists) once its book/mise have proven solid across a
+few real dispatches. Don't set it here; founding and endorsing are different steps.
+
 Hand off: *"Roster founded — run `hands craft ls` anytime to see it; any station or the expo
-dispatches these by name via `hands craft brief` as work arrives."*
+dispatches these by name via `hands craft brief` as work arrives, plan-mode until endorsed."*
 
 ## Guardrails
 

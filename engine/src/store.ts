@@ -510,7 +510,7 @@ export class Store {
         craft_slug      TEXT NOT NULL,
         brief_id        INTEGER,
         source_agent    TEXT NOT NULL,
-        kind            TEXT NOT NULL,     -- mise | book | skill | friction | spillover
+        kind            TEXT NOT NULL,     -- mise | book | skill | friction | spillover | refactor
         body            TEXT NOT NULL,
         spillover_craft TEXT,
         folded_at       INTEGER,           -- NULL = pending
@@ -1947,7 +1947,7 @@ export class Store {
     craftSlug: string;
     briefId?: number | null;
     sourceAgent: string;
-    kind: "mise" | "book" | "skill" | "friction" | "spillover";
+    kind: "mise" | "book" | "skill" | "friction" | "spillover" | "refactor";
     body: string;
     spilloverCraft?: string | null;
     now?: number;
@@ -2154,11 +2154,16 @@ export class Store {
    * `craft_briefs` table itself pre-hands#165 — an empty `knownSlugs` correctly reports 0 rather
    * than joining against nothing.
    */
-  craftDispatchRate(sinceMs: number, knownSlugs: string[]): { ticketsFinished: number; ticketsWithCraftBrief: number } {
+  craftDispatchRate(
+    sinceMs: number,
+    knownSlugs: string[],
+  ): { ticketsFinished: number; ticketsWithCraftBrief: number; executeDispatches: number; planDispatches: number } {
     const finished = this.db
       .prepare("SELECT COUNT(*) as n FROM tasks WHERE finished_at IS NOT NULL AND finished_at >= ?")
       .get(sinceMs) as { n: number };
-    if (knownSlugs.length === 0) return { ticketsFinished: finished.n, ticketsWithCraftBrief: 0 };
+    if (knownSlugs.length === 0) {
+      return { ticketsFinished: finished.n, ticketsWithCraftBrief: 0, executeDispatches: 0, planDispatches: 0 };
+    }
     const placeholders = knownSlugs.map(() => "?").join(",");
     const withCraft = this.db
       .prepare(
@@ -2167,7 +2172,19 @@ export class Store {
          WHERE t.finished_at IS NOT NULL AND t.finished_at >= ? AND cb.craft_slug IN (${placeholders})`,
       )
       .get(sinceMs, ...knownSlugs) as { n: number };
-    return { ticketsFinished: finished.n, ticketsWithCraftBrief: withCraft.n };
+    // hands#92: the execute-vs-plan split — a healthy-looking dispatch RATE that's 100% plan-mode
+    // means the sous-gate fix never actually took, even though activity looks fine. Counted over
+    // ALL known-craft dispatches in the window (not just ticket-tied ones), same denominator
+    // shape as orphanCraftBriefSlugs — a mistyped/unknown slug can't inflate either bucket.
+    const modeRows = this.db
+      .prepare(
+        `SELECT mode, COUNT(*) as cnt FROM craft_briefs
+         WHERE created_at >= ? AND craft_slug IN (${placeholders}) GROUP BY mode`,
+      )
+      .all(sinceMs, ...knownSlugs) as Array<{ mode: string; cnt: number }>;
+    const executeDispatches = modeRows.find((r) => r.mode === "execute")?.cnt ?? 0;
+    const planDispatches = modeRows.find((r) => r.mode === "plan")?.cnt ?? 0;
+    return { ticketsFinished: finished.n, ticketsWithCraftBrief: withCraft.n, executeDispatches, planDispatches };
   }
 
   /**
