@@ -1,6 +1,6 @@
 # Hands — brand system
 
-**Extra hands for your repo.**
+**A French kitchen brigade for coding agents.**
 Structure, not swarm. · If it's not on the books, it didn't happen.
 
 ---
