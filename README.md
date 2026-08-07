@@ -23,8 +23,8 @@ server also conform to the [Agent Plugins](https://agent-plugins.org) open stand
 That registers everything: the MCP server (`hands_*` tools), the passive-standup hooks
 (`Stop → publish`, `UserPromptSubmit → board`), the `/hands:expo` · `/hands:station` · `/hands:init` ·
 `/hands:crafts` · `/hands:dashboard` · `/hands:feedback` · `/hands:login` · `/hands:rail` ·
-`/hands:hands` · `/hands:install-cli` skills, and the `hands` CLI on your Bash PATH. Requires
-Node ≥ 22.5.
+`/hands:hands` · `/hands:install-cli` · `/hands:low-usage` · `/hands:normal-usage` skills, and the
+`hands` CLI on your Bash PATH. Requires Node ≥ 22.5.
 
 Then, per repo (from its main checkout) — one slash command:
 
@@ -72,6 +72,13 @@ hands register               # enroll a repo that was set up before the launcher
 
 An unrecognized word is an error naming that word, not a usage dump — and `hands go <project>` is
 the explicit form for scripts, or for a project whose name collides with a subcommand.
+
+**A global economy dial.** `/hands:low-usage` raises the bar on sub-agent fan-out, shifts review
+depth down one notch (never past the irreversible-action gates), and leans tickets toward the
+cheaper model tier — for a day of light supervision or a cost-sensitive stretch. It's machine-wide
+(`hands usage low` under the hood, written to `~/.claude/hands.config.json`) — every repo's expo
+and stations pick it up on their next board check, no restart needed — and dispatched craft
+sub-agents see it too, in their own briefing. `/hands:normal-usage` resets it.
 
 Sessions the launcher opens come up **ready to work**: each station worktree is seeded with a
 permission allowlist (reads, read-only shell, the bus tools) before its session spawns, so a

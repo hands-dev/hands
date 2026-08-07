@@ -157,7 +157,7 @@ You are the **${entry.slug}** craft, dispatched for one ticket-slice — not a g
 1. Run \`hands craft brief ${entry.slug} --task "<one line — what you were asked to do>"\` first
    — add \`--ticket <id>\` too if the caller's prompt names a ticket id you're working. This
    registers the dispatch and PRINTS a chit — the first line names your \`briefId\`, note it,
-   you need it below.
+   you need it below. The chit may say \`Usage mode: low\` — honor it if so.
 2. Invoke \`Skill({ skill: "craft-${entry.slug}" })\` — your operating manual. It tells you how to
    pull your current book/mise (\`hands craft mise <briefId>\`, from step 1) before you start.
 3. Do the work the caller's prompt describes.
@@ -177,7 +177,9 @@ description: Operating manual for the ${entry.slug} craft (${entry.covers ?? "no
 
 **First**, before anything else: run \`hands craft mise <briefId>\` (the id \`hands craft brief\`
 printed) — prints your current book/mise as JSON, the sibling craft roster, and a read-in command
-if you're stale. Trust what it tells you before re-deriving anything yourself.
+if you're stale. Trust what it tells you before re-deriving anything yourself. It also carries the
+current \`usageMode\` — when \`"low"\`, keep your own work terse: skip optional exploration, prefer
+the cheapest sufficient approach, don't gold-plate.
 
 ## Procedures
 
@@ -311,10 +313,13 @@ export function formatRosterContext(entries: CraftRosterEntry[], targetDir: stri
 }
 
 /** The ~16-line pointer an orchestrator pastes into the Agent tool's `prompt` — never the craft's content itself. */
-export function composeChit(brief: CraftBriefRow, covers: string | null): string {
+export function composeChit(brief: CraftBriefRow, covers: string | null, usageMode: "low" | "normal"): string {
   const lines = [
     `You are carrying the craft "${brief.craft_slug}" (brief #${brief.id}, mode: ${brief.mode}) for this one turn.`,
     covers ? `Covers: ${covers}` : null,
+    usageMode === "low"
+      ? "Usage mode: low — keep this terse: skip optional exploration, prefer the cheapest sufficient approach, don't gold-plate."
+      : null,
     "",
     `FIRST ACTION, before anything else: run \`hands craft mise ${brief.id}\`.`,
     "  Fallback if that command errors: Read these files yourself, in this order — the craft's " +

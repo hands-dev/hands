@@ -20,7 +20,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { buildBoard, computeStateHash, IDLE_THRESHOLD_MS } from "./board.js";
-import { type HandsConfig, loadConfig } from "./config.js";
+import { currentUsageMode, type HandsConfig, loadConfig } from "./config.js";
 import { pollGithub } from "./github.js";
 import { isExpo, isStation, resolveAgentId, resolveAgentRef } from "./identity.js";
 import { notify } from "./notify.js";
@@ -388,6 +388,8 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         peers,
         recentJournal: journal,
         collisions: board.collisions,
+        // Fresh every call, not the closure `cfg` — see currentUsageMode's own doc comment for why.
+        usageMode: currentUsageMode(),
       };
       if (!input.full) return asToolResult(base);
 

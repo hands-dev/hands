@@ -80,6 +80,16 @@ export interface HandsConfig {
     /** repo-relative dir for shared crafts (null = ".hands/crafts") */
     sharedDir: string | null;
   };
+  /**
+   * A global economy dial (`hands usage low|normal`, `/hands:low-usage`/`/hands:normal-usage`).
+   * "low" tells the expo/stations to raise the bar on sub-agent fan-out, shift review depth down
+   * one notch (never past the irreversible-action gates), and lean tickets toward the cheaper
+   * model tier — see plugin/skills/expo/SKILL.md's "Usage mode" section for the actual judgment.
+   * This field is normally only ever set in the USER layer (~/.claude/hands.config.json, via
+   * `hands usage`), which is why it's global by construction — but a repo can still commit its
+   * own `usage.mode` to override that for everyone working in it, same as any other field.
+   */
+  usage: { mode: "low" | "normal" };
   /** Review/merge authority the principal has delegated to the expo. */
   merge: {
     /**
@@ -107,6 +117,7 @@ export const DEFAULT_CONFIG: HandsConfig = {
   },
   remote: { url: null, handle: null, project: null },
   crafts: { sharedDir: null },
+  usage: { mode: "normal" },
   merge: { adminMergeLowRisk: false },
   gh: { poll: true },
 };
@@ -163,6 +174,9 @@ function merge(base: HandsConfig, layer: DeepPartial<HandsConfig> | null): Hands
     },
     crafts: {
       sharedDir: layer.crafts?.sharedDir !== undefined ? layer.crafts.sharedDir : base.crafts.sharedDir,
+    },
+    usage: {
+      mode: layer.usage?.mode === "low" || layer.usage?.mode === "normal" ? layer.usage.mode : base.usage.mode,
     },
     merge: { adminMergeLowRisk: layer.merge?.adminMergeLowRisk ?? base.merge.adminMergeLowRisk },
     gh: { poll: layer.gh?.poll ?? base.gh.poll },
@@ -241,4 +255,27 @@ export function loadConfig(options?: { cwd?: string; env?: NodeJS.ProcessEnv }):
 /** Test hook: drop the per-cwd config cache. */
 export function resetConfigCache(): void {
   cache.clear();
+}
+
+/**
+ * Fresh, UNCACHED read of just `usage.mode` — deliberately bypasses
+ * `loadConfig()`'s per-process cache. Everything else in `hands.config.json`
+ * is cold setup config, fine to cache for a session's lifetime; `usage.mode`
+ * is a hot toggle (`hands usage low|normal`, `/hands:low-usage`) meant to
+ * reach an already-running expo/station pane on its very next `hands_board`
+ * poll — if this went through the cached `loadConfig()` instead, a
+ * long-lived MCP server process would freeze the mode at whatever it was
+ * when the connection started and never see a later toggle. Same
+ * repo-overrides-user precedence as `loadConfig()`, just for this one field.
+ */
+export function currentUsageMode(
+  cwd: string = process.cwd(),
+  env: NodeJS.ProcessEnv = process.env,
+): HandsConfig["usage"]["mode"] {
+  const repoFile = repoConfigPath(cwd, env);
+  const repoMode = repoFile ? readJson(repoFile)?.usage?.mode : undefined;
+  if (repoMode === "low" || repoMode === "normal") return repoMode;
+  const userMode = readJson(userConfigPath(env))?.usage?.mode;
+  if (userMode === "low" || userMode === "normal") return userMode;
+  return DEFAULT_CONFIG.usage.mode;
 }

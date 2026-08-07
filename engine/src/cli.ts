@@ -31,6 +31,7 @@
  *   hands login               sign in with GitHub (optional — free tier never needs it)
  *   hands logout              clear the local sign-in
  *   hands whoami               show the signed-in identity (local only, no network call)
+ *   hands usage [low|normal]  the global economy dial — no arg prints the current mode
  *   hands paths               where this cwd resolves (debug)
  *
  * The MCP server, hooks, and skills are registered by the PLUGIN; this bin is
@@ -38,7 +39,7 @@
  */
 import { execFileSync, spawnSync } from "node:child_process";
 import * as os from "node:os";
-import { CONFIG_BASENAME, loadConfig } from "./config.js";
+import { CONFIG_BASENAME, loadConfig, userConfigPath } from "./config.js";
 import { resolveAgentId } from "./identity.js";
 import { dbPath, repoInfo } from "./paths.js";
 import { pathsReport } from "./server.js";
@@ -245,6 +246,51 @@ function cmdBooks(argv: string[]): void {
 }
 
 /**
+ * `hands usage [low|normal]` — the global economy dial (`/hands:low-usage`,
+ * `/hands:normal-usage`). Writes to the USER-level config
+ * (~/.claude/hands.config.json), deliberately NOT the repo file — this is
+ * the one write command that's meant to be machine-wide, not per-repo, so a
+ * station/expo pane in ANY repo picks it up on its next `hands_board` poll
+ * (that tool's handler reads `loadConfig()` fresh every call — no caching
+ * surprise, no restart needed).
+ */
+function cmdUsage(argv: string[]): void {
+  const mode = argv.find((a) => !a.startsWith("--"));
+  if (!mode) {
+    const merged = loadConfig().usage.mode;
+    if (merged === "normal") {
+      out("usage mode: normal (default)");
+      return;
+    }
+    const userPath = userConfigPath();
+    let setByUser = false;
+    try {
+      const raw = JSON.parse(fs.readFileSync(userPath, "utf8")) as { usage?: { mode?: string } };
+      setByUser = raw.usage?.mode === merged;
+    } catch {
+      // unreadable/missing user file — the repo layer must be the source instead
+    }
+    out(`usage mode: ${merged} (${setByUser ? "set machine-wide via \`hands usage\`" : "set by this repo's hands.config.json"})`);
+    return;
+  }
+  if (mode !== "low" && mode !== "normal") fail("usage: hands usage [low|normal]");
+
+  const configPath = userConfigPath();
+  let cfg: Record<string, unknown> = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      cfg = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    } catch (err) {
+      fail(`${configPath} is not valid JSON: ${String(err)}`);
+    }
+  }
+  cfg.usage = { mode };
+  fs.mkdirSync(path.dirname(configPath), { recursive: true });
+  fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
+  out(`✔ usage mode: ${mode} (machine-wide — every repo; already-running panes pick it up on their next hands_board poll)`);
+}
+
+/**
  * `hands craft ls|sync|promote|localize|distill|brief|mise|fold|fold-done` —
  * crafts are dispatched as sub-agents via `hands craft brief`/`mise`/`fold`,
  * never held by a station (hands#81/#96); these are plain CLI subcommands
@@ -421,7 +467,7 @@ function cmdCraft(argv: string[]): void {
       const bookRaw = fs.existsSync(files.book) ? fs.readFileSync(files.book, "utf8") : null;
       // Raw chit text on stdout, nothing wrapped around it — the caller pastes this straight
       // into the Agent tool's prompt (or captures it via $(...) in a shell).
-      out(composeChit(brief, parseCraftHeader(bookRaw).covers));
+      out(composeChit(brief, parseCraftHeader(bookRaw).covers, cfg.usage.mode));
       return;
     }
 
@@ -458,6 +504,7 @@ function cmdCraft(argv: string[]): void {
             book,
             siblings,
             staleness,
+            usageMode: cfg.usage.mode,
             readIn: staleness !== "fresh" ? `git log --oneline --since "${distilled ?? "30 days ago"}" -- ${covers ?? "."}` : null,
             returnContract:
               "Before you return: emit a fenced ```craft-note block (brief, craft, nothing-new, then " +
@@ -991,6 +1038,8 @@ async function main(): Promise<void> {
         return await cmdLogout();
       case "whoami":
         return await cmdWhoami();
+      case "usage":
+        return cmdUsage(rest);
       case "feedback":
         await cmdFeedback(rest);
         return;
