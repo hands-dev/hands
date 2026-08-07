@@ -15,6 +15,18 @@
  * go stale relative to src/. Determinism matters (the test byte-compares):
  * frontend deps are exact-pinned and styles.css uses `source(none)` so
  * Tailwind never scans machine-dependent paths.
+ *
+ * BUILD.json (commit + build time, for `hands version`/skew detection) is
+ * deliberately NOT written here — see writeStamp() below. A plain `npm run
+ * bundle` never touches it, on purpose: it's a per-commit stamp, so any two
+ * branches' own local rebuilds always disagree on it, and if every dev/station
+ * bundle run rewrote it, EVERY branch would carry a spurious BUILD.json diff
+ * that conflicts with every other branch's on rebase (hands#166) — for a
+ * field bundle.test.ts already excludes from its freshness check because it's
+ * expected to differ per build. `npm run bundle:stamp` (CI's bundle-plugin.yml
+ * only, right after a real merge to main) is the one place that refreshes it,
+ * so a feature branch's copy simply never diverges from what it forked from —
+ * nothing to reconcile on rebase.
  */
 import * as esbuild from "esbuild";
 import { spawnSync } from "node:child_process";
@@ -87,23 +99,6 @@ export async function buildBundles(outDir = defaultOut) {
   );
   fs.writeFileSync(path.join(outDir, "cli.mjs"), NODE_FLOOR_CHECK("cli-impl.mjs"));
 
-  // Stamp the build so `hands version` / `hands doctor` can say WHICH build is
-  // running and flag skew between a standalone install and a plugin cache.
-  // Without this, "that command doesn't exist" is indistinguishable from
-  // "you're running a different vintage than the one you edited".
-  fs.writeFileSync(
-    path.join(outDir, "BUILD.json"),
-    `${JSON.stringify(
-      {
-        version: JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")).version,
-        commit: gitShort(),
-        builtAt: new Date().toISOString(),
-      },
-      null,
-      2,
-    )}\n`,
-  );
-
   // Dashboard SPA — browser JS via esbuild…
   fs.mkdirSync(path.join(outDir, "assets"), { recursive: true });
   await esbuild.build({
@@ -166,7 +161,33 @@ export async function buildBundles(outDir = defaultOut) {
   return outDir;
 }
 
+/**
+ * Stamp the build so `hands version` / `hands doctor` can say WHICH build is
+ * running and flag skew between a standalone install and a plugin cache.
+ * Without this, "that command doesn't exist" is indistinguishable from
+ * "you're running a different vintage than the one you edited".
+ *
+ * Deliberately separate from buildBundles() — see the file header. Call this
+ * only from a release build (CI's `npm run bundle:stamp`, right after a real
+ * merge to main), never from a plain dev/station `npm run bundle`.
+ */
+export function writeStamp(outDir = defaultOut) {
+  fs.writeFileSync(
+    path.join(outDir, "BUILD.json"),
+    `${JSON.stringify(
+      {
+        version: JSON.parse(fs.readFileSync(path.join(pkgDir, "package.json"), "utf8")).version,
+        commit: gitShort(),
+        builtAt: new Date().toISOString(),
+      },
+      null,
+      2,
+    )}\n`,
+  );
+}
+
 if (process.argv[1] && import.meta.url.endsWith(path.basename(process.argv[1]))) {
   const out = await buildBundles();
+  if (process.argv.includes("--stamp")) writeStamp(out);
   process.stdout.write(`bundled → ${out}\n`);
 }
