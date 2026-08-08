@@ -805,16 +805,18 @@ export function buildServer(
       title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
       description:
         "Record CDC's whole-board checkpoint verdict for a ticket — 'pre-fire' (dispatched before " +
-        "handing the ticket to a station: is this still the right build given how the board moved) or " +
+        "handing the ticket to a station: is this still the right build given how the board moved), " +
         "'pre-ship' (dispatched before you may call hands on the dish: still right given everything " +
-        "that moved while it was in flight). CDC returns its verdict as text from its own dispatch; " +
-        "you record it here — CDC never calls this itself. A dish's tickets need a fresh 'approved' " +
-        "pre-ship signoff before hands_task_update will let you mark them 'done' (hands#111 — code-" +
-        "enforced, not just this reminder) — see hands_tasks' `signoff` field for whether the most " +
-        "recent one is still fresh before you get there.",
+        "that moved while it was in flight), or 'pre-return' (a station-side checkpoint reserved for " +
+        "a future gate, hands#111 — not enforced anywhere yet; don't use it until that ships). CDC " +
+        "returns its verdict as text from its own dispatch; you record it here — CDC never calls " +
+        "this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before " +
+        "hands_task_update will let you mark them 'done' (hands#111 — code-enforced, not just this " +
+        "reminder) — see hands_tasks' `signoff` field for whether the most recent one is still fresh " +
+        "before you get there.",
       inputSchema: {
         taskId: z.number().int(),
-        checkpoint: z.enum(["pre-fire", "pre-ship"]),
+        checkpoint: z.enum(["pre-fire", "pre-ship", "pre-return"]),
         verdict: z.enum(["approved", "rejected"]),
         note: z.string().optional(),
         originSha: z

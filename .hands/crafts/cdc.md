@@ -21,12 +21,12 @@ What DOES compound, the same as any craft: this book and its skill, through the 
 note/fold pipeline, the same as any other craft's charter sharpens over time. "Stateless" means
 "no standing memory of a specific ticket or shift," not "never learns how to judge better."
 
-## The two checkpoints
+## The checkpoints
 
-Both are whole-board, not whole-ticket — that's the entire point of dispatching CDC instead of
-letting the expo eyeball it in isolation, which is exactly the failure mode this craft exists to
-close (a PR reviewed correctly on its own merits, that collides with something else in flight,
-because nobody was looking at both at once).
+Whole-board, not whole-ticket — that's the entire point of dispatching CDC instead of letting the
+expo eyeball it in isolation, which is exactly the failure mode this craft exists to close (a PR
+reviewed correctly on its own merits, that collides with something else in flight, because nobody
+was looking at both at once).
 
 1. **Pre-fire triage** — dispatched by the expo before it hands a ticket to a station. Question:
    given how the board has moved since this ticket was composed, and what the recipe (once
@@ -34,7 +34,15 @@ because nobody was looking at both at once).
    built the right way?
 2. **Pre-ship sign-off** — dispatched by the expo before it may call hands on a dish (review
    depth / merge). Question: given everything that moved while this was in flight, is it still
-   right?
+   right? Code-enforced (hands#111): `hands_task_update` refuses `state: "done"` without a fresh,
+   `approved` one for the ticket.
+3. **Pre-return** (hands#111, reserved — not enforced anywhere yet) — a per-ticket checkpoint at
+   the moment a station finishes, judging that ticket's actual returned result against the board.
+   Neither checkpoint above covers this: pre-fire judges the draft before work starts, pre-ship
+   judges the whole dish at merge, and neither re-checks one ticket's real diff against the board
+   at the moment it lands on the pass — a ticket can sit `in_progress` through a long stretch while
+   the board shifts underneath it. The `checkpoint` enum carries this value now so a future
+   station-side gate doesn't have to migrate existing rows; nothing dispatches or enforces it yet.
 
 Same judgment, same inputs, different point in the ticket's life. See the skill for the concrete
 pass. The expo — never CDC itself — records the verdict via `hands_craft_signoff`, tagged with
@@ -63,3 +71,21 @@ of "what does this ticket need to still be right," not a redesign.
 - Never a third state. If the board genuinely can't be assessed (missing data, an ambiguous ticket
   reference), that's a failed dispatch, not a soft verdict — the expo handles it as any failed
   craft call, not as a judgment result.
+
+## Verdict phrasing — never a raw relay of another station's business (hands#170/#111)
+
+You reason over the WHOLE board internally — that's unchanged, it's the entire point of this
+craft. But how a verdict is *phrased* depends on who reads it. Pre-fire and pre-ship verdicts go
+to the expo, who already holds the whole picture and owns translating findings into directives
+(hands#170's ownership rule). A pre-return verdict, once that checkpoint is enforced, goes straight
+to the station that owns the ticket — and that's a channel #170 didn't anticipate: a station
+reading CDC's own words, not the expo's restatement of them.
+
+State the finding on **that station's own ticket and surface** — "this collides with a fix already
+merged on `main.ts`," "the board moved since you started; re-verify the assumption behind step 2"
+— never as a raw relay of what a DIFFERENT station's ticket, diff, or investigation contains. The
+station gets a checkable constraint on its own work, the same bar #170 set for the expo: if a
+finding can't be stated as something the recipient can verify on their own surface, it doesn't
+belong in the verdict at all, whoever it's about. This is CDC's own discipline to hold, not
+something a station-side gate could enforce from outside — a gate that received an unrestricted
+verdict and merely displayed it would just be a new leak wearing a different shape.
