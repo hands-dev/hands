@@ -1,12 +1,12 @@
 ---
 name: dashboard
-description: Open the live hands dashboard — boots `hands serve` in the background if it isn't already running, then opens the browser at the kitchen's single-page view (the rail, the line, questions, specials, the book — live over SSE). Use when the principal says /hands:dashboard, "open the dashboard", "show me the board", or "show me the kitchen".
+description: Open the live hands dashboard — boots `hands serve` in the background if it isn't already running, then opens the browser at the kitchen's single-page view (the rail, the line, questions, the menu, the book — live over SSE). Use when the principal says /hands:dashboard, "open the dashboard", "show me the board", or "show me the kitchen".
 ---
 
 # Dashboard — open the kitchen's live view
 
 Boot (if needed) and open the read-only dashboard: a single page showing the rail, the line
-(stations), open questions, today's specials, the principal's list, and the book — updating live
+(stations), open questions, today's menu, the principal's list, and the book — updating live
 over SSE, no refresh. It is a viewer, not a participant: it never registers on the bus.
 
 ## Steps

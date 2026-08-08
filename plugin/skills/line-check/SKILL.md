@@ -1,6 +1,6 @@
 ---
 name: line-check
-description: The expo-driven shift-open (hands#156/#157) — read the previous shift's page from the books, bring the expo's OWN checkout current, see which stations are ready for service, and re-confirm today's specials against what actually happened. The counterpart to /hands:last-call. Use when the principal says /hands:line-check, "open the kitchen", "start of shift", "what happened yesterday", or on the first pass of a new day before dispatching anything.
+description: The expo-driven shift-open (hands#156/#157) — read the previous shift's page from the books, bring the expo's OWN checkout current, see which stations are ready for service, and re-confirm today's menu against what actually happened. The counterpart to /hands:last-call. Use when the principal says /hands:line-check, "open the kitchen", "start of shift", "what happened yesterday", or on the first pass of a new day before dispatching anything.
 ---
 
 # Line check — opening the kitchen
@@ -73,23 +73,23 @@ clean another station's worktree.**
 A station that attested clean and then sat offline is **still clean** — nothing ran, so nothing
 changed. Don't make anyone boot five stations to collect signatures.
 
-## 4. Re-confirm the specials against EVENTS
+## 4. Re-confirm the menu against EVENTS
 
-`hands_priorities` reports `stale: false` when the list was merely **set** recently — so an
-out-of-date map arrives with a freshness stamp on it. Check the list against what step 1 and step
+`hands_menu` reports `stale: false` when someone merely **confirmed** it recently — so an
+out-of-date menu arrives with a freshness stamp on it. Check it against what step 1 and step
 3 just told you:
 
 - does it name a blocker that last night's page says was resolved?
 - does it name a station that is offline or blocked?
-- did anything merge overnight that finishes a special outright?
+- did anything merge overnight that finishes a recipe outright (check its acceptance criteria)?
 
-If any of those hold, the list is stale regardless of what the API says. Show it to the principal
+If any of those hold, the menu is stale regardless of what the API says. Show it to the principal
 and re-confirm before dispatching.
 
 ## 5. Report, then open
 
 One short block: yesterday's headline, your own checkout state, who's ready and who isn't, and
-anything in the specials that looks superseded. Then work the pass normally.
+anything on the menu that looks superseded. Then work the pass normally.
 
 ## Guardrails
 

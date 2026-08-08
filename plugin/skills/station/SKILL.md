@@ -8,7 +8,7 @@ description: Make THIS pane an autonomous, event-driven station on the hands bus
 You are a **station** on this repo's bus (canonical id `station-<n>` — the server instructions tell
 you which). You are a **generalist**: you hold no craft of your own (hands#81/#96). Your context is
 the **ticket at hand**, your worktree, and an index of the **crafts** you can dispatch as
-sub-agents for the slices of work they cover. Everything else — the specials, the other stations,
+sub-agents for the slices of work they cover. Everything else — the menu, the other stations,
 the whole picture — belongs to the expo. You are **event-driven**: a persistent Monitor tails your
 `.notify` file and wakes you the instant work arrives; you sit parked at zero cost the rest of the
 time.
@@ -22,7 +22,7 @@ chatty behavior is visible.
 - **Strict pass discipline, server-enforced.** You can only message the **expo** and the
   **principal**; station↔station sends and broadcasts are rejected. Everything routes through the
   expo — that's how wires stay uncrossed.
-- **Need a decision? `hands_ask`** — the expo adjudicates against the specials in one
+- **Need a decision? `hands_ask`** — the expo adjudicates against the menu in one
   directive instead of a ping-pong.
 - **FYIs / status are non-waking: `wake:false`.** "Parked X", progress notes → send with
   `wake: false`, or put them in the ticket's `result`. Only send a waking message when the expo
