@@ -1325,47 +1325,53 @@ describe("rebuildRawSection — pure function of (prefix, pending), the converge
   });
 });
 
-describe("the storage fix under real concurrency — two worktrees, one shared DB (hands#114/#223)", () => {
-  it("neither worktree's live read ever loses a note, even though their LOCAL exported files diverge and a mise note gets folded by whichever export lands first", () => {
-    // One shared Store (the coordination DB — genuinely one per kitchen, never per-worktree) but
-    // TWO separate on-disk directories, simulating two stations' independent git checkouts of the
-    // same repo-committed shared craft file — exactly hands#223's shape.
+describe("the storage fix under real concurrency — two racing dispatches, one shared DB (hands#114/#223)", () => {
+  it("neither caller's live read ever loses a note, even though whichever one exports first only lands ITS OWN note on disk, and a mise note gets folded by whichever export lands first", () => {
+    // One shared Store (the coordination DB — genuinely one per kitchen). Two SEPARATE on-disk
+    // directories stand in for two concurrent callers each computing an export at a different
+    // moment — the actual hands#223 shape, verified directly against paths.ts's repoInfo: every
+    // worktree of a repo resolves `.hands/crafts/` to the SAME physical main-checkout path
+    // (`--git-common-dir` is shared by design), so in reality this is ONE file multiple dispatches
+    // race to write, not several independent per-worktree copies. Two directories here model that
+    // race cleanly — "does the derived read stay correct no matter which write landed when" —
+    // without needing an actual git-common-dir setup to prove it.
     const store = new Store({ env });
-    const worktreeA = fs.mkdtempSync(path.join(home, "worktree-a-"));
-    const worktreeB = fs.mkdtempSync(path.join(home, "worktree-b-"));
-    const filesA = { ...craftFiles("saucier", env), dir: worktreeA, book: path.join(worktreeA, "saucier.md"), mise: path.join(worktreeA, "saucier.mise.md"), skill: path.join(worktreeA, "saucier.skill.md") };
-    const filesB = { ...craftFiles("saucier", env), dir: worktreeB, book: path.join(worktreeB, "saucier.md"), mise: path.join(worktreeB, "saucier.mise.md"), skill: path.join(worktreeB, "saucier.skill.md") };
+    const callerA = fs.mkdtempSync(path.join(home, "caller-a-"));
+    const callerB = fs.mkdtempSync(path.join(home, "caller-b-"));
+    const filesA = { ...craftFiles("saucier", env), dir: callerA, book: path.join(callerA, "saucier.md"), mise: path.join(callerA, "saucier.mise.md"), skill: path.join(callerA, "saucier.skill.md") };
+    const filesB = { ...craftFiles("saucier", env), dir: callerB, book: path.join(callerB, "saucier.md"), mise: path.join(callerB, "saucier.mise.md"), skill: path.join(callerB, "saucier.skill.md") };
 
-    // A dispatch from worktree A harvests a note (DB write only, per hands#114 — no file write here).
+    // A dispatch from caller A harvests a note (DB write only, per hands#114 — no file write here).
     store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-a", kind: "mise", body: "a.ts — from station A" });
-    // Worktree A's own `hands craft mise` runs an opportunistic export — lands ONLY in A's file,
+    // Caller A's own `hands craft mise` runs an opportunistic export — lands ONLY in A's file,
     // and marks the note folded GLOBALLY (mise is mechanical — this is correct, not a bug).
     exportPendingCraftNotes(store, filesA, "mise-read:A");
     expect(store.pendingCraftNotes("saucier")).toEqual([]); // already folded, by A's export
 
-    // A SECOND dispatch, from worktree B, harvests its own note — B's file has never seen A's note.
+    // A SECOND dispatch, from caller B, harvests its own note — B's export never saw A's note land.
     store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-b", kind: "mise", body: "b.ts — from station B" });
-    expect(fs.existsSync(filesB.mise)).toBe(false); // B's local file is still completely unaware of A's note
+    expect(fs.existsSync(filesB.mise)).toBe(false); // B's own export target is still unaware of A's note
 
     // B's own `hands craft mise` call: opportunistic export, then a merged read — must see BOTH
     // notes even though B's note is the only one that was ever pending by the time B looked, and
     // A's note is already folded (not in pendingCraftNotes at all anymore).
     exportPendingCraftNotes(store, filesB, "mise-read:B");
     const bMerged = readMiseMerged(store, "saucier");
-    expect(bMerged).toContain("from station A"); // came from allMiseCraftNotes, not B's own file or the pending queue
+    expect(bMerged).toContain("from station A"); // came from allMiseCraftNotes, not B's own export or the pending queue
     expect(bMerged).toContain("from station B");
 
-    // And A, reading again later, still sees both too — even though A's file was written FIRST,
-    // before B's note even existed, and nothing ever copied B's write into A's file.
+    // And A, reading again later, still sees both too — even though A's export ran FIRST,
+    // before B's note even existed, and nothing ever copied B's write into A's export target.
     const aMerged = readMiseMerged(store, "saucier");
     expect(aMerged).toContain("from station A");
     expect(aMerged).toContain("from station B");
 
-    // The LOCAL FILES do genuinely differ — that's the part the fix doesn't (and needn't) prevent.
+    // The two export targets do genuinely differ — that's the part the fix doesn't (and needn't)
+    // prevent; only the DERIVED READ has to be complete, never the on-disk snapshot at any instant.
     expect(fs.readFileSync(filesA.mise, "utf8")).not.toContain("from station B");
 
-    fs.rmSync(worktreeA, { recursive: true, force: true });
-    fs.rmSync(worktreeB, { recursive: true, force: true });
+    fs.rmSync(callerA, { recursive: true, force: true });
+    fs.rmSync(callerB, { recursive: true, force: true });
     store.close();
   });
 });

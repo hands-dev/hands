@@ -111,14 +111,16 @@ function assistantText(transcriptPath: string): string {
  *
  * `insertCraftNote` into `craft_notes` (the coordination DB, one per kitchen) is the ONLY write
  * this does — durable and concurrency-safe the instant it lands. This used to ALSO immediately
- * mirror the note into the craft's git-committed file (hands#118), but that mirror write is
- * per-worktree (shared crafts live in repo-committed `.hands/crafts/`, checked out independently
- * by every worktree) with nothing to reconcile it across worktrees — every dispatch racing to
- * append to its own worktree's copy is exactly how hands#223 produced four divergent books for
- * one craft. hands#114 removed that mirror write entirely: the DB is the single source of truth,
- * and `exportPendingCraftNotes` (crafts.ts) is now the only path that ever touches the file,
- * called from `hands craft fold` (guaranteed) and opportunistically from `hands craft mise` — a
- * live dispatch never depends on this hook having written anything to disk.
+ * mirror the note into the craft's git-committed file (hands#118), but `repoInfo` (paths.ts)
+ * resolves the SAME physical `.hands/crafts/` path from every worktree of a repo by design
+ * (`--git-common-dir` is shared) — so that mirror write was every station's dispatch racing every
+ * other station's straight onto ONE shared, uncommitted file, with only a short-TTL try-once
+ * lease between them. That's how hands#223 produced divergent books for one craft (different
+ * worktrees later pulling whatever got committed at different moments, not separate local copies
+ * drifting apart). hands#114 removed that mirror write entirely: the DB is the single source of
+ * truth, and `exportPendingCraftNotes` (crafts.ts) is now the only path that ever touches the
+ * file, called from `hands craft fold` (guaranteed) and opportunistically from `hands craft mise`
+ * — a live dispatch never depends on this hook having written anything to disk.
  */
 function harvestCraftNote(store: Store, transcriptPath: string, now: number): SubagentStopResult["craftNote"] {
   const parsed = parseCraftNoteBlock(assistantText(transcriptPath));

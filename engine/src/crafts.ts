@@ -29,18 +29,26 @@ import type { CraftBriefRow, CraftNoteRow, Store } from "./store.js";
  * file is a downstream, best-effort EXPORT (`exportPendingCraftNotes`,
  * below), never written per-dispatch: mise.md is REBUILT WHOLESALE from every
  * mise note ever inserted (mechanical, no judgment needed, convergent
- * regardless of which worktree exports it), book.md/skill.md's raw-notes
+ * regardless of which caller exports it), book.md/skill.md's raw-notes
  * section is rebuilt from every currently-pending note for that target (real
  * curation into prose still needs a model, so it moves to a single
  * predictable trigger, `/hands:last-call`, instead of an ad hoc idle-wake
  * fold; see hands#118). `hands craft fold`/`fold-done` is what last-call runs
  * to distill the raw sections into curated prose, in place. (hands#114/#223:
  * an earlier design applied each note incrementally, straight onto whatever
- * the CALLING worktree's own file checkout already had — since shared craft
- * files are repo-committed and independently checked out per worktree with
- * nothing to reconcile them, that let four stations dispatching one craft
- * produce four divergent books. Wholesale rebuild from the DB is what makes
- * every worktree converge on the same file, not just avoid losing data.)
+ * the shared file already had. The corrected root cause, verified directly
+ * (paths.ts's repoInfo, which sharedCraftsDir builds on): `--git-common-dir`
+ * is the SAME physical directory from every worktree of a repo by design —
+ * `repoInfo(cwd).repoRoot` resolves to the MAIN checkout regardless of which
+ * worktree's `cwd` calls it, so `.hands/crafts/*.md` was never "one file per
+ * worktree" in the first place — every station's runtime writes land on the
+ * SAME on-disk file in the main checkout, uncommitted, racing each other with
+ * only a short-TTL try-once lease between them. Divergent byte counts across
+ * different worktrees came from each one pulling whatever got committed at a
+ * different moment, not from separate local copies drifting apart. Wholesale
+ * rebuild from the DB fixes this regardless of the exact mechanism: the file
+ * becomes a derived, always-reconstructable snapshot, safe to commit whenever,
+ * instead of a target multiple uncoordinated writers mutate directly.)
  */
 
 /**
@@ -763,18 +771,24 @@ const EXPORT_LEASE_TTL_MS = 15_000;
  * never an incremental per-note append every dispatch races to make.
  *
  * Previously (hands#118) the harvester called an incremental per-note apply directly on every
- * dispatch's finish, appending straight onto whatever the local worktree's copy of the file
- * already had. That's exactly what let hands#223 happen: repo-committed shared-craft files are
- * checked out independently per worktree with nothing to reconcile them, so four stations
- * dispatching one craft produced four independently-appended copies (observed: 6461/6857/4269/
- * 4269 bytes, one checkout clobbered to one line) — AND, worse, a mise note was marked "resolved"
- * globally the instant ANY worktree applied it, so a note that only ever landed in worktree A's
- * file would never propagate into worktree B's, even though nothing was technically lost from the
- * DB. Rebuilding wholesale fixes both: mise.md is replayed from Store.allMiseCraftNotes (every
- * mise note ever inserted for this slug, not just currently-pending ones — see that method's own
- * doc comment), and book.md/skill.md's raw section is rebuilt from ALL currently-pending notes for
- * that target, never appended onto file-specific history. Any worktree computing either from the
- * same DB state gets byte-identical output.
+ * dispatch's finish, appending straight onto whatever the shared file already had at that moment.
+ * Root cause, verified directly against paths.ts's repoInfo (which sharedCraftsDir builds on):
+ * `--git-common-dir` resolves to the SAME physical directory from every worktree of a repo by
+ * design, so `repoInfo(cwd).repoRoot` — and therefore `.hands/crafts/*.md` — is the MAIN
+ * checkout's path regardless of which worktree's `cwd` calls it. Every station's dispatch was
+ * writing the SAME on-disk file, uncommitted, racing every other station's dispatch with only a
+ * short-TTL try-once lease between them; the divergent byte counts different worktrees later
+ * observed (6461/6857/4269/4269, one checkout clobbered to one line) reflect each one pulling
+ * whatever got committed at a different moment, not separate local copies drifting apart on their
+ * own. AND, worse: a mise note was marked "resolved" globally the instant any dispatch applied
+ * it, so if that write then got overwritten by a losing race before anyone committed it, the note
+ * could vanish from the file entirely while still reading as "handled" — even though the DB
+ * itself never lost anything. Rebuilding wholesale fixes both: mise.md is replayed from
+ * Store.allMiseCraftNotes (every mise note ever inserted for this slug, not just
+ * currently-pending ones — see that method's own doc comment), and book.md/skill.md's raw section
+ * is rebuilt from ALL currently-pending notes for that target, never appended onto file-specific
+ * history. Any caller computing either from the same DB state gets byte-identical output,
+ * regardless of race timing.
  *
  * Called from `hands craft fold` (guaranteed, lease-already-held) and opportunistically from
  * `hands craft mise` (best-effort, its own lease attempt — contention just means this round
