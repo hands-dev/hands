@@ -30,7 +30,7 @@ function ev(
 }
 
 const SAMPLE: JournalEvent[] = [
-  ev("priorities.set", { items: ["Ship the fix", "Refactor queue"], at: T0 }, 0, "expo"),
+  ev("recipe.promoted", { slug: "ship-the-fix", rank: 1, at: T0 }, 0, "expo"),
   ev("task.create", { id: 1, by: "expo", assignee: "station-2", title: "Plan the fix", at: 0 }, 1, "expo"),
   ev("message", { id: 1, from: "expo", to: "station-2", body: "secret body must not leak", at: 0 }, 2, "expo"),
   ev("task.update", { id: 1, state: "returned", result: "A long plan résumé 🙂 ".repeat(30), at: 0 }, 30, "station-2"),

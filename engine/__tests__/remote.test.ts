@@ -4,7 +4,6 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { coordinationDir } from "../src/paths.js";
-import { readPriorities } from "../src/priorities.js";
 import {
   checkOriginCompatible,
   ensureLocalBooksOrigin,
@@ -134,7 +133,7 @@ describe("journal append + replay round-trip", () => {
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
     const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
-    const res = replayInto(b, events, envB);
+    const res = replayInto(b, events);
     expect(res.skipped).toBe(0);
     expect(snapshotState(b)).toEqual(snapshotState(a));
     a.close();
@@ -154,7 +153,7 @@ describe("journal append + replay round-trip", () => {
 
     const envB = { HANDS_HOME: fs.mkdtempSync(path.join(root, "busB-")) };
     const b = new Store({ env: envB });
-    replayInto(b, events, envB);
+    replayInto(b, events);
     // cursor position never rode the journal, so a restore doesn't recover it —
     // an accepted tradeoff for keeping every drain from writing an NDJSON line
     expect(b.getCursor("expo")).toBe(0);
@@ -174,29 +173,25 @@ describe("journal append + replay round-trip", () => {
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
     const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
-    replayInto(b, events, envB);
+    replayInto(b, events);
     const first = snapshotState(b);
-    replayInto(b, events, envB);
+    replayInto(b, events);
     expect(snapshotState(b)).toEqual(first);
     a.close();
     b.close();
   });
 
-  it("materializes priorities.set into priorities.md and skips unknown event types", () => {
+  it("treats recipe.promoted/demoted as stateless (visibility-only — the recipe file itself syncs via git, not replay) and skips unknown event types", () => {
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
     const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
-    const res = replayInto(
-      b,
-      [
-        { v: 1, ts: 1, type: "priorities.set", data: { items: ["P1 ship", "P2 fix"], at: 1 } },
-        { v: 1, ts: 2, type: "from.the.future", data: { x: 1 } },
-      ],
-      envB,
-    );
-    expect(res.applied).toBe(1);
+    const res = replayInto(b, [
+      { v: 1, ts: 1, type: "recipe.promoted", data: { slug: "ordering-api-fix", rank: 1, at: 1 } },
+      { v: 1, ts: 2, type: "recipe.demoted", data: { slug: "old-recipe", at: 2 } },
+      { v: 1, ts: 3, type: "from.the.future", data: { x: 1 } },
+    ]);
+    expect(res.applied).toBe(2);
     expect(res.skipped).toBe(1);
-    expect(readPriorities(envB).items).toEqual(["P1 ship", "P2 fix"]);
     b.close();
   });
 
@@ -234,7 +229,7 @@ describe("git sync + machine-move restore", () => {
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
     const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
-    replayInto(b, events, envB);
+    replayInto(b, events);
     expect(snapshotState(b)).toEqual(snapshotState(a));
     a.close();
     b.close();
@@ -584,7 +579,7 @@ describe("journal replay", () => {
     const homeB = fs.mkdtempSync(path.join(root, "busB-"));
     const envB = { HANDS_HOME: homeB };
     const b = new Store({ env: envB });
-    const res = replayInto(b, [{ v: 1, ts: 1, type: "digest.note", agent: "expo", data: { text: "good day" } }], envB);
+    const res = replayInto(b, [{ v: 1, ts: 1, type: "digest.note", agent: "expo", data: { text: "good day" } }]);
     expect(res.applied).toBe(1);
     expect(res.skipped).toBe(0);
     b.close();

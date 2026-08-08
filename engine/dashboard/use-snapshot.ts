@@ -26,7 +26,7 @@ function looksLikePublicSnapshot(body: unknown): body is PublicSnapshot {
     Array.isArray(b.questions) &&
     Array.isArray(b.tasks) &&
     Array.isArray(b.todos) &&
-    Array.isArray(b.priorities) &&
+    Array.isArray(b.menu) &&
     Array.isArray(b.crafts) &&
     typeof b.counts === "object" &&
     b.counts !== null

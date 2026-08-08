@@ -5,7 +5,6 @@ import * as path from "node:path";
 import { type HandsConfig, loadConfig } from "./config.js";
 import { regenerateDigests } from "./digest.js";
 import { coordinationDir, repoInfo } from "./paths.js";
-import { writePriorities } from "./priorities.js";
 import { buildPublicSnapshot } from "./snapshot.js";
 import type { Store } from "./store.js";
 
@@ -53,7 +52,7 @@ export const MARKER_FILE = "hands.json";
 export interface JournalEvent {
   v: number;
   ts: number;
-  /** e.g. message | cursor | question.ask | task.update | priorities.set */
+  /** e.g. message | cursor | question.ask | task.update | recipe.promoted */
   type: string;
   /** emitting agent (expo | station-<n>) */
   agent?: string;
@@ -813,6 +812,28 @@ export function personalCraftsDir(
 }
 
 /**
+ * Where recipe files live (hands#96/#137) — the books clone under the principal's handle
+ * namespace when books are configured, or a local coordination-dir fallback otherwise. Same
+ * resolution as personalCraftsDir, deliberately: recipes are principal-authored content meant to
+ * persist over days and survive a machine move, not the disposable daily list `priorities.md` was
+ * — the books are durable and syncable for exactly that reason, and a plain local write into
+ * either directory is equally instant (PUSH_DEBOUNCE_MS only governs when a local commit gets
+ * PUSHED for another clone to pull, never the local author's own read-after-write). No
+ * shared/personal tier split like crafts have — a recipe has exactly one owner (the principal),
+ * nothing to promote between tiers.
+ */
+export function recipesDir(
+  config: HandsConfig,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  const booksOn = Boolean(config.remote.url?.trim());
+  return booksOn
+    ? path.join(journalDir(env, cwd), "journal", resolveProject(config, cwd), resolveHandle(config), "recipes")
+    : path.join(coordinationDir(env, cwd), "recipes");
+}
+
+/**
  * Where a CRAFT's files live — resolved SHARED-FIRST. A craft is a named,
  * portable specialization ("saucier", "ordering API") dispatched as a
  * sub-agent (hands#81/#96), not held by a station. Two scope tiers:
@@ -903,8 +924,10 @@ function summarizeEvent(e: JournalEvent): string | null {
       return `question #${d.id} answered`;
     case "question.escalate":
       return `question #${d.id} escalated`;
-    case "priorities.set":
-      return `specials set (${Array.isArray(d.items) ? d.items.length : 0})`;
+    case "recipe.promoted":
+      return `recipe "${s(d.slug)}" onto the menu${d.rank ? ` (#${d.rank})` : ""}`;
+    case "recipe.demoted":
+      return `recipe "${s(d.slug)}" off the menu`;
     case "digest.note":
       return clip(`note: ${s(d.text)}`);
     case "focus.set":
@@ -1059,25 +1082,19 @@ export interface ReplayResult {
  * by-explicit-id (OR IGNORE) and updates re-apply, so replaying over an
  * existing DB (or twice) converges instead of duplicating.
  */
-export function replayInto(
-  store: Store,
-  events: readonly JournalEvent[],
-  env: NodeJS.ProcessEnv = process.env,
-): ReplayResult {
+export function replayInto(store: Store, events: readonly JournalEvent[]): ReplayResult {
   let applied = 0;
   let skipped = 0;
   // Known renderer-only events: no DB state, applied as a no-op so restore
   // doesn't warn "written by a newer build?" about its own vocabulary.
-  const stateless = new Set(["digest.note"]);
+  // recipe.promoted/demoted (hands#96): unlike priorities.set (which this replaced), the recipe
+  // FILE itself already lives inside the books clone and syncs via plain git pull — there is
+  // nothing here to reconstruct from the event, it's visibility-only (the digest/other-kitchens
+  // feed rendering), same as digest.note.
+  const stateless = new Set(["digest.note", "recipe.promoted", "recipe.demoted"]);
   for (const event of events) {
     try {
       if (stateless.has(event.type)) {
-        applied++;
-        continue;
-      }
-      if (event.type === "priorities.set") {
-        const items = Array.isArray(event.data.items) ? (event.data.items as string[]) : [];
-        writePriorities(items, env);
         applied++;
         continue;
       }

@@ -85,11 +85,10 @@ function describe(event: JournalEvent): string | null {
       return `- ${t} todo #${d.id} → ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
     case "focus.set":
       return `- ${t} focus → ${oneLine(d.focus) || "(cleared)"}`;
-    case "priorities.set": {
-      const items = Array.isArray(d.items) ? (d.items as unknown[]) : [];
-      const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" · ");
-      return `- ${t} specials set (${items.length}): ${list}`;
-    }
+    case "recipe.promoted":
+      return `- ${t} recipe "${oneLine(d.slug)}" onto the menu${d.rank ? ` (#${d.rank})` : ""}`;
+    case "recipe.demoted":
+      return `- ${t} recipe "${oneLine(d.slug)}" off the menu`;
     default:
       return null; // messages/cursors are counted, not itemized; unknown types skipped
   }

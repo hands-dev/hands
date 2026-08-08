@@ -7,9 +7,9 @@ import { CraftRoster } from "@/components/craft-roster";
 import { FeedbackWidget } from "@/components/feedback-form";
 import { HandsWordmark } from "@/components/hands-mark";
 import { JournalFeed } from "@/components/journal-feed";
+import { Menu } from "@/components/menu";
 import { NeedsYou, OpenQuestions } from "@/components/questions-lane";
 import { RolePage } from "@/components/role-page";
-import { Specials } from "@/components/specials";
 import { StatCards, StatCardsHosted } from "@/components/stat-cards";
 import { StationsGrid, StationsGridHosted } from "@/components/stations-grid";
 import { SubagentUsage } from "@/components/subagent-usage";
@@ -196,7 +196,7 @@ export function App() {
                 </div>
               </div>
               <div className="min-w-0 space-y-4">
-                <Specials items={snapshot.priorities} />
+                <Menu items={snapshot.menu} />
                 <div id="pass">
                   <OpenQuestions questions={open} now={now} />
                 </div>
@@ -302,7 +302,7 @@ export function App() {
                   />
                 </div>
                 <div className="min-w-0 space-y-4">
-                  <Specials items={snapshot.priorities} />
+                  <Menu items={snapshot.menu} />
                   <OpenQuestions questions={open} now={snapshot.now} />
                   <Todos todos={snapshot.todos} principal={snapshot.principal} now={snapshot.now} />
                 </div>

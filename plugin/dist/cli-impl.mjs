@@ -21816,7 +21816,7 @@ var init_store = __esm({
       -- these. head_sha and origin_sha are what make the record expire by
       -- EVENT rather than by clock -- a stale attestation carrying a freshness
       -- stamp is worse than none, which is the flaw #157 identified in
-      -- priorities reporting stale:false about a superseded picture.
+      -- the menu reporting stale:false about a superseded picture.
       CREATE TABLE IF NOT EXISTS attestations (
         agent_id   TEXT PRIMARY KEY,
         ok         INTEGER NOT NULL,       -- 1 = clean and ready, 0 = declined
@@ -23424,50 +23424,9 @@ var init_notify = __esm({
   }
 });
 
-// src/priorities.ts
-import * as fs6 from "node:fs";
-import * as path6 from "node:path";
-function prioritiesPath(env = process.env) {
-  return path6.join(coordinationDir(env), "priorities.md");
-}
-function stripMarker(line) {
-  return line.replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim();
-}
-function readPriorities(env = process.env) {
-  const file2 = prioritiesPath(env);
-  let raw;
-  try {
-    raw = fs6.readFileSync(file2, "utf8");
-  } catch {
-    return { items: [], raw: "", exists: false };
-  }
-  const items = raw.split("\n").map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map(stripMarker).filter(Boolean);
-  return { items, raw, exists: true };
-}
-function writePriorities(items, env = process.env) {
-  const dir = coordinationDir(env);
-  fs6.mkdirSync(dir, { recursive: true, mode: 448 });
-  const body = `# Today's priorities (ranked \u2014 the expo adjudicates against these)
-
-${items.map((it, i) => `${i + 1}. ${it}`).join("\n")}
-`;
-  const file2 = prioritiesPath(env);
-  fs6.writeFileSync(file2, body, { mode: 384 });
-  try {
-    fs6.chmodSync(file2, 384);
-  } catch {
-  }
-}
-var init_priorities = __esm({
-  "src/priorities.ts"() {
-    "use strict";
-    init_paths();
-  }
-});
-
 // src/digest.ts
-import * as fs9 from "node:fs";
-import * as path8 from "node:path";
+import * as fs8 from "node:fs";
+import * as path7 from "node:path";
 function dayOf(ts) {
   return new Date(ts).toISOString().slice(0, 10);
 }
@@ -23518,11 +23477,10 @@ function describe3(event) {
       return `- ${t} todo #${d.id} \u2192 ${d.state}${d.doneSignal ? ` (${oneLine(d.doneSignal)})` : ""}`;
     case "focus.set":
       return `- ${t} focus \u2192 ${oneLine(d.focus) || "(cleared)"}`;
-    case "priorities.set": {
-      const items = Array.isArray(d.items) ? d.items : [];
-      const list = items.map((it, i) => `${i + 1}. ${oneLine(it)}`).join(" \xB7 ");
-      return `- ${t} specials set (${items.length}): ${list}`;
-    }
+    case "recipe.promoted":
+      return `- ${t} recipe "${oneLine(d.slug)}" onto the menu${d.rank ? ` (#${d.rank})` : ""}`;
+    case "recipe.demoted":
+      return `- ${t} recipe "${oneLine(d.slug)}" off the menu`;
     default:
       return null;
   }
@@ -23598,7 +23556,7 @@ function renderIndex(days, opts) {
 function writeIfOwn(file2, content) {
   let existing = null;
   try {
-    existing = fs9.readFileSync(file2, "utf8");
+    existing = fs8.readFileSync(file2, "utf8");
   } catch {
   }
   if (existing !== null) {
@@ -23606,14 +23564,14 @@ function writeIfOwn(file2, content) {
     const stamped = existing.match(STAMP_RE);
     if (stamped && Number.parseInt(stamped[1], 10) > DIGEST_VERSION) return false;
   }
-  fs9.writeFileSync(file2, content);
+  fs8.writeFileSync(file2, content);
   return true;
 }
 function regenerateDigests(journal, dates) {
   const events = readEvents(journal.dir, journal.project, journal.handle);
   if (events.length === 0) return [];
-  const handleDir2 = path8.join(journal.dir, "journal", journal.project, journal.handle);
-  fs9.mkdirSync(handleDir2, { recursive: true });
+  const handleDir2 = path7.join(journal.dir, "journal", journal.project, journal.handle);
+  fs8.mkdirSync(handleDir2, { recursive: true });
   const allDates = [...new Set(events.map((e) => dayOf(e.ts)))].sort();
   const target = dates ? allDates.filter((d) => dates.has(d)) : allDates;
   const changed = [];
@@ -23622,14 +23580,14 @@ function regenerateDigests(journal, dates) {
     const digest = renderDigest(events, { project: journal.project, handle: journal.handle, date: date5 });
     index.push({ date: date5, summary: digest.summary });
     if (!target.includes(date5)) continue;
-    const file2 = path8.join(handleDir2, `${date5}.md`);
+    const file2 = path7.join(handleDir2, `${date5}.md`);
     if (writeIfOwn(file2, digest.body)) {
-      changed.push(path8.join("journal", journal.project, journal.handle, `${date5}.md`));
+      changed.push(path7.join("journal", journal.project, journal.handle, `${date5}.md`));
     }
   }
   const readme = renderIndex(index, { project: journal.project, handle: journal.handle });
-  if (writeIfOwn(path8.join(handleDir2, "README.md"), readme)) {
-    changed.push(path8.join("journal", journal.project, journal.handle, "README.md"));
+  if (writeIfOwn(path7.join(handleDir2, "README.md"), readme)) {
+    changed.push(path7.join("journal", journal.project, journal.handle, "README.md"));
   }
   return changed;
 }
@@ -23648,25 +23606,25 @@ var init_digest = __esm({
 
 // src/worktree-lock.ts
 import * as crypto2 from "node:crypto";
-import * as fs10 from "node:fs";
+import * as fs9 from "node:fs";
 import * as os5 from "node:os";
-import * as path9 from "node:path";
+import * as path8 from "node:path";
 function lockPath(worktree, env = process.env, cwd) {
   let resolved = worktree;
   try {
-    resolved = fs10.realpathSync(worktree);
+    resolved = fs9.realpathSync(worktree);
   } catch {
   }
   const digest = crypto2.createHash("sha256").update(resolved).digest("hex").slice(0, 12);
-  return path9.join(
+  return path8.join(
     coordinationDir(env, cwd ?? resolved),
     "locks",
-    `${path9.basename(resolved)}-${digest}.json`
+    `${path8.basename(resolved)}-${digest}.json`
   );
 }
 function processStartTime(pid) {
   try {
-    const stat = fs10.readFileSync(`/proc/${pid}/stat`, "utf8");
+    const stat = fs9.readFileSync(`/proc/${pid}/stat`, "utf8");
     const after = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
     const ticks = Number(after[19]);
     return Number.isFinite(ticks) ? ticks : null;
@@ -23690,7 +23648,7 @@ function isStale(record2) {
 }
 function readLock(worktree, env, cwd) {
   try {
-    const raw = fs10.readFileSync(lockPath(worktree, env, cwd), "utf8");
+    const raw = fs9.readFileSync(lockPath(worktree, env, cwd), "utf8");
     const parsed = JSON.parse(raw);
     if (typeof parsed.pid !== "number" || typeof parsed.worktree !== "string") return null;
     return {
@@ -23731,8 +23689,8 @@ function claimWorktree(opts) {
     worktree: opts.worktree,
     hostname: os5.hostname()
   };
-  fs10.mkdirSync(path9.dirname(file2), { recursive: true });
-  fs10.writeFileSync(file2, `${JSON.stringify(record2, null, 2)}
+  fs9.mkdirSync(path8.dirname(file2), { recursive: true });
+  fs9.writeFileSync(file2, `${JSON.stringify(record2, null, 2)}
 `);
   return { ok: true, record: record2, previous };
 }
@@ -23740,7 +23698,7 @@ function releaseWorktree(worktree, pid = process.pid, env, cwd) {
   const existing = readLock(worktree, env, cwd);
   if (!existing || existing.pid !== pid) return false;
   try {
-    fs10.rmSync(lockPath(worktree, env, cwd), { force: true });
+    fs9.rmSync(lockPath(worktree, env, cwd), { force: true });
     return true;
   } catch {
     return false;
@@ -23755,10 +23713,10 @@ var init_worktree_lock = __esm({
 
 // src/watchers.ts
 import { execFileSync as execFileSync4 } from "node:child_process";
-import * as fs11 from "node:fs";
+import * as fs10 from "node:fs";
 function argvOf(pid) {
   try {
-    const parts = fs11.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
+    const parts = fs10.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0").filter(Boolean);
     return parts.length > 0 ? parts : null;
   } catch {
     return null;
@@ -23781,7 +23739,7 @@ function classify(argv, inboxNeedle) {
 }
 function cwdOf(pid) {
   try {
-    return fs11.realpathSync(fs11.readlinkSync(`/proc/${pid}/cwd`));
+    return fs10.realpathSync(fs10.readlinkSync(`/proc/${pid}/cwd`));
   } catch {
     return null;
   }
@@ -23793,7 +23751,7 @@ function selfLineage() {
     line.add(pid);
     const stat = (() => {
       try {
-        return fs11.readFileSync(`/proc/${pid}/stat`, "utf8");
+        return fs10.readFileSync(`/proc/${pid}/stat`, "utf8");
       } catch {
         return null;
       }
@@ -23807,7 +23765,7 @@ function selfLineage() {
 }
 function allPids() {
   try {
-    return fs11.readdirSync("/proc").filter((n) => /^\d+$/.test(n)).map(Number);
+    return fs10.readdirSync("/proc").filter((n) => /^\d+$/.test(n)).map(Number);
   } catch {
     return null;
   }
@@ -23896,7 +23854,7 @@ var init_watchers = __esm({
 
 // src/attest.ts
 import { execFileSync as execFileSync5 } from "node:child_process";
-import * as path10 from "node:path";
+import * as path9 from "node:path";
 function git3(cwd, args) {
   try {
     return execFileSync5("git", args, {
@@ -24006,34 +23964,34 @@ var init_attest = __esm({
 });
 
 // src/seed-permissions.ts
-import * as fs12 from "node:fs";
-import * as path11 from "node:path";
+import * as fs11 from "node:fs";
+import * as path10 from "node:path";
 function stationSettings() {
   return { permissions: { allow: [...ALLOW], deny: [...DENY] } };
 }
 function unseedStationPermissions(dir) {
-  const file2 = path11.join(dir, SEEDED_RELPATH);
-  if (!fs12.existsSync(file2)) return false;
-  fs12.rmSync(file2, { force: true });
-  const parent = path11.dirname(file2);
+  const file2 = path10.join(dir, SEEDED_RELPATH);
+  if (!fs11.existsSync(file2)) return false;
+  fs11.rmSync(file2, { force: true });
+  const parent = path10.dirname(file2);
   try {
-    if (fs12.readdirSync(parent).length === 0) fs12.rmdirSync(parent);
+    if (fs11.readdirSync(parent).length === 0) fs11.rmdirSync(parent);
   } catch {
   }
   return true;
 }
 function seedStationPermissions(dir) {
-  const file2 = path11.join(dir, ".claude", "settings.local.json");
-  if (fs12.existsSync(file2)) return { path: file2, written: false };
-  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
-  fs12.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
+  const file2 = path10.join(dir, ".claude", "settings.local.json");
+  if (fs11.existsSync(file2)) return { path: file2, written: false };
+  fs11.mkdirSync(path10.dirname(file2), { recursive: true });
+  fs11.writeFileSync(file2, `${JSON.stringify(stationSettings(), null, 2)}
 `);
   return { path: file2, written: true };
 }
 function readSettingsPermissions(file2) {
   let parsed;
   try {
-    parsed = JSON.parse(fs12.readFileSync(file2, "utf8"));
+    parsed = JSON.parse(fs11.readFileSync(file2, "utf8"));
   } catch {
     return null;
   }
@@ -24044,12 +24002,12 @@ function readSettingsPermissions(file2) {
   };
 }
 function shipPermissionsStale(dir) {
-  const permissions = readSettingsPermissions(path11.join(dir, SEEDED_RELPATH));
+  const permissions = readSettingsPermissions(path10.join(dir, SEEDED_RELPATH));
   if (!permissions) return false;
   return SHIP_RULES.some((rule) => permissions.deny.includes(rule) || !permissions.allow.includes(rule));
 }
 function reconcileStationShipPermissions(dir) {
-  const file2 = path11.join(dir, SEEDED_RELPATH);
+  const file2 = path10.join(dir, SEEDED_RELPATH);
   const permissions = readSettingsPermissions(file2);
   if (!permissions) return { path: file2, changed: false };
   const allow = [...permissions.allow];
@@ -24063,17 +24021,17 @@ function reconcileStationShipPermissions(dir) {
     }
   }
   if (!denyChanged && !allowChanged) return { path: file2, changed: false };
-  const settings = JSON.parse(fs12.readFileSync(file2, "utf8"));
+  const settings = JSON.parse(fs11.readFileSync(file2, "utf8"));
   settings.permissions = { ...settings.permissions, allow, deny };
-  fs12.writeFileSync(file2, `${JSON.stringify(settings, null, 2)}
+  fs11.writeFileSync(file2, `${JSON.stringify(settings, null, 2)}
 `);
   return { path: file2, changed: true };
 }
 function mergeStationSettings(dir, patch) {
-  const file2 = path11.join(dir, SEEDED_RELPATH);
+  const file2 = path10.join(dir, SEEDED_RELPATH);
   let existing = {};
   try {
-    const raw = fs12.readFileSync(file2, "utf8");
+    const raw = fs11.readFileSync(file2, "utf8");
     const parsed = JSON.parse(raw);
     if (parsed && typeof parsed === "object") existing = parsed;
   } catch {
@@ -24087,8 +24045,8 @@ function mergeStationSettings(dir, patch) {
     }
   }
   if (!changed) return { path: file2, written: false };
-  fs12.mkdirSync(path11.dirname(file2), { recursive: true });
-  fs12.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
+  fs11.mkdirSync(path10.dirname(file2), { recursive: true });
+  fs11.writeFileSync(file2, `${JSON.stringify(existing, null, 2)}
 `);
   return { path: file2, written: true };
 }
@@ -24135,7 +24093,7 @@ var init_seed_permissions = __esm({
       "mcp__plugin_hands_hands__hands_peers",
       "mcp__plugin_hands_hands__hands_board",
       "mcp__plugin_hands_hands__hands_history",
-      "mcp__plugin_hands_hands__hands_priorities",
+      "mcp__plugin_hands_hands__hands_menu",
       "mcp__plugin_hands_hands__hands_questions",
       "mcp__plugin_hands_hands__hands_todos",
       ...SHIP_RULES
@@ -24152,7 +24110,7 @@ var init_seed_permissions = __esm({
 
 // src/theming.ts
 import * as os6 from "node:os";
-import * as path12 from "node:path";
+import * as path11 from "node:path";
 function themeColorForIndex(index) {
   const n = THEME_PALETTE.length;
   const i = ((index - 1) % n + n) % n;
@@ -24163,10 +24121,10 @@ function themeFileName(repoSlug, index) {
 }
 function themesDir(env = process.env) {
   const home = env.HANDS_TEST_HOME?.trim() || os6.homedir();
-  return path12.join(home, ".claude", "themes");
+  return path11.join(home, ".claude", "themes");
 }
 function themeFilePath(repoSlug, index, env = process.env) {
-  return path12.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
+  return path11.join(themesDir(env), `${themeFileName(repoSlug, index)}.json`);
 }
 function assignStationTheme(opts) {
   const color = themeColorForIndex(opts.index);
@@ -24218,9 +24176,9 @@ __export(provision_exports, {
   stationRoot: () => stationRoot
 });
 import { execFileSync as execFileSync6, spawnSync } from "node:child_process";
-import * as fs13 from "node:fs";
+import * as fs12 from "node:fs";
 import * as os7 from "node:os";
-import * as path13 from "node:path";
+import * as path12 from "node:path";
 function git4(cwd, args) {
   return execFileSync6("git", args, {
     cwd,
@@ -24237,7 +24195,7 @@ function requireRepo(cwd) {
 function stationRoot(cwd = process.cwd(), config2) {
   const cfg = config2 ?? loadConfig({ cwd });
   if (cfg.stations.worktreeRoot) return cfg.stations.worktreeRoot;
-  return path13.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
+  return path12.join(os7.homedir(), ".hands", "worktrees", requireRepo(cwd).slug);
 }
 function stationBranch(index) {
   return `hands/station-${index}`;
@@ -24246,7 +24204,7 @@ function listStations(cwd = process.cwd(), config2) {
   const root = stationRoot(cwd, config2);
   let names = [];
   try {
-    names = fs13.readdirSync(root);
+    names = fs12.readdirSync(root);
   } catch {
     return [];
   }
@@ -24258,7 +24216,7 @@ function listStations(cwd = process.cwd(), config2) {
     stations.push({
       id: `station-${index}`,
       index,
-      dir: path13.join(root, name),
+      dir: path12.join(root, name),
       branch: stationBranch(index),
       present: true
     });
@@ -24317,14 +24275,14 @@ function addStations(count, opts) {
   const cfg = opts?.config ?? loadConfig({ cwd });
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  fs13.mkdirSync(root, { recursive: true });
+  fs12.mkdirSync(root, { recursive: true });
   const taken = new Set(listStations(cwd, cfg).map((w) => w.index));
   const plans = [];
   let index = 1;
   for (let created = 0; created < count; index++) {
     if (taken.has(index)) continue;
     const id = `station-${index}`;
-    const dir = path13.join(root, id);
+    const dir = path12.join(root, id);
     const branch = stationBranch(index);
     const base = cfg.stations.baseBranch ?? "HEAD";
     if (branchExists(info.repoRoot, branch)) {
@@ -24338,13 +24296,13 @@ function addStations(count, opts) {
     let sessionName;
     if (cfg.stations.theming) {
       const assignment = assignStationTheme({
-        repoLabel: path13.basename(info.repoRoot),
+        repoLabel: path12.basename(info.repoRoot),
         repoSlug: info.slug,
         index,
         env: opts?.env
       });
-      fs13.mkdirSync(path13.dirname(assignment.file), { recursive: true });
-      fs13.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
+      fs12.mkdirSync(path12.dirname(assignment.file), { recursive: true });
+      fs12.writeFileSync(assignment.file, `${JSON.stringify(themeFileContents(assignment), null, 2)}
 `);
       mergeStationSettings(dir, { theme: assignment.themeId });
       themeColor = assignment.color.hex;
@@ -24375,10 +24333,10 @@ function removeStation(id, opts) {
   const index = Number.parseInt(m[1], 10);
   const info = requireRepo(cwd);
   const root = stationRoot(cwd, cfg);
-  const dir = path13.join(root, `station-${index}`);
+  const dir = path12.join(root, `station-${index}`);
   if (cfg.stations.theming) {
     try {
-      fs13.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
+      fs12.rmSync(themeFilePath(info.slug, index, opts?.env ?? process.env), { force: true });
     } catch {
     }
   }
@@ -24387,7 +24345,7 @@ function removeStation(id, opts) {
   } catch {
   }
   let removed = false;
-  if (fs13.existsSync(dir)) {
+  if (fs12.existsSync(dir)) {
     if (onlyDirtInWorktreeIsOurs(dir)) unseedStationPermissions(dir);
     const args = ["worktree", "remove", dir];
     if (opts?.force) args.splice(2, 0, "--force");
@@ -24436,6 +24394,114 @@ var init_provision = __esm({
     init_theming();
     ProvisionError = class extends Error {
     };
+  }
+});
+
+// src/recipes.ts
+import * as fs13 from "node:fs";
+import * as path13 from "node:path";
+function readFileSafe(p) {
+  try {
+    const body = fs13.readFileSync(p, "utf8").trim();
+    return body || null;
+  } catch {
+    return null;
+  }
+}
+function parseRecipe(slug, content) {
+  if (!content) {
+    return { slug, state: "book", rank: null, title: null, criteria: [], criteriaDone: 0, criteriaTotal: 0 };
+  }
+  const lines = content.split("\n");
+  const titleLine = lines.find((l) => TITLE_RE.test(l.trim()));
+  const title = titleLine ? TITLE_RE.exec(titleLine.trim())?.[1]?.trim() ?? null : null;
+  const headerLine = lines.find((l) => l.trim().startsWith(">")) ?? "";
+  const m = HEADER_RE.exec(headerLine.trim());
+  const state = m?.[1] === "menu" ? "menu" : "book";
+  const rank = state === "menu" && m?.[2] ? Number(m[2]) : null;
+  const criteria = [];
+  let inCriteria = false;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (CRITERIA_HEADING_RE.test(line)) {
+      inCriteria = true;
+      continue;
+    }
+    if (inCriteria && SECTION_HEADING_RE.test(line)) {
+      inCriteria = false;
+      continue;
+    }
+    if (inCriteria) {
+      const cm = CRITERION_RE.exec(line);
+      if (cm) criteria.push({ text: cm[2].trim(), done: cm[1].toLowerCase() === "x" });
+    }
+  }
+  return { slug, state, rank, title, criteria, criteriaDone: criteria.filter((c) => c.done).length, criteriaTotal: criteria.length };
+}
+function stampRecipeState(content, state, rank) {
+  const lines = content.split("\n");
+  const newLine = `> state: ${state}${state === "menu" && rank != null ? ` \xB7 rank: ${rank}` : ""}`;
+  const idx = lines.findIndex((l) => l.trim().startsWith(">"));
+  if (idx !== -1) {
+    lines[idx] = newLine;
+    return lines.join("\n");
+  }
+  const titleIdx = lines.findIndex((l) => TITLE_RE.test(l.trim()));
+  if (titleIdx !== -1) {
+    lines.splice(titleIdx + 1, 0, newLine);
+    return lines.join("\n");
+  }
+  return `${newLine}
+${content}`;
+}
+function recipeFiles(name, config2, env = process.env, cwd = process.cwd()) {
+  const dir = recipesDir(config2, env, cwd);
+  const slug = sanitizeSegment(name, "unnamed");
+  return { dir, slug, path: path13.join(dir, `${slug}.md`) };
+}
+function listRecipes(config2, env = process.env, cwd = process.cwd()) {
+  const dir = recipesDir(config2, env, cwd);
+  let entries;
+  try {
+    entries = fs13.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  return entries.filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -".md".length)).map((slug) => parseRecipe(slug, readFileSafe(path13.join(dir, `${slug}.md`)))).sort((a, b) => a.slug.localeCompare(b.slug));
+}
+function currentMenu(recipes) {
+  return recipes.filter((r) => r.state === "menu").sort((a, b) => (a.rank ?? Number.POSITIVE_INFINITY) - (b.rank ?? Number.POSITIVE_INFINITY));
+}
+function newRecipeStub(title) {
+  return `# ${title}
+> state: book
+
+
+
+## Acceptance criteria
+- [ ] 
+`;
+}
+function menuOnDay(events, day) {
+  const cutoff = Date.parse(`${day}T23:59:59.999Z`);
+  const onMenu = /* @__PURE__ */ new Map();
+  for (const e of events) {
+    if (e.ts > cutoff) break;
+    if (e.type === "recipe.promoted" && typeof e.data.slug === "string") onMenu.set(e.data.slug, true);
+    else if (e.type === "recipe.demoted" && typeof e.data.slug === "string") onMenu.set(e.data.slug, false);
+  }
+  return [...onMenu.entries()].filter(([, on]) => on).map(([slug]) => slug);
+}
+var HEADER_RE, TITLE_RE, CRITERIA_HEADING_RE, SECTION_HEADING_RE, CRITERION_RE;
+var init_recipes = __esm({
+  "src/recipes.ts"() {
+    "use strict";
+    init_remote();
+    HEADER_RE = /^>\s*state:\s*(\w+)(?:\s*·\s*rank:\s*(\d+))?/;
+    TITLE_RE = /^#\s+(.+)$/;
+    CRITERIA_HEADING_RE = /^##\s*Acceptance criteria/i;
+    SECTION_HEADING_RE = /^##\s/;
+    CRITERION_RE = /^-\s*\[([ xX])\]\s*(.+)$/;
   }
 });
 
@@ -24523,7 +24589,13 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
   }
   const journal = store.journalSince(0, 40).reverse().map((j) => ({ id: j.id, by: j.agent_id, kind: j.kind, text: j.text, ref: j.ref, at: j.created_at }));
   const messages = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
-  const priorities = readPriorities(env).items;
+  const menu = currentMenu(listRecipes(loadConfig({ env }), env)).map((r) => ({
+    slug: r.slug,
+    title: r.title,
+    rank: r.rank,
+    criteriaDone: r.criteriaDone,
+    criteriaTotal: r.criteriaTotal
+  }));
   const questions = store.listQuestions({ limit: 30 }).map((q) => ({
     id: q.id,
     asker: q.asker,
@@ -24602,7 +24674,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     journal,
     messages,
     collisions,
-    priorities,
+    menu,
     questions,
     github,
     tasks,
@@ -24629,7 +24701,7 @@ function buildPublicSnapshot(store, opts) {
     handle: opts.handle,
     project: opts.project,
     crafts: full.agents.filter((a) => a.focus).map((a) => ({ station: a.id, focus: a.focus })),
-    priorities: full.priorities,
+    menu: full.menu,
     questions: full.questions,
     tasks: full.tasks,
     todos: full.todos,
@@ -24647,8 +24719,9 @@ var init_snapshot = __esm({
     "use strict";
     init_attest();
     init_board();
+    init_config();
     init_provision();
-    init_priorities();
+    init_recipes();
     init_store();
     init_theming();
   }
@@ -25082,6 +25155,10 @@ function personalCraftsDir(config2, env = process.env, cwd = process.cwd()) {
   const booksOn = Boolean(config2.remote.url?.trim());
   return booksOn ? path15.join(journalDir(env, cwd), "journal", resolveProject(config2, cwd), resolveHandle(config2), "crafts") : path15.join(coordinationDir(env, cwd), "crafts");
 }
+function recipesDir(config2, env = process.env, cwd = process.cwd()) {
+  const booksOn = Boolean(config2.remote.url?.trim());
+  return booksOn ? path15.join(journalDir(env, cwd), "journal", resolveProject(config2, cwd), resolveHandle(config2), "recipes") : path15.join(coordinationDir(env, cwd), "recipes");
+}
 function craftFiles(craft, env = process.env, cwd = process.cwd()) {
   const config2 = loadConfig({ cwd, env });
   const raw = sanitizeSegment(craft, "unnamed");
@@ -25120,8 +25197,10 @@ function summarizeEvent(e) {
       return `question #${d.id} answered`;
     case "question.escalate":
       return `question #${d.id} escalated`;
-    case "priorities.set":
-      return `specials set (${Array.isArray(d.items) ? d.items.length : 0})`;
+    case "recipe.promoted":
+      return `recipe "${s(d.slug)}" onto the menu${d.rank ? ` (#${d.rank})` : ""}`;
+    case "recipe.demoted":
+      return `recipe "${s(d.slug)}" off the menu`;
     case "digest.note":
       return clip(`note: ${s(d.text)}`);
     case "focus.set":
@@ -25214,19 +25293,13 @@ function listProjects(dir) {
     return [];
   }
 }
-function replayInto(store, events, env = process.env) {
+function replayInto(store, events) {
   let applied = 0;
   let skipped = 0;
-  const stateless = /* @__PURE__ */ new Set(["digest.note"]);
+  const stateless = /* @__PURE__ */ new Set(["digest.note", "recipe.promoted", "recipe.demoted"]);
   for (const event of events) {
     try {
       if (stateless.has(event.type)) {
-        applied++;
-        continue;
-      }
-      if (event.type === "priorities.set") {
-        const items = Array.isArray(event.data.items) ? event.data.items : [];
-        writePriorities(items, env);
         applied++;
         continue;
       }
@@ -25245,7 +25318,6 @@ var init_remote = __esm({
     init_config();
     init_digest();
     init_paths();
-    init_priorities();
     init_snapshot();
     JOURNAL_VERSION = 1;
     JOURNAL_LAYOUT = 2;
@@ -25288,7 +25360,7 @@ function sweepHeldSeatHeader(bookContent) {
   if (!HELD_SEAT_CLAUSE_RE.test(bookContent)) return { content: bookContent, changed: false };
   return { content: bookContent.replace(HELD_SEAT_CLAUSE_RE, (_m, date5) => `\xB7 distilled: ${date5}`), changed: true };
 }
-function readFileSafe(p) {
+function readFileSafe2(p) {
   try {
     const body = fs15.readFileSync(p, "utf8").trim();
     return body || null;
@@ -25297,7 +25369,7 @@ function readFileSafe(p) {
   }
 }
 function readCraftFileCapped(p, cap = 6e3) {
-  const body = readFileSafe(p);
+  const body = readFileSafe2(p);
   if (!body) return null;
   const points = Array.from(body);
   return points.length <= cap ? body : `${points.slice(0, cap).join("")}
@@ -25323,7 +25395,7 @@ function listCraftFiles(config2, env = process.env, cwd = process.cwd()) {
   ]) {
     for (const slug of listSlugsIn(dir)) {
       if (seen.has(slug) || !dir) continue;
-      const { covers, distilled, ready } = parseCraftHeader(readFileSafe(path16.join(dir, `${slug}.md`)));
+      const { covers, distilled, ready } = parseCraftHeader(readFileSafe2(path16.join(dir, `${slug}.md`)));
       seen.set(slug, { slug, scope, covers, distilled, ready });
     }
   }
@@ -25436,7 +25508,7 @@ function materializeCraftAgents(config2, targetDir, env = process.env, cwd = pro
     const skillFile = craftSkillPath(targetDir, entry.slug);
     fs15.mkdirSync(path16.dirname(skillFile), { recursive: true });
     fs15.writeFileSync(craftAgentPath(targetDir, entry.slug), generatedCraftAgent(entry));
-    fs15.writeFileSync(skillFile, generatedCraftSkill(entry, readFileSafe(files.skill)));
+    fs15.writeFileSync(skillFile, generatedCraftSkill(entry, readFileSafe2(files.skill)));
     written.push(entry.slug);
   }
   const wantSlugs = new Set(roster.map((c) => c.slug));
@@ -25618,7 +25690,7 @@ function applyImmediateCraftNote(store, files, note, holder) {
     if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
     try {
       fs15.mkdirSync(files.dir, { recursive: true });
-      fs15.writeFileSync(files.mise, upsertMiseLine(readFileSafe(files.mise), note.body));
+      fs15.writeFileSync(files.mise, upsertMiseLine(readFileSafe2(files.mise), note.body));
       store.markCraftNoteFolded(note.id);
       return true;
     } finally {
@@ -25629,7 +25701,7 @@ function applyImmediateCraftNote(store, files, note, holder) {
   if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
   try {
     fs15.mkdirSync(files.dir, { recursive: true });
-    fs15.writeFileSync(target, appendRawNote(readFileSafe(target), formatRawTaggedLine(note)));
+    fs15.writeFileSync(target, appendRawNote(readFileSafe2(target), formatRawTaggedLine(note)));
     return true;
   } finally {
     store.releaseCraftFoldLease(files.slug, holder);
@@ -25650,9 +25722,9 @@ function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) 
   return {
     craftSlug: files.slug,
     scope: files.scope,
-    book: readFileSafe(files.book),
-    mise: readFileSafe(files.mise),
-    skill: readFileSafe(files.skill),
+    book: readFileSafe2(files.book),
+    mise: readFileSafe2(files.mise),
+    skill: readFileSafe2(files.skill),
     bookPath: files.book,
     misePath: files.mise,
     skillPath: files.skill,
@@ -25851,7 +25923,7 @@ var init_chat = __esm({
       "mcp__hands__hands_tasks",
       "mcp__hands__hands_peers",
       "mcp__hands__hands_history",
-      "mcp__hands__hands_priorities",
+      "mcp__hands__hands_menu",
       "mcp__hands__hands_questions",
       "mcp__hands__hands_paths",
       "mcp__hands__hands_todos"
@@ -50010,22 +50082,21 @@ function pollGithub(store, opts) {
 init_identity();
 init_notify();
 init_paths();
-init_priorities();
 
 // src/publish.ts
-import * as fs8 from "node:fs";
+import * as fs7 from "node:fs";
 
 // src/memory.ts
 init_paths();
 import { createHash as createHash3 } from "node:crypto";
-import * as fs7 from "node:fs";
+import * as fs6 from "node:fs";
 import * as os4 from "node:os";
-import * as path7 from "node:path";
+import * as path6 from "node:path";
 function memoryDir(env = process.env, cwd = process.cwd()) {
   const override = env.HANDS_MEMORY_DIR?.trim();
   if (override) return override;
   const root = repoInfo(cwd)?.repoRoot ?? cwd;
-  return path7.join(os4.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
+  return path6.join(os4.homedir(), ".claude", "projects", root.replace(/[/.]/g, "-"), "memory");
 }
 function descriptionOf(body) {
   const m = body.match(/^description:\s*(.+)$/m);
@@ -50035,7 +50106,7 @@ function scanMemory(env = process.env) {
   const dir = memoryDir(env);
   let names;
   try {
-    names = fs7.readdirSync(dir);
+    names = fs6.readdirSync(dir);
   } catch {
     return [];
   }
@@ -50043,7 +50114,7 @@ function scanMemory(env = process.env) {
   for (const file2 of names) {
     if (!file2.endsWith(".md") || file2 === "MEMORY.md") continue;
     try {
-      const body = fs7.readFileSync(path7.join(dir, file2), "utf8");
+      const body = fs6.readFileSync(path6.join(dir, file2), "utf8");
       entries.push({
         name: file2.replace(/\.md$/, ""),
         hash: createHash3("sha1").update(body).digest("hex").slice(0, 12),
@@ -50060,15 +50131,15 @@ var MAX_FILES = 50;
 var USAGE_TAIL_CAP = 256 * 1024;
 function readLastUsage(transcriptPath) {
   try {
-    const stat = fs8.statSync(transcriptPath);
+    const stat = fs7.statSync(transcriptPath);
     const start = Math.max(0, stat.size - USAGE_TAIL_CAP);
     const length = stat.size - start;
     const buffer = Buffer.alloc(length);
-    const fd = fs8.openSync(transcriptPath, "r");
+    const fd = fs7.openSync(transcriptPath, "r");
     try {
-      fs8.readSync(fd, buffer, 0, length, start);
+      fs7.readSync(fd, buffer, 0, length, start);
     } finally {
-      fs8.closeSync(fd);
+      fs7.closeSync(fd);
     }
     const lines = buffer.toString("utf8").split("\n");
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -50293,6 +50364,7 @@ function runSubagentStop(store, opts) {
 // src/server.ts
 init_remote();
 init_crafts();
+init_recipes();
 init_store();
 init_watchers();
 
@@ -50431,7 +50503,7 @@ function readPreviousPage(opts) {
 // src/server.ts
 init_attest();
 init_provision();
-var PRIORITIES_STALE_MS = 24 * 60 * 6e4;
+var MENU_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;
 var MAX_WAIT_SECONDS = 120;
 function sleep(ms) {
@@ -50492,7 +50564,7 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "hands", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's priorities or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_priorities to read/set the ranked priorities, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " You are a generalist: you hold no craft of your own. You own the ticket and your worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices of work they cover \u2014 see the roster below." : "") + craftRosterContext(cfg, store)
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's menu or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_menu to read the current menu, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " You are a generalist: you hold no craft of your own. You own the ticket and your worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices of work they cover \u2014 see the roster below." : "") + craftRosterContext(cfg, store)
     }
   );
   server.registerTool(
@@ -50662,9 +50734,9 @@ ${input.body}`, [agentId, ...recipients]);
     "hands_board",
     {
       title: "Read the standup board",
-      description: "Snapshot of every agent: who's active (branch + last-active age), recent learnings (commits + memory writes), and any file/ticket collisions with you. Always includes a cheap `stateHash` fingerprint \u2014 if it matches your last pass, nothing moved and you can skip a deeper re-scan. Pass full:true to bundle active tasks + open questions + the priorities digest into this ONE read (instead of separate tasks/questions/priorities calls).",
+      description: "Snapshot of every agent: who's active (branch + last-active age), recent learnings (commits + memory writes), and any file/ticket collisions with you. Always includes a cheap `stateHash` fingerprint \u2014 if it matches your last pass, nothing moved and you can skip a deeper re-scan. Pass full:true to bundle active tasks + open questions + the menu digest into this ONE read (instead of separate tasks/questions/menu calls).",
       inputSchema: {
-        full: external_exports3.boolean().optional().describe("true = also bundle active tasks, open questions, and the priorities digest")
+        full: external_exports3.boolean().optional().describe("true = also bundle active tasks, open questions, and the menu digest")
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
     },
@@ -50673,30 +50745,30 @@ ${input.body}`, [agentId, ...recipients]);
       const now = Date.now();
       store.parkStrandedTickets(now);
       const wakes = store.wakeCounts(now);
-      const peers = store.listPeers(now).map((p2) => {
-        const activeAge = p2.last_active ? now - p2.last_active : null;
+      const peers = store.listPeers(now).map((p) => {
+        const activeAge = p.last_active ? now - p.last_active : null;
         return {
-          id: p2.id,
-          focus: p2.focus ?? void 0,
-          isSelf: p2.id === agentId,
-          online: p2.online,
+          id: p.id,
+          focus: p.focus ?? void 0,
+          isSelf: p.id === agentId,
+          online: p.online,
           // hands#183: pid-liveness, independent of the 15-minute online window —
           // false only when the recorded process is confirmed gone. This is what
           // "safe to dispatch to" should check, not `online` alone.
-          alive: p2.alive,
-          branch: p2.branch ?? void 0,
+          alive: p.alive,
+          branch: p.branch ?? void 0,
           state: activeAge !== null && activeAge <= IDLE_THRESHOLD_MS ? "active" : "idle",
-          lastActive: p2.last_active ? new Date(p2.last_active).toISOString() : void 0,
+          lastActive: p.last_active ? new Date(p.last_active).toISOString() : void 0,
           // wake accounting: each wake re-processes this agent's whole context,
           // so cost ≈ wakes × context size. Spot the chatty hotspots here.
-          wakesLastHour: wakes.get(p2.id)?.lastHour ?? 0,
-          wakes24h: wakes.get(p2.id)?.last24h ?? 0,
+          wakesLastHour: wakes.get(p.id)?.lastHour ?? 0,
+          wakes24h: wakes.get(p.id)?.last24h ?? 0,
           // hands#133/#121: "idle" and "deaf" are indistinguishable without
           // this. A station whose inbox tail died looks exactly like one with
           // nothing to do — it simply never wakes again. null = couldn't look,
           // which must not read as fine.
           // hands#202 — anchored to p.id's resolved path, never a bare substring.
-          inboxMonitorAlive: /^station-\d+$/.test(p2.id) ? inboxMonitorAlive(p2.id, notifyPath(p2.id)) : void 0
+          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id, notifyPath(p.id)) : void 0
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -50732,17 +50804,17 @@ ${input.body}`, [agentId, ...recipients]);
         context: q.context ?? void 0,
         askedAt: new Date(q.created_at).toISOString()
       }));
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
+      const menu = currentMenu(listRecipes(cfg));
+      const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
       return asToolResult({
         ...base,
         activeTasks,
         openQuestions,
-        priorities: {
-          items: p.items,
-          set: p.items.length > 0,
-          stale: confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS
+        menu: {
+          items: menu.map((r) => ({ slug: r.slug, title: r.title, rank: r.rank, criteriaDone: r.criteriaDone, criteriaTotal: r.criteriaTotal })),
+          set: menu.length > 0,
+          stale: confirmedAt == null || now - confirmedAt > MENU_STALE_MS
         }
       });
     }
@@ -50770,7 +50842,7 @@ ${input.body}`, [agentId, ...recipients]);
     "hands_ask",
     {
       title: "Escalate an open question to the expo",
-      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's priorities or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them \u2014 structured, not just prose, when the decision cleanly decomposes into 2-4 choices.`,
+      description: `Raise an open question or decision you can't resolve alone. The expo (main checkout) adjudicates against the day's menu or bubbles it up to ${principal}. Include enough context to decide; propose options if you have them \u2014 structured, not just prose, when the decision cleanly decomposes into 2-4 choices.`,
       inputSchema: {
         question: external_exports3.string(),
         context: external_exports3.string().optional().describe("what's blocked, options, your lean"),
@@ -50976,12 +51048,11 @@ ${input.body}`, [agentId, ...recipients]);
     }
   );
   server.registerTool(
-    "hands_priorities",
+    "hands_menu",
     {
-      title: "Read or set the menu \u2014 the expo's ranked priorities",
-      description: `No args: read the current ranked priorities (+ whether they're stale/unset). Pass \`set\` to replace them (ranked, most-important first). Pass confirm=true to mark the existing list still-current. If items is empty/unset, ask ${principal} for today's menu (ranked priorities).`,
+      title: "Read the menu \u2014 today's recipes in play (hands#96/#137)",
+      description: `Read-only: the current menu (recipes with state: menu, ranked) + whether it's stale/unset. Recipes are principal-authored \u2014 a file per recipe, drafted directly or via /hands:recipe \u2014 this tool never writes one; \`hands recipe promote/demote\` (CLI) moves an item on/off. Pass confirm=true to mark the current menu still-current. If items is empty, ask ${principal} for today's menu.`,
       inputSchema: {
-        set: external_exports3.array(external_exports3.string()).optional(),
         confirm: external_exports3.boolean().optional()
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
@@ -50989,23 +51060,17 @@ ${input.body}`, [agentId, ...recipients]);
     async (input) => {
       store.touch(agentId);
       const now = Date.now();
-      if (input.set) {
-        writePriorities(input.set);
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-        store.journal("priorities.set", { items: input.set, at: now });
-      } else if (input.confirm) {
-        store.setWatermark("*", "priorities_confirmed_at", String(now));
-      }
-      const p = readPriorities();
-      const confirmedRaw = store.getWatermark("*", "priorities_confirmed_at");
+      if (input.confirm) store.setWatermark("*", "menu_confirmed_at", String(now));
+      const menu = currentMenu(listRecipes(cfg));
+      const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
-      const stale = confirmedAt == null || now - confirmedAt > PRIORITIES_STALE_MS;
+      const stale = confirmedAt == null || now - confirmedAt > MENU_STALE_MS;
       return asToolResult({
-        items: p.items,
-        set: p.items.length > 0,
+        items: menu.map((r) => ({ slug: r.slug, title: r.title, rank: r.rank, criteriaDone: r.criteriaDone, criteriaTotal: r.criteriaTotal })),
+        set: menu.length > 0,
         confirmedAt: confirmedAt ? new Date(confirmedAt).toISOString() : null,
         stale,
-        needsInput: p.items.length === 0
+        needsInput: menu.length === 0
       });
     }
   );
@@ -51410,7 +51475,7 @@ ${input.body ?? ""}`, [agentId, assignee]);
       "hands_station_add",
       {
         title: "Open more stations (expo only)",
-        description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu (ranked priorities) is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
+        description: `Provision and launch \`count\` new station sessions for this repo. Use when the menu is under-staffed. Each station appears on the board as station-<n> once its session takes its first turn. If the launcher is manual, relay the pasteCommand to ${principal} to start the pane.`,
         inputSchema: { count: external_exports3.number().int().min(1).max(12).optional() },
         annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
       },
@@ -52344,6 +52409,7 @@ function describe4(info) {
 init_digest();
 init_remote();
 init_crafts();
+init_recipes();
 init_mcp_install();
 init_store();
 import * as fs28 from "node:fs";
@@ -52801,6 +52867,76 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
   } finally {
     store.close();
   }
+}
+function cmdRecipe(argv) {
+  const sub = argv[0];
+  const cfg = loadConfig();
+  if (sub === "ls" || !sub) {
+    const recipes = listRecipes(cfg);
+    if (recipes.length === 0) {
+      out2("no recipes drafted yet \u2014 hands recipe new <slug> to start one, or /hands:recipe to be walked through it");
+      return;
+    }
+    for (const r of recipes) {
+      const rank = r.state === "menu" ? ` #${r.rank ?? "?"}` : "";
+      const criteria = r.criteriaTotal > 0 ? `, ${r.criteriaDone}/${r.criteriaTotal} criteria met` : "";
+      out2(`${r.slug}	[${r.state}${rank}]	${r.title ?? "(no title)"}${criteria}`);
+    }
+    return;
+  }
+  if (sub === "new") {
+    const slug = argv[1];
+    if (!slug) fail("usage: hands recipe new <slug> [--title <text>]");
+    const files = recipeFiles(slug, cfg);
+    if (fs28.existsSync(files.path)) fail(`"${files.slug}" already exists at ${files.path} \u2014 edit it directly`);
+    const title = strOpt(argv, "--title") ?? slug;
+    fs28.mkdirSync(files.dir, { recursive: true });
+    fs28.writeFileSync(files.path, newRecipeStub(title));
+    out2(`\u2714 drafted "${files.slug}" at ${files.path} \u2014 edit it directly to fill in the description and criteria`);
+    return;
+  }
+  if (sub === "promote" || sub === "demote") {
+    const slug = argv[1];
+    if (!slug) fail(`usage: hands recipe ${sub} <slug>${sub === "promote" ? " [--rank N]" : ""}`);
+    const files = recipeFiles(slug, cfg);
+    if (!fs28.existsSync(files.path)) {
+      fail(`unknown recipe "${files.slug}" \u2014 no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+    }
+    const raw = fs28.readFileSync(files.path, "utf8");
+    const now = Date.now();
+    const journal = openJournal({ cwd: process.cwd(), config: cfg });
+    if (sub === "promote") {
+      const rankArg = strOpt(argv, "--rank");
+      const rank = rankArg ? Number.parseInt(rankArg, 10) : currentMenu(listRecipes(cfg)).length + 1;
+      if (rankArg !== void 0 && !Number.isInteger(rank)) fail("--rank must be an integer");
+      fs28.writeFileSync(files.path, stampRecipeState(raw, "menu", rank));
+      journal?.append("recipe.promoted", { slug: files.slug, rank, at: now });
+      out2(`\u2714 "${files.slug}" onto the menu (#${rank})`);
+    } else {
+      fs28.writeFileSync(files.path, stampRecipeState(raw, "book", null));
+      journal?.append("recipe.demoted", { slug: files.slug, at: now });
+      out2(`\u2714 "${files.slug}" back to the book`);
+    }
+    if (!journal) out2("  (books unavailable \u2014 state saved to the file, but this move won't show up in menu history)");
+    return;
+  }
+  if (sub === "history") {
+    const date5 = argv[1];
+    if (!date5 || !/^\d{4}-\d{2}-\d{2}$/.test(date5)) fail("usage: hands recipe history <YYYY-MM-DD>");
+    const dir = journalDir();
+    const project = resolveProject(cfg);
+    const handle = resolveHandle(cfg);
+    const events = readEvents(dir, project, handle);
+    const slugs = menuOnDay(events, date5);
+    if (slugs.length === 0) {
+      out2(`no recipes recorded on the menu for ${date5} (or the journal doesn't reach back that far)`);
+    } else {
+      out2(`On the menu ${date5}:`);
+      for (const s of slugs) out2(`  ${s}`);
+    }
+    return;
+  }
+  fail("usage: hands recipe <ls|new|promote|demote|history> [<slug>]");
 }
 function requireRemote() {
   const j = openJournal();
@@ -53293,6 +53429,8 @@ async function main2() {
         return cmdBooks(rest);
       case "craft":
         return cmdCraft(rest);
+      case "recipe":
+        return cmdRecipe(rest);
       case "scale":
         return cmdScale(rest);
       case "restore":

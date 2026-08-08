@@ -15,7 +15,7 @@ export const READ_ONLY_TOOLS = [
   "mcp__hands__hands_tasks",
   "mcp__hands__hands_peers",
   "mcp__hands__hands_history",
-  "mcp__hands__hands_priorities",
+  "mcp__hands__hands_menu",
   "mcp__hands__hands_questions",
   "mcp__hands__hands_paths",
   "mcp__hands__hands_todos",

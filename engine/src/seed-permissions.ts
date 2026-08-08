@@ -81,7 +81,7 @@ const ALLOW: readonly string[] = [
   "mcp__plugin_hands_hands__hands_peers",
   "mcp__plugin_hands_hands__hands_board",
   "mcp__plugin_hands_hands__hands_history",
-  "mcp__plugin_hands_hands__hands_priorities",
+  "mcp__plugin_hands_hands__hands_menu",
   "mcp__plugin_hands_hands__hands_questions",
   "mcp__plugin_hands_hands__hands_todos",
   ...SHIP_RULES,

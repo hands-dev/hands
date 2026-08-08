@@ -35,7 +35,7 @@ Every token costs; cut redundant verification — but NEVER the irreversible-act
 
 - **One bundled read per pass:** `hands_board({ full: true })` returns everything — `peers` (with
   `focus`, `state` active/idle, `online`, `wakesLastHour`), `activeTasks` (the rail, each with
-  `dish`), `openQuestions`, `priorities` (`{ items, set, stale }`), `collisions`, and `stateHash`.
+  `dish`), `openQuestions`, `menu` (`{ items, set, stale }`), `collisions`, and `stateHash`.
   Don't follow it with separate pulls for data you already have.
 - **Trust returned tickets.** Adjudicate from the `result` + the ticket's `priority`/`dish`. Don't
   re-read the station's source files or re-derive a conclusion it already evidenced. Spot-check
@@ -82,7 +82,7 @@ Every waking send costs the recipient a full model turn over its whole context; 
   not, whoever it's attributed to. Verify a claim about a station's own work yourself before
   relaying it — forwarding something unverified spends a wake on someone else's homework. Merge
   order, queue state, and priority sequencing are expo-only — a station asking "is my PR next" gets
-  an answer, not a picture. Broadly-needed facts belong in `hands_priorities` (everyone reads it),
+  an answer, not a picture. Broadly-needed facts belong in `hands_menu` (everyone reads it),
   not copied into N ticket bodies where they immediately start to drift. `hands_delegate` and
   `hands_send` both surface a non-blocking `warning` when a body names another peer's agent id —
   a mechanical backstop, not a substitute for writing it right the first time. Left unchecked,
@@ -169,7 +169,7 @@ the instant a station pings you.
 **Verify it's alive on every pass (hands#121) — not just once at arm-time:**
 
 1. `pgrep -fl "tail -F -n0 .*expo.notify"` — a hit means it's alive; proceed to "1. Make sure you
-   have the specials" below.
+   have the menu" below.
 2. No hit → it died silently. Confirmed trigger: a process/session restart — NOT `/compact`
    (tested directly: the tail survives it). You've been `deaf` since it died — indistinguishable
    from `idle` from the outside — which costs latency, never content (the bundled read and
@@ -187,14 +187,25 @@ the instant a station pings you.
 Treat each `<task-notification>` as an inbound bus event: run this loop (starting with the pgrep
 check above), then re-pace.
 
-## 1. Make sure you have the specials
+## 1. Make sure you have the menu
 
-From the bundled read's `priorities` (`{ items, set, stale }`):
+From the bundled read's `menu` (`{ items, set, stale }`) — `items` are recipes
+(`{slug, title, rank, criteriaDone, criteriaTotal}`), ranked, not the plain strings `priorities`
+used to be (hands#96/#137). Recipes are principal-authored, not yours to write: you have no tool
+that sets the menu, only `hands_menu({ confirm: true })` to mark it still-current.
 
-- **`items` empty:** ask the principal, in chat: *"What are today's specials, ranked?"* Set them
-  with `hands_priorities({ set: [...] })`. Do nothing else until you have them.
-- **`stale` (~a day old):** show the list, ask *"still current, in this order?"* Confirm or reset.
-- The principal can also edit `priorities.md` in the coordination dir directly.
+- **`items` empty:** ask the principal, in chat: *"What's on today's menu?"* Point them at
+  `/hands:recipe` to draft one, or `hands recipe new <slug>` + `hands recipe promote <slug>`
+  directly if they'd rather. Do nothing else until you have at least one.
+- **`stale` (~a day old):** show the list, ask *"still current, in this order?"* — `confirm: true`
+  if yes; if not, the principal reorders via `hands recipe promote <slug> --rank N` (or drafts a
+  new one) themselves.
+- The principal can also edit a recipe's `.md` file directly at any time — nothing here
+  round-trips through you.
+
+*(The rest of this skill still speaks "specials" — casting, ticket-firing, auto-resolve. That
+rename is real follow-on work, named but not done here; don't take the mixed vocabulary below as
+license to guess which one is current — this section is.)*
 
 ## 2. Drain the pass — adjudicate before you fire
 
