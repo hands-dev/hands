@@ -38,11 +38,12 @@ import {
 } from "./remote.js";
 import { formatRosterContext, listCrafts, roleCraftFoldNudges } from "./crafts.js";
 import { currentMenu, listRecipes } from "./recipes.js";
-import { type MessageRow, Store } from "./store.js";
+import { isSignoffStale, type MessageRow, Store, type TaskRow } from "./store.js";
 import { inboxMonitorAlive as inboxMonitorAliveReal } from "./watchers.js";
 import { readJournal, readPreviousPage } from "./journal-read.js";
 import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { listStations } from "./provision.js";
+import { activity, computeCollisions } from "./snapshot.js";
 
 const MENU_STALE_MS = 24 * 60 * 60_000;
 
@@ -106,10 +107,17 @@ export function buildServer(
   // path. Real-process scans are inherently racy under the heavy concurrent process churn a full
   // suite run creates; a test whose actual subject is warning-composition logic, not the scanner
   // itself, should not inherit that flakiness. Defaults to the real scanner everywhere else.
-  deps: { inboxMonitorAlive?: (stationId: string, notifyPath: string) => boolean | null } = {},
+  deps: {
+    inboxMonitorAlive?: (stationId: string, notifyPath: string) => boolean | null;
+    // Injectable for tests (hands#111) — same shape as inboxMonitorAlive above: the real lookup
+    // shells out to git against process.cwd(), right for the process this server actually runs
+    // in but wrong for a test that needs a deterministic origin/main sha without a real repo.
+    currentOriginSha?: () => string | null;
+  } = {},
 ): McpServer {
   const cfg = config ?? loadConfig();
   const checkMonitorAlive = deps.inboxMonitorAlive ?? inboxMonitorAliveReal;
+  const getCurrentOriginSha = deps.currentOriginSha ?? (() => currentWorktreeFacts(process.cwd()).originSha);
   const principal = cfg.principal.name;
   // Resolve a recipient ref: canonical/legacy ids pass through; anything else
   // tries the focus-label lookup ("developer API" → station-2). Label matches
@@ -801,8 +809,9 @@ export function buildServer(
         "'pre-ship' (dispatched before you may call hands on the dish: still right given everything " +
         "that moved while it was in flight). CDC returns its verdict as text from its own dispatch; " +
         "you record it here — CDC never calls this itself. A dish's tickets need a fresh 'approved' " +
-        "pre-ship signoff before you may act on §5 (review depth / merge) — see hands_tasks' `signoff` " +
-        "field for whether the most recent one is still fresh.",
+        "pre-ship signoff before hands_task_update will let you mark them 'done' (hands#111 — code-" +
+        "enforced, not just this reminder) — see hands_tasks' `signoff` field for whether the most " +
+        "recent one is still fresh before you get there.",
       inputSchema: {
         taskId: z.number().int(),
         checkpoint: z.enum(["pre-fire", "pre-ship"]),
@@ -1073,17 +1082,73 @@ export function buildServer(
     },
   );
 
+  /**
+   * hands#111/#139: the pre-ship gate, deterministic and code-enforced —
+   * `store.latestSignoff` used to be read in exactly one place (hands_tasks,
+   * for display) and consulted nowhere that actually gates shipping. A
+   * fresh, approved pre-ship sign-off is required to mark a ticket `done`;
+   * "fresh" is `isSignoffStale`'s existing definition (origin/main hasn't
+   * moved past the sha CDC judged against, and no live collision now
+   * involves the ticket's own assignee) — reusing the exact detector
+   * `hands_board`'s collision strip already runs, not a second one.
+   * Returns null when clear, or a refusal that names the ticket, what's
+   * wrong, and the exact commands to fix it — a gate that just says "no"
+   * is how gates get bypassed or quietly disabled.
+   */
+  function preShipSignoffProblem(t: TaskRow): string | null {
+    const dishOrTitle = t.dish ?? t.title;
+    const howTo =
+      `dispatch CDC: \`hands craft brief cdc --mode plan --task "pre-ship: ${dishOrTitle}"\`, then record its verdict — ` +
+      `\`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-ship", verdict, note, originSha })\`. To ship anyway ` +
+      "(trivial dish, or CDC genuinely unavailable), pass `skipSignoff` with a reason on this call — recorded, never silent.";
+
+    const signoff = store.latestSignoff(t.id, "pre-ship");
+    if (!signoff) return `task #${t.id} has no pre-ship CDC sign-off — ${howTo}`;
+    if (signoff.verdict !== "approved") {
+      return (
+        `task #${t.id}'s latest pre-ship sign-off was REJECTED` +
+        (signoff.note ? ` — ${signoff.note}` : "") +
+        `. Revise and get a fresh approved sign-off, or ${howTo}`
+      );
+    }
+
+    const currentOriginSha = getCurrentOriginSha();
+    const collisionAgents = store.listPeers(Date.now()).map((p) => {
+      const a = activity(p.activity);
+      return { id: p.id, online: p.online, files: a.files, ticket: a.ticket };
+    });
+    const hasNewCollision =
+      t.assignee != null &&
+      computeCollisions(collisionAgents).some(
+        (c) => c.kind === "file" && (c.a === t.assignee || c.b === t.assignee),
+      );
+    if (isSignoffStale(signoff, currentOriginSha, hasNewCollision)) {
+      const reason = hasNewCollision
+        ? `a live collision now involves ${t.assignee}`
+        : `origin/main has moved since it was judged (signed off against ${signoff.origin_sha}, HEAD is now ${currentOriginSha})`;
+      return `task #${t.id}'s pre-ship sign-off is stale — ${reason}. Get a fresh one: ${howTo}`;
+    }
+    return null;
+  }
+
   server.registerTool(
     "hands_task_update",
     {
       title: "Advance a ticket (fire / plate / serve / 86)",
       description:
         "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), " +
-        "'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it.",
+        "'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it. " +
+        "'done' requires a fresh, approved CDC pre-ship sign-off (hands#111/#139) — code-enforced, refuses otherwise. " +
+        "Pass `skipSignoff` with a reason to ship without one (trivial dish, CDC genuinely unavailable) — recorded in " +
+        "the journal, never silent.",
       inputSchema: {
         id: z.number().int(),
         state: z.enum(["in_progress", "returned", "done", "cancelled"]),
         result: z.string().optional().describe("the artifact/summary when returning"),
+        skipSignoff: z
+          .string()
+          .optional()
+          .describe("explicit reason to mark 'done' without a fresh CDC pre-ship sign-off — recorded, never silent"),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -1091,6 +1156,19 @@ export function buildServer(
       store.touch(agentId);
       const task = store.getTask(input.id);
       if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
+      if (input.state === "done") {
+        if (input.skipSignoff) {
+          store.journalAdd({
+            agentId,
+            kind: "note",
+            ref: `task:${input.id}`,
+            text: `CDC pre-ship sign-off overridden for task #${input.id} — ${input.skipSignoff}`,
+          });
+        } else {
+          const problem = preShipSignoffProblem(task);
+          if (problem) return { ...asToolResult({ ok: false, error: problem }), isError: true };
+        }
+      }
       // Claiming an unassigned task on start.
       const claim = input.state === "in_progress" && !task.assignee ? agentId : null;
       const outcome = store.updateTaskState({
