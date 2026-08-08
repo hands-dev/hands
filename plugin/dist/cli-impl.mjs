@@ -25545,6 +25545,14 @@ function booksDistilledRecently(entries, now, windowMs = WEEK_MS) {
     return !Number.isNaN(t) && now - t <= windowMs && now - t >= 0;
   }).length;
 }
+function roleCraftFoldNudges(store, config2, env = process.env, cwd = process.cwd()) {
+  const ready = listCraftFiles(config2, env, cwd).filter((e) => isRoleCraft(e.slug)).map((e) => ({ slug: e.slug, pendingNotes: store.pendingCraftNotes(e.slug).length })).filter((e) => e.pendingNotes >= FOLD_READY_THRESHOLD);
+  if (ready.length === 0) return "";
+  const lines = ready.map(
+    (e) => `${e.slug} has ${e.pendingNotes} pending note(s) \u2014 ready to fold (hands craft fold ${e.slug}).`
+  );
+  return "\n\nRole craft(s) ready to fold \u2014 not on the roster above by design (hands#139), still yours to fold:\n" + lines.join("\n");
+}
 function formatRosterContext(entries, targetDir, dispatchRate, now = Date.now()) {
   if (entries.length === 0) {
     return "\n\nNo crafts founded yet. Crafts are dispatched as sub-agents, not held \u2014 found one via /hands:crafts only for a durable, recurring beat.";
@@ -50564,7 +50572,10 @@ function buildServer(store, agentId, config2) {
   const server = new McpServer(
     { name: "hands", version: "0.1.0" },
     {
-      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's menu or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_menu to read the current menu, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " You are a generalist: you hold no craft of your own. You own the ticket and your worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices of work they cover \u2014 see the roster below." : "") + craftRosterContext(cfg, store)
+      instructions: `Per-repo agent message bus. You are agent "${agentId}". Refer to teammates by their canonical id (expo, station-1, \u2026; see hands_peers). Use hands_peers to discover the team, hands_send to message one, and hands_receive to read messages addressed to you. Call hands_receive at natural checkpoints \u2014 MCP cannot wake you unprompted. Never put secrets in message bodies (the shared DB stores them in plaintext). When you hit an open question or decision you can't resolve alone, escalate it with hands_ask \u2014 the expo (the main checkout) adjudicates against the day's menu or bubbles it to ${principal}. When a PR is ready to merge, ask the expo for the review-depth (/code-review vs the low variant) + merge (normal vs admin-merge) call rather than deciding it yourself.` + (isExpo(agentId) ? ` You ARE the expo \u2014 the expeditor at the pass / command center: run hands_questions, hands_menu to read the current menu, hands_answer to resolve, hands_escalate to bubble one up to ${principal}. You also self-manage ${principal}'s personal to-do list: hands_todo_add concrete things only they can do (idempotent via dedupKey), and hands_todo_update state='done' with a doneSignal when a strong signal (merged PR, commit, memory write, answered escalation) shows they finished one.` : "") + (isStation(agentId) ? " You are a generalist: you hold no craft of your own. You own the ticket and your worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices of work they cover \u2014 see the roster below." : "") + craftRosterContext(cfg, store) + // Role crafts (e.g. CDC) are excluded from the roster above by design (hands#139) — a
+      // station shouldn't browse or dispatch one ad hoc. But only the expo ever dispatches a
+      // role craft, so it's the only agent who needs to hear when one's book is ready to fold.
+      (isExpo(agentId) ? roleCraftFoldNudges(store, cfg) : "")
     }
   );
   server.registerTool(
