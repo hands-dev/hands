@@ -21781,6 +21781,54 @@ var init_store = __esm({
       );
 
       CREATE INDEX IF NOT EXISTS idx_task_signoffs_task ON task_signoffs (task_id, created_at);
+
+      -- hands#116 \u2014 a synced INDEX over recipe files' acceptance criteria, not
+      -- a second copy of their content. The recipe markdown stays the one
+      -- authored source; this table exists only because a checkbox in a file
+      -- has no identity beyond its position, and grading needs criteria to be
+      -- individually addressable. Refreshed by re-parsing on recipe
+      -- new/promote/demote/sync (see cmdRecipe); the file always wins on
+      -- disagreement \u2014 a criterion no longer found in a fresh parse goes to
+      -- active=0, never deleted (grading history survives a reword/removal)
+      -- and never trusted as still-current once stale.
+      CREATE TABLE IF NOT EXISTS recipe_criteria (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipe_slug     TEXT NOT NULL,
+        criterion_hash  TEXT NOT NULL,     -- content hash of the trimmed criterion text \u2014 NOT positional
+        text            TEXT NOT NULL,     -- last-synced text, so reads don't need a second file parse
+        checkbox_done   INTEGER NOT NULL,  -- the markdown checkbox as of last sync \u2014 the principal's own signal, never overwritten by grading
+        active          INTEGER NOT NULL DEFAULT 1,
+        first_seen_at   INTEGER NOT NULL,
+        last_synced_at  INTEGER NOT NULL,
+        UNIQUE(recipe_slug, criterion_hash)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recipe_criteria_recipe ON recipe_criteria (recipe_slug, active);
+
+      -- hands#116 \u2014 the sous's (or whoever grades before a sous exists)
+      -- verdict on a recipe's progress. Append-only, same shape as
+      -- task_signoffs (verdict/note/by/origin_sha staleness anchor), but a
+      -- PARALLEL table rather than a repurposed one: task_signoffs.task_id is
+      -- the wrong shape for a verdict about a recipe/criterion, which may
+      -- span many tickets or none yet. criterion_hash NULL = an
+      -- overall/recipe-level grade. Deliberately never written back into the
+      -- recipe file \u2014 a machine editing the principal's authored prose is
+      -- the exact thing #205's design avoided. When this disagrees with the
+      -- file's own checkbox, that disagreement is the useful signal to
+      -- surface, not something to silently resolve here.
+      CREATE TABLE IF NOT EXISTS recipe_grades (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipe_slug       TEXT NOT NULL,
+        criterion_hash    TEXT,            -- NULL = overall/recipe-level grade
+        verdict           TEXT NOT NULL,   -- met | not_met | partial
+        note              TEXT,
+        evidence_task_id  INTEGER,         -- optional soft ref: a ticket whose work is cited as evidence
+        origin_sha        TEXT,
+        by                TEXT NOT NULL,
+        created_at        INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recipe_grades_lookup ON recipe_grades (recipe_slug, criterion_hash, created_at);
     `);
         this.db.exec(`
       CREATE TABLE IF NOT EXISTS craft_notes (
@@ -21862,6 +21910,7 @@ var init_store = __esm({
         this.ensureColumn("tasks", "finished_at", "INTEGER");
         this.ensureColumn("agents", "focus", "TEXT");
         this.ensureColumn("tasks", "dish", "TEXT");
+        this.ensureColumn("tasks", "recipe_slug", "TEXT");
         this.ensureColumn("questions", "outcome", "TEXT");
         this.ensureColumn("questions", "outcome_note", "TEXT");
         this.ensureColumn("questions", "outcome_at", "INTEGER");
@@ -22444,6 +22493,81 @@ var init_store = __esm({
       signoffsForTask(taskId) {
         return this.db.prepare("SELECT * FROM task_signoffs WHERE task_id = ? ORDER BY id ASC").all(taskId);
       }
+      // --- recipe criteria + grading (hands#116) ---
+      /**
+       * Re-sync a recipe's criteria into SQL from a fresh parse of its file. Not journaled — this is a
+       * derived mirror of file content, re-derivable identically at any time by re-parsing, the same
+       * reason `listRecipes()` itself is never journaled. Upserts every criterion currently in the
+       * file (matched by content hash, so reordering is a no-op and rewording starts that criterion's
+       * row fresh) and marks any previously-active row NOT in this parse `active = 0` — never deleted,
+       * so grading history against a removed/reworded criterion survives for audit. The file always
+       * wins: this only ever moves SQL toward what's currently on disk, never the reverse.
+       */
+      syncRecipeCriteria(recipeSlug, criteria, now = Date.now()) {
+        this.withRetry(() => {
+          const seen = new Set(criteria.map((c) => c.hash));
+          const upsert = this.db.prepare(
+            `INSERT INTO recipe_criteria (recipe_slug, criterion_hash, text, checkbox_done, active, first_seen_at, last_synced_at)
+         VALUES (?, ?, ?, ?, 1, ?, ?)
+         ON CONFLICT(recipe_slug, criterion_hash) DO UPDATE SET
+           text = excluded.text, checkbox_done = excluded.checkbox_done, active = 1, last_synced_at = excluded.last_synced_at`
+          );
+          for (const c of criteria) {
+            upsert.run(recipeSlug, c.hash, c.text, c.done ? 1 : 0, now, now);
+          }
+          const staleClause = seen.size > 0 ? `AND criterion_hash NOT IN (${[...seen].map(() => "?").join(",")})` : "";
+          this.db.prepare(`UPDATE recipe_criteria SET active = 0, last_synced_at = ? WHERE recipe_slug = ? AND active = 1 ${staleClause}`).run(now, recipeSlug, ...seen);
+        });
+      }
+      /** A recipe's criteria — active only by default (soft-deleted ones stay in SQL for grading history but drop out of normal reads). */
+      criteriaForRecipe(recipeSlug, includeInactive = false) {
+        const clause = includeInactive ? "" : "AND active = 1";
+        return this.db.prepare(`SELECT * FROM recipe_criteria WHERE recipe_slug = ? ${clause} ORDER BY id ASC`).all(recipeSlug);
+      }
+      /**
+       * Record a grading verdict — append-only, never written back into the recipe file. Journaled
+       * (a genuine new fact, unlike the criteria sync above, which is a re-derivable cache). Mirrors
+       * `recordSignoff`'s shape but is deliberately a parallel table, not a reuse of `task_signoffs`:
+       * that table's `task_id` is the wrong key for a verdict about a recipe/criterion, which may span
+       * many tickets or none. `criterionHash: null` records an overall/recipe-level grade.
+       */
+      recordRecipeGrade(input) {
+        const now = input.now ?? Date.now();
+        const id = this.withRetry(() => {
+          const result = this.db.prepare(
+            `INSERT INTO recipe_grades (recipe_slug, criterion_hash, verdict, note, evidence_task_id, origin_sha, by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            input.recipeSlug,
+            input.criterionHash ?? null,
+            input.verdict,
+            input.note ?? null,
+            input.evidenceTaskId ?? null,
+            input.originSha ?? null,
+            input.by,
+            now
+          );
+          return Number(result.lastInsertRowid);
+        });
+        this.journal("recipe.graded", {
+          id,
+          recipeSlug: input.recipeSlug,
+          criterionHash: input.criterionHash ?? null,
+          verdict: input.verdict,
+          note: input.note ?? null,
+          evidenceTaskId: input.evidenceTaskId ?? null,
+          by: input.by,
+          at: now
+        });
+        return id;
+      }
+      /** The most recent grade per (recipe, criterion) — including the recipe-level row (criterion_hash IS NULL), keyed `""` in the returned map. */
+      latestRecipeGrades(recipeSlug) {
+        const rows = this.db.prepare("SELECT * FROM recipe_grades WHERE recipe_slug = ? ORDER BY id ASC").all(recipeSlug);
+        const latest = /* @__PURE__ */ new Map();
+        for (const r of rows) latest.set(r.criterion_hash ?? "", r);
+        return latest;
+      }
       // --- questions (worktree → expo escalation) ---
       askQuestion(input) {
         const now = input.now ?? Date.now();
@@ -22631,8 +22755,8 @@ var init_store = __esm({
         const state = input.assignee ? "assigned" : "open";
         const id = this.withRetry(() => {
           const result = this.db.prepare(
-            `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, dish, recipe_slug, thread_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
           ).run(
             input.createdBy,
             input.assignee ?? null,
@@ -22641,6 +22765,7 @@ var init_store = __esm({
             state,
             input.priority ?? null,
             input.dish ?? null,
+            input.recipeSlug ?? null,
             input.thread ?? null,
             now,
             now
@@ -22656,6 +22781,7 @@ var init_store = __esm({
           state,
           priority: input.priority ?? null,
           dish: input.dish ?? null,
+          recipeSlug: input.recipeSlug ?? null,
           thread: input.thread ?? null,
           at: now
         });
@@ -22678,6 +22804,10 @@ var init_store = __esm({
         }
         if (options?.active) {
           clauses.push("state IN ('open','assigned','in_progress','returned')");
+        }
+        if (options?.recipeSlug) {
+          clauses.push("recipe_slug = ?");
+          params.push(options.recipeSlug);
         }
         const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
         params.push(Math.max(1, Math.min(options?.limit ?? 100, 300)));
@@ -23243,8 +23373,8 @@ var init_store = __esm({
           case "task.create":
             this.withRetry(
               () => this.db.prepare(
-                `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, dish, recipe_slug, thread_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
               ).run(
                 f("id"),
                 f("by"),
@@ -23254,6 +23384,7 @@ var init_store = __esm({
                 f("state"),
                 f("priority"),
                 f("dish"),
+                f("recipeSlug"),
                 f("thread"),
                 at,
                 at
@@ -24467,6 +24598,7 @@ var init_provision = __esm({
 });
 
 // src/recipes.ts
+import * as crypto3 from "node:crypto";
 import * as fs13 from "node:fs";
 import * as path13 from "node:path";
 function readFileSafe(p) {
@@ -24506,6 +24638,10 @@ function parseRecipe(slug, content) {
     }
   }
   return { slug, state, rank, title, criteria, criteriaDone: criteria.filter((c) => c.done).length, criteriaTotal: criteria.length };
+}
+function criterionHash(text) {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return crypto3.createHash("sha256").update(normalized).digest("hex").slice(0, 16);
 }
 function stampRecipeState(content, state, rank) {
   const lines = content.split("\n");
@@ -24662,13 +24798,21 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
   const collisions = computeCollisions(agents);
   const journal = store.journalSince(0, 40).reverse().map((j) => ({ id: j.id, by: j.agent_id, kind: j.kind, text: j.text, ref: j.ref, at: j.created_at }));
   const messages = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
-  const menu = currentMenu(listRecipes(loadConfig({ env }), env)).map((r) => ({
-    slug: r.slug,
-    title: r.title,
-    rank: r.rank,
-    criteriaDone: r.criteriaDone,
-    criteriaTotal: r.criteriaTotal
-  }));
+  const menuRecipes = currentMenu(listRecipes(loadConfig({ env }), env));
+  const menu = menuRecipes.map((r) => {
+    const grades = store.latestRecipeGrades(r.slug);
+    const criterionGrades = [...grades.entries()].filter(([hash2]) => hash2 !== "");
+    return {
+      slug: r.slug,
+      title: r.title,
+      rank: r.rank,
+      criteriaDone: r.criteriaDone,
+      criteriaTotal: r.criteriaTotal,
+      gradedCriteria: criterionGrades.length,
+      metCriteria: criterionGrades.filter(([, g]) => g.verdict === "met").length
+    };
+  });
+  const onMenuSlugs = new Set(menuRecipes.map((r) => r.slug));
   const questions = store.listQuestions({ limit: 30 }).map((q) => ({
     id: q.id,
     asker: q.asker,
@@ -24723,6 +24867,8 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
     state: t.state,
     priority: t.priority_ref,
     dish: t.dish,
+    recipeSlug: t.recipe_slug,
+    offMenu: t.recipe_slug != null && !onMenuSlugs.has(t.recipe_slug),
     result: t.result,
     at: t.updated_at,
     createdAt: t.created_at,
@@ -39360,7 +39506,7 @@ var init_shimsNode = __esm({
 
 // node_modules/pkce-challenge/dist/index.node.js
 async function getRandomValues(size) {
-  return (await crypto3).getRandomValues(new Uint8Array(size));
+  return (await crypto4).getRandomValues(new Uint8Array(size));
 }
 async function random(size) {
   const mask = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-._~";
@@ -39380,7 +39526,7 @@ async function generateVerifier(length) {
   return await random(length);
 }
 async function generateChallenge(code_verifier) {
-  const buffer = await (await crypto3).subtle.digest("SHA-256", new TextEncoder().encode(code_verifier));
+  const buffer = await (await crypto4).subtle.digest("SHA-256", new TextEncoder().encode(code_verifier));
   return btoa(String.fromCharCode(...new Uint8Array(buffer))).replace(/\//g, "_").replace(/\+/g, "-").replace(/=/g, "");
 }
 async function pkceChallenge(length) {
@@ -39396,10 +39542,10 @@ async function pkceChallenge(length) {
     code_challenge: challenge
   };
 }
-var crypto3;
+var crypto4;
 var init_index_node = __esm({
   "node_modules/pkce-challenge/dist/index.node.js"() {
-    crypto3 = globalThis.crypto?.webcrypto ?? // Node.js [18-16] REPL
+    crypto4 = globalThis.crypto?.webcrypto ?? // Node.js [18-16] REPL
     globalThis.crypto ?? // Node.js >18
     import("node:crypto").then((m) => m.webcrypto);
   }
@@ -52019,6 +52165,8 @@ ${input.body}`, [agentId, ...recipients]);
         usageMode: currentUsageMode()
       };
       if (!input.full) return asToolResult(base);
+      const menu = currentMenu(listRecipes(cfg));
+      const onMenu = new Set(menu.map((r) => r.slug));
       const activeTasks = store.listTasks({ active: true }).map((t) => ({
         id: t.id,
         title: t.title,
@@ -52026,6 +52174,8 @@ ${input.body}`, [agentId, ...recipients]);
         state: t.state,
         priority: t.priority_ref ?? void 0,
         dish: t.dish ?? void 0,
+        recipeSlug: t.recipe_slug ?? void 0,
+        offMenu: t.recipe_slug != null && !onMenu.has(t.recipe_slug),
         updatedAt: new Date(t.updated_at).toISOString()
       }));
       const openQuestions = store.listQuestions({ state: "open" }).map((q) => ({
@@ -52035,7 +52185,6 @@ ${input.body}`, [agentId, ...recipients]);
         context: q.context ?? void 0,
         askedAt: new Date(q.created_at).toISOString()
       }));
-      const menu = currentMenu(listRecipes(cfg));
       const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
       return asToolResult({
@@ -52304,6 +52453,97 @@ ${input.body}`, [agentId, ...recipients]);
       });
     }
   );
+  function syncAndParseRecipe(slug) {
+    const files = recipeFiles(slug, cfg);
+    let raw = null;
+    try {
+      raw = fs21.readFileSync(files.path, "utf8");
+    } catch {
+      raw = null;
+    }
+    const recipe = parseRecipe(slug, raw);
+    store.syncRecipeCriteria(
+      slug,
+      recipe.criteria.map((c) => ({ hash: criterionHash(c.text), text: c.text, done: c.done }))
+    );
+    return recipe;
+  }
+  server.registerTool(
+    "hands_recipe_grade",
+    {
+      title: "Record a grading verdict for a recipe or one of its criteria (hands#116)",
+      description: "Record whether a recipe \u2014 or one specific acceptance criterion \u2014 is met. Designed for whoever grades recipe progress (the sous, once it holds sign-off authority; the expo or anyone else in the meantime \u2014 not role-gated). Append-only: the most recent grade per (recipe, criterion) is the current verdict, history is kept. This NEVER edits the recipe's markdown checkbox \u2014 that stays the principal's own informal signal. If your verdict disagrees with the checkbox, record it anyway; the disagreement is the useful signal, surfaced on the dashboard/rail, not something to resolve here. Omit criterionHash for an overall/recipe-level grade rather than one criterion's.",
+      inputSchema: {
+        recipeSlug: external_exports3.string(),
+        criterionHash: external_exports3.string().optional().describe("which criterion (from hands_recipe_status's criteria list) \u2014 omit for an overall/recipe-level grade"),
+        verdict: external_exports3.enum(["met", "not_met", "partial"]),
+        note: external_exports3.string().optional(),
+        evidenceTaskId: external_exports3.number().int().optional().describe("a ticket whose returned work is cited as evidence for this verdict"),
+        originSha: external_exports3.string().optional().describe("origin/main HEAD at grading time \u2014 the staleness anchor, same as hands_craft_signoff")
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      const recipe = syncAndParseRecipe(input.recipeSlug);
+      if (!recipe.title && recipe.criteria.length === 0) {
+        return { ...asToolResult({ ok: false, error: `no such recipe "${input.recipeSlug}"` }), isError: true };
+      }
+      if (input.criterionHash) {
+        const active = store.criteriaForRecipe(input.recipeSlug);
+        if (!active.some((c) => c.criterion_hash === input.criterionHash)) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error: `criterionHash "${input.criterionHash}" isn't among "${input.recipeSlug}"'s current criteria. Current criteria: ${active.map((c) => `${c.criterion_hash} (${c.text})`).join("; ") || "(none)"}.`
+            }),
+            isError: true
+          };
+        }
+      }
+      const id = store.recordRecipeGrade({
+        recipeSlug: input.recipeSlug,
+        criterionHash: input.criterionHash ?? null,
+        verdict: input.verdict,
+        note: input.note ?? null,
+        evidenceTaskId: input.evidenceTaskId ?? null,
+        originSha: input.originSha ?? null,
+        by: agentId
+      });
+      return asToolResult({ ok: true, id });
+    }
+  );
+  server.registerTool(
+    "hands_recipe_status",
+    {
+      title: "Where are we at with a recipe? (hands#116)",
+      description: "Read-only: one recipe's criteria (checkbox state + last-synced text), the latest grade per criterion and overall, and the tickets currently laddering up to it. Re-syncs the recipe's criteria from its file before answering, so this is never stale relative to what's on disk. Where a criterion's checkbox and its latest grade disagree, both are returned as-is \u2014 that's the signal, not a bug to resolve client-side either.",
+      inputSchema: { recipeSlug: external_exports3.string() },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      const recipe = syncAndParseRecipe(input.recipeSlug);
+      const criteria = store.criteriaForRecipe(input.recipeSlug);
+      const grades = store.latestRecipeGrades(input.recipeSlug);
+      const overallGrade = grades.get("");
+      const linkedTasks = store.listTasks({ recipeSlug: input.recipeSlug, limit: 300 });
+      return asToolResult({
+        slug: input.recipeSlug,
+        title: recipe.title,
+        state: recipe.state,
+        rank: recipe.rank,
+        criteria: criteria.map((c) => ({
+          hash: c.criterion_hash,
+          text: c.text,
+          checkboxDone: Boolean(c.checkbox_done),
+          grade: grades.get(c.criterion_hash) ?? null
+        })),
+        overallGrade: overallGrade ?? null,
+        tickets: linkedTasks.map((t) => ({ id: t.id, title: t.title, state: t.state, assignee: t.assignee }))
+      });
+    }
+  );
   server.registerTool(
     "hands_delegate",
     {
@@ -52315,6 +52555,9 @@ ${input.body}`, [agentId, ...recipients]);
         to: external_exports3.string().optional(),
         priority: external_exports3.string().optional(),
         dish: external_exports3.string().optional().describe('the DISH this ticket helps assemble \u2014 external ref ("ENG-1476", "PR #2455")'),
+        recipeSlug: external_exports3.string().optional().describe(
+          "the recipe this ticket ladders up to (hands#116) \u2014 required, and must currently be on the menu (state: menu). Not the same as `dish`, which is a generic external ref (Linear/GitHub) unrelated to recipes. `hands recipe promote <slug>` first if the recipe you want isn't on the menu yet."
+        ),
         force: external_exports3.boolean().optional().describe(
           "dispatch even if the station has no current attestation (hands#157). Use when you know the risk and accept it \u2014 the refusal exists because a ticket is only as good as the picture behind it."
         )
@@ -52337,6 +52580,26 @@ ${input.body}`, [agentId, ...recipients]);
           ...asToolResult({
             ok: false,
             error: "hands_delegate requires `to` \u2014 a station-less ticket sits in a queue nothing ever reads (hands#164). Assign it to a specific station."
+          }),
+          isError: true
+        };
+      }
+      const menu = currentMenu(listRecipes(cfg));
+      const menuList = menu.length > 0 ? menu.map((r) => r.slug).join(", ") : "(nothing on the menu right now)";
+      if (!input.recipeSlug) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error: `hands_delegate requires recipeSlug \u2014 every ticket ladders up to a recipe on today's menu (hands#116). Today's menu: ${menuList}. If the right recipe isn't listed, hands recipe promote <slug> first (or hands recipe new <slug> if it doesn't exist yet).`
+          }),
+          isError: true
+        };
+      }
+      if (!menu.some((r) => r.slug === input.recipeSlug)) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error: `"${input.recipeSlug}" is not on today's menu \u2014 today's menu: ${menuList}. hands recipe promote ${input.recipeSlug} first.`
           }),
           isError: true
         };
@@ -52367,7 +52630,8 @@ ${input.body}`, [agentId, ...recipients]);
         title: input.title,
         body: input.body ?? null,
         priority: input.priority ?? null,
-        dish: input.dish ?? null
+        dish: input.dish ?? null,
+        recipeSlug: input.recipeSlug
       });
       deliverWake([assignee], { from: agentId, subject: "task" });
       const assigneePeer = store.listPeers().find((p) => p.id === assignee);
@@ -52406,6 +52670,7 @@ ${input.body ?? ""}`, [agentId, assignee]);
         active: input.active,
         limit: input.limit
       });
+      const onMenu = new Set(currentMenu(listRecipes(cfg)).map((r) => r.slug));
       return asToolResult({
         count: rows.length,
         tasks: rows.map((t) => {
@@ -52420,6 +52685,8 @@ ${input.body ?? ""}`, [agentId, assignee]);
             result: t.result ?? void 0,
             priority: t.priority_ref ?? void 0,
             dish: t.dish ?? void 0,
+            recipeSlug: t.recipe_slug ?? void 0,
+            offMenu: t.recipe_slug != null && !onMenu.has(t.recipe_slug),
             updatedAt: new Date(t.updated_at).toISOString(),
             // hands#139/#91/#95/#112 — the most recent CDC checkpoint
             // verdict (any of pre-fire/pre-return/pre-ship), if any.
@@ -54244,42 +54511,6 @@ function cmdRecipe(argv) {
     }
     return;
   }
-  if (sub === "new") {
-    const slug = argv[1];
-    if (!slug) fail("usage: hands recipe new <slug> [--title <text>]");
-    const files = recipeFiles(slug, cfg);
-    if (fs28.existsSync(files.path)) fail(`"${files.slug}" already exists at ${files.path} \u2014 edit it directly`);
-    const title = strOpt(argv, "--title") ?? slug;
-    fs28.mkdirSync(files.dir, { recursive: true });
-    fs28.writeFileSync(files.path, newRecipeStub(title));
-    out2(`\u2714 drafted "${files.slug}" at ${files.path} \u2014 edit it directly to fill in the description and criteria`);
-    return;
-  }
-  if (sub === "promote" || sub === "demote") {
-    const slug = argv[1];
-    if (!slug) fail(`usage: hands recipe ${sub} <slug>${sub === "promote" ? " [--rank N]" : ""}`);
-    const files = recipeFiles(slug, cfg);
-    if (!fs28.existsSync(files.path)) {
-      fail(`unknown recipe "${files.slug}" \u2014 no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
-    }
-    const raw = fs28.readFileSync(files.path, "utf8");
-    const now = Date.now();
-    const journal = openJournal({ cwd: process.cwd(), config: cfg });
-    if (sub === "promote") {
-      const rankArg = strOpt(argv, "--rank");
-      const rank = rankArg ? Number.parseInt(rankArg, 10) : currentMenu(listRecipes(cfg)).length + 1;
-      if (rankArg !== void 0 && !Number.isInteger(rank)) fail("--rank must be an integer");
-      fs28.writeFileSync(files.path, stampRecipeState(raw, "menu", rank));
-      journal?.append("recipe.promoted", { slug: files.slug, rank, at: now });
-      out2(`\u2714 "${files.slug}" onto the menu (#${rank})`);
-    } else {
-      fs28.writeFileSync(files.path, stampRecipeState(raw, "book", null));
-      journal?.append("recipe.demoted", { slug: files.slug, at: now });
-      out2(`\u2714 "${files.slug}" back to the book`);
-    }
-    if (!journal) out2("  (books unavailable \u2014 state saved to the file, but this move won't show up in menu history)");
-    return;
-  }
   if (sub === "history") {
     const date5 = argv[1];
     if (!date5 || !/^\d{4}-\d{2}-\d{2}$/.test(date5)) fail("usage: hands recipe history <YYYY-MM-DD>");
@@ -54296,7 +54527,110 @@ function cmdRecipe(argv) {
     }
     return;
   }
-  fail("usage: hands recipe <ls|new|promote|demote|history> [<slug>]");
+  const store = new Store();
+  try {
+    const syncCriteria = (slug) => {
+      const files = recipeFiles(slug, cfg);
+      const raw = fs28.existsSync(files.path) ? fs28.readFileSync(files.path, "utf8") : null;
+      const recipe = parseRecipe(slug, raw);
+      store.syncRecipeCriteria(
+        slug,
+        recipe.criteria.map((c) => ({ hash: criterionHash(c.text), text: c.text, done: c.done }))
+      );
+    };
+    if (sub === "new") {
+      const slug = argv[1];
+      if (!slug) fail("usage: hands recipe new <slug> [--title <text>]");
+      const files = recipeFiles(slug, cfg);
+      if (fs28.existsSync(files.path)) fail(`"${files.slug}" already exists at ${files.path} \u2014 edit it directly`);
+      const title = strOpt(argv, "--title") ?? slug;
+      fs28.mkdirSync(files.dir, { recursive: true });
+      fs28.writeFileSync(files.path, newRecipeStub(title));
+      syncCriteria(files.slug);
+      out2(`\u2714 drafted "${files.slug}" at ${files.path} \u2014 edit it directly to fill in the description and criteria`);
+      return;
+    }
+    if (sub === "promote" || sub === "demote") {
+      const slug = argv[1];
+      if (!slug) fail(`usage: hands recipe ${sub} <slug>${sub === "promote" ? " [--rank N]" : ""}`);
+      const files = recipeFiles(slug, cfg);
+      if (!fs28.existsSync(files.path)) {
+        fail(`unknown recipe "${files.slug}" \u2014 no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+      }
+      const raw = fs28.readFileSync(files.path, "utf8");
+      const now = Date.now();
+      const journal = openJournal({ cwd: process.cwd(), config: cfg });
+      if (sub === "promote") {
+        const rankArg = strOpt(argv, "--rank");
+        const rank = rankArg ? Number.parseInt(rankArg, 10) : currentMenu(listRecipes(cfg)).length + 1;
+        if (rankArg !== void 0 && !Number.isInteger(rank)) fail("--rank must be an integer");
+        fs28.writeFileSync(files.path, stampRecipeState(raw, "menu", rank));
+        journal?.append("recipe.promoted", { slug: files.slug, rank, at: now });
+        out2(`\u2714 "${files.slug}" onto the menu (#${rank})`);
+      } else {
+        fs28.writeFileSync(files.path, stampRecipeState(raw, "book", null));
+        journal?.append("recipe.demoted", { slug: files.slug, at: now });
+        out2(`\u2714 "${files.slug}" back to the book`);
+      }
+      if (!journal) out2("  (books unavailable \u2014 state saved to the file, but this move won't show up in menu history)");
+      syncCriteria(files.slug);
+      return;
+    }
+    if (sub === "sync") {
+      const slug = argv[1];
+      if (!slug) fail("usage: hands recipe sync <slug>");
+      const files = recipeFiles(slug, cfg);
+      if (!fs28.existsSync(files.path)) {
+        fail(`unknown recipe "${files.slug}" \u2014 no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+      }
+      syncCriteria(files.slug);
+      const criteria = store.criteriaForRecipe(files.slug);
+      out2(`\u2714 synced "${files.slug}" \u2014 ${criteria.length} active criteria`);
+      for (const c of criteria) out2(`  ${c.criterion_hash}	[${c.checkbox_done ? "x" : " "}]	${c.text}`);
+      return;
+    }
+    if (sub === "grade") {
+      const slug = argv[1];
+      const verdict = strOpt(argv, "--verdict");
+      if (!slug || !verdict) fail("usage: hands recipe grade <slug> [--criterion <hash>] --verdict met|not_met|partial [--note <text>] [--evidence-task <id>]");
+      if (verdict !== "met" && verdict !== "not_met" && verdict !== "partial") {
+        fail(`--verdict must be met, not_met, or partial (got "${verdict}")`);
+      }
+      const files = recipeFiles(slug, cfg);
+      if (!fs28.existsSync(files.path)) {
+        fail(`unknown recipe "${files.slug}" \u2014 no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+      }
+      syncCriteria(files.slug);
+      const criterionHashArg = strOpt(argv, "--criterion");
+      if (criterionHashArg) {
+        const active = store.criteriaForRecipe(files.slug);
+        if (!active.some((c) => c.criterion_hash === criterionHashArg)) {
+          fail(
+            `criterion "${criterionHashArg}" isn't among "${files.slug}"'s current criteria \u2014 \`hands recipe sync ${files.slug}\` to see current hashes.`
+          );
+        }
+      }
+      const evidenceArg = strOpt(argv, "--evidence-task");
+      const evidenceTaskId = evidenceArg ? Number.parseInt(evidenceArg, 10) : void 0;
+      if (evidenceArg !== void 0 && !Number.isInteger(evidenceTaskId)) fail("--evidence-task must be an integer task id");
+      store.recordRecipeGrade({
+        recipeSlug: files.slug,
+        criterionHash: criterionHashArg ?? null,
+        verdict,
+        note: strOpt(argv, "--note") ?? null,
+        evidenceTaskId: evidenceTaskId ?? null,
+        originSha: currentWorktreeFacts(process.cwd()).originSha,
+        by: resolveAgentId()
+      });
+      out2(
+        `\u2714 graded "${files.slug}"${criterionHashArg ? ` (criterion ${criterionHashArg})` : " (overall)"}: ${verdict}. Not written back into the recipe file \u2014 the checkbox stays the principal's own signal.`
+      );
+      return;
+    }
+    fail("usage: hands recipe <ls|new|promote|demote|history|sync|grade> [<slug>]");
+  } finally {
+    store.close();
+  }
 }
 function requireRemote() {
   const j = openJournal();

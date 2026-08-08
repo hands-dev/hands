@@ -26,6 +26,13 @@ beforeEach(() => {
   process.env.HANDS_NO_REPO_CONFIG = "1";
   stores = [];
   cleanups = [];
+  // hands#116 — hands_delegate now hard-requires an on-menu recipe. DEFAULT_CONFIG has no
+  // remote.url, so recipesDir() falls back to <coordinationDir>/recipes = home/recipes here.
+  fs.mkdirSync(path.join(home, "recipes"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, "recipes", "test-recipe.md"),
+    "# Test recipe\n> state: menu · rank: 1\n\n## Acceptance criteria\n- [ ] it works\n",
+  );
 });
 
 afterEach(async () => {
@@ -178,7 +185,7 @@ describe("silent-failure surfacing (hands#173, hands#183)", () => {
   it("warns on hands_delegate when the assignee's pid is confirmed dead, but still creates the ticket", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: deadPid() });
-    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     expect(res.body.ok).toBe(true);
     expect(res.body.assignedTo).toBe("station-1");
     expect(res.body.warning).toContain("station-1");
@@ -190,7 +197,7 @@ describe("silent-failure surfacing (hands#173, hands#183)", () => {
     // the monitor's liveness is injected rather than proven with a spawned tail + process scan.
     const expo = await connect("expo", DEFAULT_CONFIG, { inboxMonitorAlive: () => true });
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
-    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     expect(res.body.warning).toBeUndefined();
   });
 
@@ -202,7 +209,7 @@ describe("silent-failure surfacing (hands#173, hands#183)", () => {
       // live session that has gone deaf looks identical to a healthy one
       // everywhere except here.
       stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: process.pid });
-      const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+      const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
       expect(res.body.ok).toBe(true); // NOT refused — the ticket is durably created regardless
       expect(res.body.assignedTo).toBe("station-1");
       expect(res.body.warning).toContain("station-1");
@@ -249,7 +256,7 @@ describe("assignment is expo-exclusive, no unassigned rail (hands#171/#87 phase 
   it("still lets the expo assign normally", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     expect(res.isError).toBe(false);
     expect(res.body.assignedTo).toBe("station-1");
   });
@@ -264,6 +271,7 @@ describe("cross-peer-id mention warning (hands#170)", () => {
       title: "fix the bug",
       body: "station-2 found this in their branch, go check it",
       to: "station-1",
+      recipeSlug: "test-recipe",
     });
     expect(res.isError).toBe(false); // still lands — warning, not a block
     expect(String(res.body.warning)).toContain("station-2");
@@ -281,6 +289,7 @@ describe("cross-peer-id mention warning (hands#170)", () => {
       title: "fix the bug",
       body: "station-1, confirm your diff to main.ts is limited to the digest line",
       to: "station-1",
+      recipeSlug: "test-recipe",
     });
     expect(res.body.warning).toBeUndefined();
   });
@@ -322,7 +331,7 @@ describe("hands_obligations / hands_chase_mark (hands#164)", () => {
   it("does not surface a fresh ticket still inside the threshold", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const res = await call(expo, "hands_obligations", { unclaimedAfterMinutes: 10 });
     expect(res.body.obligations).toEqual([]);
   });
@@ -399,11 +408,135 @@ describe("hands_escalate wakes sous when configured (hands#87/#171 phase b)", ()
   });
 });
 
+describe("hands_delegate recipe linkage (hands#116) — every ticket ladders up to an on-menu recipe", () => {
+  it("rejects a delegation with no recipeSlug, listing today's menu", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("requires recipeSlug");
+    expect(String(res.body.error)).toContain("test-recipe");
+    expect(stores[0]!.listTasks()).toHaveLength(0);
+  });
+
+  it("rejects a recipeSlug that exists but isn't on the menu (book-state)", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    fs.writeFileSync(
+      path.join(home, "recipes", "book-recipe.md"),
+      "# Book recipe\n> state: book\n\n## Acceptance criteria\n- [ ] not yet promoted\n",
+    );
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "book-recipe" });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("not on today's menu");
+    expect(String(res.body.error)).toContain("hands recipe promote book-recipe");
+  });
+
+  it("rejects a recipeSlug that doesn't exist at all — same error shape as book-state", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "no-such-recipe" });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("not on today's menu");
+  });
+
+  it("succeeds and stores recipe_slug when the recipe is on the menu", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const res = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
+    expect(res.isError).toBe(false);
+    expect(stores[0]!.getTask(res.body.id as number)?.recipe_slug).toBe("test-recipe");
+  });
+
+  it("a demoted recipe doesn't invalidate an existing ticket — it surfaces as offMenu drift instead", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
+    expect(del.isError).toBe(false);
+
+    // demote the recipe out from under the already-created ticket
+    fs.writeFileSync(
+      path.join(home, "recipes", "test-recipe.md"),
+      "# Test recipe\n> state: book\n\n## Acceptance criteria\n- [ ] it works\n",
+    );
+
+    const tasks = await call(expo, "hands_tasks", {});
+    const t = (tasks.body.tasks as Array<{ id: number; recipeSlug?: string; offMenu?: boolean }>).find(
+      (x) => x.id === (del.body.id as number),
+    );
+    expect(t?.recipeSlug).toBe("test-recipe"); // the ticket's own link is untouched
+    expect(t?.offMenu).toBe(true); // but it's now visible drift, not silently fine
+
+    // the station can still progress the ticket normally — demotion never blocks in-flight work
+    const w1 = await connect("station-1", DEFAULT_CONFIG);
+    const start = await call(w1, "hands_task_update", { id: del.body.id, state: "in_progress" });
+    expect(start.isError).toBe(false);
+  });
+});
+
+describe("hands_recipe_grade / hands_recipe_status (hands#116)", () => {
+  it("grades a criterion, and hands_recipe_status surfaces it beside the checkbox — even when they disagree", async () => {
+    const expo = await connect("expo");
+    fs.writeFileSync(
+      path.join(home, "recipes", "test-recipe.md"),
+      "# Test recipe\n> state: menu · rank: 1\n\n## Acceptance criteria\n- [x] it works\n",
+    );
+    const status0 = await call(expo, "hands_recipe_status", { recipeSlug: "test-recipe" });
+    const hash = (status0.body.criteria as Array<{ hash: string; text: string }>)[0]!.hash;
+    expect((status0.body.criteria as Array<{ checkboxDone: boolean; grade: unknown }>)[0]).toMatchObject({
+      checkboxDone: true,
+      grade: null,
+    });
+
+    const grade = await call(expo, "hands_recipe_grade", {
+      recipeSlug: "test-recipe",
+      criterionHash: hash,
+      verdict: "not_met",
+      note: "regressed since the checkbox was ticked",
+    });
+    expect(grade.isError).toBe(false);
+
+    const status1 = await call(expo, "hands_recipe_status", { recipeSlug: "test-recipe" });
+    const c = (status1.body.criteria as Array<{ checkboxDone: boolean; grade: { verdict: string } | null }>)[0]!;
+    // the disagreement is surfaced as-is, not resolved — checkbox still true, grade says not_met
+    expect(c.checkboxDone).toBe(true);
+    expect(c.grade?.verdict).toBe("not_met");
+  });
+
+  it("rejects grading a criterionHash that isn't among the recipe's current criteria", async () => {
+    const expo = await connect("expo");
+    const res = await call(expo, "hands_recipe_grade", {
+      recipeSlug: "test-recipe",
+      criterionHash: "not-a-real-hash",
+      verdict: "met",
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("isn't among");
+  });
+
+  it("records an overall grade when criterionHash is omitted", async () => {
+    const expo = await connect("expo");
+    const res = await call(expo, "hands_recipe_grade", { recipeSlug: "test-recipe", verdict: "partial", note: "getting there" });
+    expect(res.isError).toBe(false);
+    const status = await call(expo, "hands_recipe_status", { recipeSlug: "test-recipe" });
+    expect((status.body.overallGrade as { verdict: string })?.verdict).toBe("partial");
+  });
+
+  it("hands_recipe_status lists tickets currently laddering up to the recipe", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
+    const status = await call(expo, "hands_recipe_status", { recipeSlug: "test-recipe" });
+    const tickets = status.body.tickets as Array<{ id: number; title: string }>;
+    expect(tickets.map((t) => t.id)).toContain(del.body.id);
+  });
+});
+
 describe("hands_craft_signoff (hands#139/#91/#95)", () => {
   it("records CDC's verdict for a ticket, and hands_tasks surfaces it back", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const taskId = del.body.id as number;
 
     const res = await call(expo, "hands_craft_signoff", {
@@ -432,7 +565,7 @@ describe("hands_craft_signoff (hands#139/#91/#95)", () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
     const w1 = await connect("station-1");
-    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
 
     const res = await call(w1, "hands_craft_signoff", {
       taskId: del.body.id as number,
@@ -457,7 +590,7 @@ describe("hands_craft_signoff (hands#139/#91/#95)", () => {
   it("hands_tasks reports no signoff field for a ticket that's never been judged", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const tasks = await call(expo, "hands_tasks", { assignee: "station-1" });
     const mine = (tasks.body.tasks as Array<{ signoff?: unknown }>)[0];
     expect(mine?.signoff).toBeUndefined();
@@ -466,7 +599,7 @@ describe("hands_craft_signoff (hands#139/#91/#95)", () => {
   it("hands#112: a station MAY record 'pre-return' for a task it owns", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const w1 = await connect("station-1");
 
     const res = await call(w1, "hands_craft_signoff", {
@@ -481,7 +614,7 @@ describe("hands_craft_signoff (hands#139/#91/#95)", () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
     stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
-    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const w2 = await connect("station-2");
 
     const res = await call(w2, "hands_craft_signoff", {
@@ -497,7 +630,7 @@ describe("hands_craft_signoff (hands#139/#91/#95)", () => {
   it("hands#112: a station still may NOT record 'pre-fire' or 'pre-ship' even for its own task — those stay expo-exclusive", async () => {
     const expo = await connect("expo");
     stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const w1 = await connect("station-1");
 
     for (const checkpoint of ["pre-fire", "pre-ship"] as const) {
@@ -521,7 +654,7 @@ describe("board stateHash + full bundle", () => {
     const b = await call(expo, "hands_board", {});
     expect(a.body.stateHash).toBeTruthy();
     expect(a.body.stateHash).toBe(b.body.stateHash);
-    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const c = await call(expo, "hands_board", {});
     expect(c.body.stateHash).not.toBe(a.body.stateHash);
   });
@@ -530,7 +663,7 @@ describe("board stateHash + full bundle", () => {
     const expo = await connect("expo");
     const store = stores[0]!;
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     store.askQuestion({ asker: "station-1", question: "ship it?" });
     const res = await call(expo, "hands_board", { full: true });
     const tasks = res.body.activeTasks as Array<{ title: string; assignee: string }>;
@@ -538,7 +671,9 @@ describe("board stateHash + full bundle", () => {
     expect(tasks[0]!.assignee).toBe("station-1");
     const questions = res.body.openQuestions as Array<{ question: string }>;
     expect(questions.map((q) => q.question)).toContain("ship it?");
-    expect(res.body.menu).toMatchObject({ set: false });
+    // hands#116 — beforeEach now seeds a promoted "test-recipe" (hands_delegate requires one), so
+    // the menu is non-empty here; this assertion is just confirming the bundle carries it through.
+    expect(res.body.menu).toMatchObject({ set: true });
     const plain = await call(expo, "hands_board", {});
     expect(plain.body.activeTasks).toBeUndefined();
   });
@@ -591,7 +726,7 @@ describe("wake accounting (wake_log)", () => {
     const expo = await connect("expo");
     const store = stores[0]!;
     store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const board = await call(expo, "hands_board", {});
     const w1 = (board.body.peers as Array<{ id: string; wakesLastHour: number }>).find(
       (p) => p.id === "station-1",

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildBoard } from "../src/board.js";
 import { loadConfig } from "../src/config.js";
 import {
+  criterionHash,
   currentMenu,
   listRecipes,
   menuOnDay,
@@ -63,6 +64,131 @@ describe("recipes (hands#96/#137 — replaces priorities.md/hands_priorities)", 
     expect(r.title).toBe("Fix DELETE 404s");
     expect(r.criteriaTotal).toBe(2);
     expect(r.criteriaDone).toBe(1);
+  });
+});
+
+describe("criterionHash — stable identity for grading (hands#116)", () => {
+  it("is stable across reordering (content-based, not positional)", () => {
+    const a = criterionHash("Given X, when Y, then Z.");
+    const b = criterionHash("Given X, when Y, then Z.");
+    expect(a).toBe(b);
+  });
+
+  it("ignores cosmetic whitespace differences (trim + collapsed internal whitespace)", () => {
+    const a = criterionHash("  Given X, when Y,   then Z. ");
+    const b = criterionHash("Given X, when Y, then Z.");
+    expect(a).toBe(b);
+  });
+
+  it("changes when the words actually change — rewording is a genuinely different claim", () => {
+    const a = criterionHash("Given X, when Y, then Z.");
+    const b = criterionHash("Given X, when Y, then W.");
+    expect(a).not.toBe(b);
+  });
+});
+
+describe("recipe_criteria sync (hands#116) — the file wins, SQL is a mirror", () => {
+  it("upserts criteria on first sync and preserves checkbox state", () => {
+    const store = new Store({ env });
+    const h1 = criterionHash("first criterion");
+    const h2 = criterionHash("second criterion");
+    store.syncRecipeCriteria("r1", [
+      { hash: h1, text: "first criterion", done: false },
+      { hash: h2, text: "second criterion", done: true },
+    ]);
+    const rows = store.criteriaForRecipe("r1");
+    expect(rows).toHaveLength(2);
+    expect(rows.find((r) => r.criterion_hash === h1)?.checkbox_done).toBe(0);
+    expect(rows.find((r) => r.criterion_hash === h2)?.checkbox_done).toBe(1);
+    store.close();
+  });
+
+  it("reordering the same criteria is a no-op — hashes follow text, not position", () => {
+    const store = new Store({ env });
+    const h1 = criterionHash("first criterion");
+    const h2 = criterionHash("second criterion");
+    store.syncRecipeCriteria("r1", [
+      { hash: h1, text: "first criterion", done: false },
+      { hash: h2, text: "second criterion", done: false },
+    ]);
+    // re-sync in reversed order, one now checked
+    store.syncRecipeCriteria("r1", [
+      { hash: h2, text: "second criterion", done: true },
+      { hash: h1, text: "first criterion", done: false },
+    ]);
+    const rows = store.criteriaForRecipe("r1");
+    expect(rows).toHaveLength(2); // still two rows, not four
+    expect(rows.find((r) => r.criterion_hash === h2)?.checkbox_done).toBe(1);
+    store.close();
+  });
+
+  it("a removed/reworded criterion goes to active=0, not deleted — grading history survives", () => {
+    const store = new Store({ env });
+    const h1 = criterionHash("first criterion");
+    const h2 = criterionHash("second criterion");
+    store.syncRecipeCriteria("r1", [
+      { hash: h1, text: "first criterion", done: false },
+      { hash: h2, text: "second criterion", done: false },
+    ]);
+    store.recordRecipeGrade({ recipeSlug: "r1", criterionHash: h2, verdict: "met", by: "sous" });
+
+    // re-sync with h2 reworded away (its hash no longer appears)
+    store.syncRecipeCriteria("r1", [{ hash: h1, text: "first criterion", done: false }]);
+
+    expect(store.criteriaForRecipe("r1").map((r) => r.criterion_hash)).toEqual([h1]); // active-only read drops it
+    const all = store.criteriaForRecipe("r1", true);
+    expect(all).toHaveLength(2); // still there, inactive
+    expect(all.find((r) => r.criterion_hash === h2)?.active).toBe(0);
+    // grading history for the removed criterion is untouched
+    expect(store.latestRecipeGrades("r1").get(h2)?.verdict).toBe("met");
+    store.close();
+  });
+});
+
+describe("recipe grading (hands#116) — append-only, never written back into the markdown", () => {
+  it("the most recent grade per (recipe, criterion) wins; history is kept", () => {
+    const store = new Store({ env });
+    const h1 = criterionHash("some criterion");
+    store.recordRecipeGrade({ recipeSlug: "r1", criterionHash: h1, verdict: "not_met", by: "sous", now: 1000 });
+    store.recordRecipeGrade({ recipeSlug: "r1", criterionHash: h1, verdict: "met", by: "sous", now: 2000 });
+    const latest = store.latestRecipeGrades("r1");
+    expect(latest.get(h1)?.verdict).toBe("met");
+    store.close();
+  });
+
+  it("criterionHash: null is a separate overall/recipe-level grade, keyed distinctly from any criterion", () => {
+    const store = new Store({ env });
+    const h1 = criterionHash("some criterion");
+    store.recordRecipeGrade({ recipeSlug: "r1", criterionHash: h1, verdict: "met", by: "sous" });
+    store.recordRecipeGrade({ recipeSlug: "r1", criterionHash: null, verdict: "partial", by: "sous" });
+    const latest = store.latestRecipeGrades("r1");
+    expect(latest.get(h1)?.verdict).toBe("met");
+    expect(latest.get("")?.verdict).toBe("partial"); // overall grade, keyed "" per latestRecipeGrades' contract
+    store.close();
+  });
+
+  it("grading never touches the recipe file — the checkbox and the grade can legitimately disagree", () => {
+    const cfg = loadConfig({ env });
+    const files = recipeFiles("r1", cfg, env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    const content = [
+      "# R1",
+      "> state: menu · rank: 1",
+      "",
+      "## Acceptance criteria",
+      "- [x] done per the principal",
+    ].join("\n");
+    fs.writeFileSync(files.path, content);
+
+    const store = new Store({ env });
+    const h = criterionHash("done per the principal");
+    store.recordRecipeGrade({ recipeSlug: "r1", criterionHash: h, verdict: "not_met", note: "regressed", by: "sous" });
+    store.close();
+
+    // file is untouched — the checkbox still says done, independent of the grade
+    const after = fs.readFileSync(files.path, "utf8");
+    expect(after).toBe(content);
+    expect(parseRecipe("r1", after).criteria[0]?.done).toBe(true);
   });
 });
 

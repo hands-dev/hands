@@ -103,6 +103,16 @@ describe("Mobile* record types stay honest about what they exclude from their Sn
         "createdAt",
         "startedAt",
         "finishedAt", // token-cost/timing detail, operator-facing, not the skeleton's concern
+        // hands#116: recipe linkage. Same reasoning as body/result above — the
+        // skeleton has no per-ticket detail view to show it in yet, and adding
+        // the field without a place to render it would be dead weight, not a
+        // feature. When the skeleton grows one, both belong there together:
+        // recipeSlug (which recipe this ticket ladders up to) and offMenu
+        // (true when that recipe is no longer state:menu — visible drift, not
+        // an error; see the "off menu" badge in the web dashboard's ChitRow
+        // for the UI precedent to mirror).
+        "recipeSlug",
+        "offMenu",
       ],
     },
     {

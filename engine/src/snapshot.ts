@@ -155,6 +155,10 @@ export interface SnapshotTask {
   state: string;
   priority: string | null;
   dish: string | null;
+  /** the recipe this ticket ladders up to (hands#116) — distinct from `dish`, which is a generic external ref */
+  recipeSlug: string | null;
+  /** true when recipeSlug is set but that recipe is no longer on today's menu (hands#116) — computed live, never stored: work continuing on something the kitchen deprioritised, not an error state */
+  offMenu: boolean;
   result: string | null;
   /** last updated — what the rail sorts/displays by */
   at: number;
@@ -180,8 +184,19 @@ export interface SnapshotMenuItem {
   slug: string;
   title: string | null;
   rank: number | null;
+  /** the recipe's own markdown checkboxes — the principal's informal signal, unrelated to grading */
   criteriaDone: number;
   criteriaTotal: number;
+  /**
+   * Grading summary (hands#116) — how many of the currently-active criteria have a grade at all,
+   * and how many of THOSE are `met`. Deliberately not a stored aggregate: computed fresh from
+   * `recipe_grades` on every snapshot, same reason `criteriaDone` above is a live count rather
+   * than a cached number — a derived figure stored separately is just a second place for the
+   * true count to drift from. Can disagree with `criteriaDone`/`criteriaTotal` above — that
+   * disagreement (checkbox vs. grade) is the point, not a bug to reconcile here.
+   */
+  gradedCriteria: number;
+  metCriteria: number;
 }
 
 export interface Snapshot {
@@ -328,13 +343,21 @@ export function buildSnapshot(
 
   const messages: SnapshotMessage[] = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
 
-  const menu: SnapshotMenuItem[] = currentMenu(listRecipes(loadConfig({ env }), env)).map((r) => ({
-    slug: r.slug,
-    title: r.title,
-    rank: r.rank,
-    criteriaDone: r.criteriaDone,
-    criteriaTotal: r.criteriaTotal,
-  }));
+  const menuRecipes = currentMenu(listRecipes(loadConfig({ env }), env));
+  const menu: SnapshotMenuItem[] = menuRecipes.map((r) => {
+    const grades = store.latestRecipeGrades(r.slug);
+    const criterionGrades = [...grades.entries()].filter(([hash]) => hash !== ""); // "" is the overall grade, not a criterion
+    return {
+      slug: r.slug,
+      title: r.title,
+      rank: r.rank,
+      criteriaDone: r.criteriaDone,
+      criteriaTotal: r.criteriaTotal,
+      gradedCriteria: criterionGrades.length,
+      metCriteria: criterionGrades.filter(([, g]) => g.verdict === "met").length,
+    };
+  });
+  const onMenuSlugs = new Set(menuRecipes.map((r) => r.slug)); // hands#116 — see hands_tasks' identical comment in server.ts
   const questions: SnapshotQuestion[] = store.listQuestions({ limit: 30 }).map((q) => ({
     id: q.id,
     asker: q.asker,
@@ -394,6 +417,8 @@ export function buildSnapshot(
     state: t.state,
     priority: t.priority_ref,
     dish: t.dish,
+    recipeSlug: t.recipe_slug,
+    offMenu: t.recipe_slug != null && !onMenuSlugs.has(t.recipe_slug),
     result: t.result,
     at: t.updated_at,
     createdAt: t.created_at,

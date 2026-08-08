@@ -30,6 +30,10 @@
  *   hands recipe promote <s>   onto the menu [--rank N] (durably journaled — menu history)
  *   hands recipe demote <s>    back to the book (durably journaled)
  *   hands recipe history <d>   which recipes were on the menu on date d (YYYY-MM-DD)
+ *   hands recipe sync <s>      re-mirror a recipe's criteria into SQL for grading (hands#116) —
+ *                               also runs automatically on new/promote/demote
+ *   hands recipe grade <s>     record a grading verdict [--criterion <hash>] --verdict
+ *                               met|not_met|partial [--note] [--evidence-task <id>] (hands#116)
  *   hands station add [-n N] [--without-bypass]  open N stations (worktree hidden inside)
  *   hands station ls           list this repo's stations
  *   hands station rm <id>      retire a station (idempotent; --force discards)
@@ -71,7 +75,7 @@ import { runDoctor } from "./doctor.js";
 import { claimWorktree, releaseWorktree } from "./worktree-lock.js";
 import { quiesce, watchersFor } from "./watchers.js";
 import { readJournal, readPreviousPage } from "./journal-read.js";
-import { assessReadiness } from "./attest.js";
+import { assessReadiness, currentWorktreeFacts } from "./attest.js";
 import { buildInfo, describe, otherInstall } from "./version.js";
 import { regenerateDigests } from "./digest.js";
 import {
@@ -113,10 +117,12 @@ import {
   sweepHeldSeatHeader,
 } from "./crafts.js";
 import {
+  criterionHash,
   currentMenu,
   listRecipes,
   menuOnDay,
   newRecipeStub,
+  parseRecipe,
   recipeFiles,
   stampRecipeState,
 } from "./recipes.js";
@@ -724,13 +730,15 @@ function cmdCraft(argv: string[]): void {
 }
 
 /**
- * `hands recipe ls|new|promote|demote|history` (hands#96/#137) — replaces `priorities.md`/
- * `hands_priorities`. Recipes are principal-authored (one file, one owner — no scope tiers to
- * promote between like crafts have); this CLI is the scaffolding + state-transition surface, not
- * a content editor — the principal edits the file directly for everything else. `promote`/`demote`
- * are the only state-changing verbs and are the only ones that touch the journal (durable "which
- * recipes were on the menu which days" history, hands#96) — `ls`/`new`/`history` are pure reads
- * (or, for `new`, a local scaffold write with nothing to journal yet).
+ * `hands recipe ls|new|promote|demote|history|sync|grade` (hands#96/#137/#116) — replaces
+ * `priorities.md`/`hands_priorities`. Recipes are principal-authored (one file, one owner — no
+ * scope tiers to promote between like crafts have); this CLI is the scaffolding + state-transition
+ * surface, not a content editor — the principal edits the file directly for everything else.
+ * `promote`/`demote` are the only state-changing verbs and are the only ones that touch the
+ * journal (durable "which recipes were on the menu which days" history, hands#96) — `ls`/`history`
+ * are pure reads. `new`/`promote`/`demote`/`sync` all mirror the recipe's current criteria into
+ * SQL (hands#116) — the file stays truth, SQL is a synced index so criteria have stable,
+ * gradeable identity; see `syncRecipeCriteria` in store.ts for what happens when they disagree.
  */
 function cmdRecipe(argv: string[]): void {
   const sub = argv[0];
@@ -747,46 +755,6 @@ function cmdRecipe(argv: string[]): void {
       const criteria = r.criteriaTotal > 0 ? `, ${r.criteriaDone}/${r.criteriaTotal} criteria met` : "";
       out(`${r.slug}\t[${r.state}${rank}]\t${r.title ?? "(no title)"}${criteria}`);
     }
-    return;
-  }
-
-  if (sub === "new") {
-    const slug = argv[1];
-    if (!slug) fail("usage: hands recipe new <slug> [--title <text>]");
-    const files = recipeFiles(slug!, cfg);
-    if (fs.existsSync(files.path)) fail(`"${files.slug}" already exists at ${files.path} — edit it directly`);
-    const title = strOpt(argv, "--title") ?? slug!;
-    fs.mkdirSync(files.dir, { recursive: true });
-    fs.writeFileSync(files.path, newRecipeStub(title));
-    out(`✔ drafted "${files.slug}" at ${files.path} — edit it directly to fill in the description and criteria`);
-    return;
-  }
-
-  if (sub === "promote" || sub === "demote") {
-    const slug = argv[1];
-    if (!slug) fail(`usage: hands recipe ${sub} <slug>${sub === "promote" ? " [--rank N]" : ""}`);
-    const files = recipeFiles(slug!, cfg);
-    if (!fs.existsSync(files.path)) {
-      fail(`unknown recipe "${files.slug}" — no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
-    }
-    const raw = fs.readFileSync(files.path, "utf8");
-    const now = Date.now();
-    // Journal wiring is deliberately scoped to just this write, not the whole CLI process — a CLI
-    // invocation is one-shot, unlike the long-running MCP server that wires it once at connect.
-    const journal = openJournal({ cwd: process.cwd(), config: cfg });
-    if (sub === "promote") {
-      const rankArg = strOpt(argv, "--rank");
-      const rank = rankArg ? Number.parseInt(rankArg, 10) : currentMenu(listRecipes(cfg)).length + 1;
-      if (rankArg !== undefined && !Number.isInteger(rank)) fail("--rank must be an integer");
-      fs.writeFileSync(files.path, stampRecipeState(raw, "menu", rank));
-      journal?.append("recipe.promoted", { slug: files.slug, rank, at: now });
-      out(`✔ "${files.slug}" onto the menu (#${rank})`);
-    } else {
-      fs.writeFileSync(files.path, stampRecipeState(raw, "book", null));
-      journal?.append("recipe.demoted", { slug: files.slug, at: now });
-      out(`✔ "${files.slug}" back to the book`);
-    }
-    if (!journal) out("  (books unavailable — state saved to the file, but this move won't show up in menu history)");
     return;
   }
 
@@ -807,7 +775,120 @@ function cmdRecipe(argv: string[]): void {
     return;
   }
 
-  fail("usage: hands recipe <ls|new|promote|demote|history> [<slug>]");
+  // Everything below touches SQL (criteria sync and/or grading) — one Store for the rest of this call.
+  const store = new Store();
+  try {
+    const syncCriteria = (slug: string): void => {
+      const files = recipeFiles(slug, cfg);
+      const raw = fs.existsSync(files.path) ? fs.readFileSync(files.path, "utf8") : null;
+      const recipe = parseRecipe(slug, raw);
+      store.syncRecipeCriteria(
+        slug,
+        recipe.criteria.map((c) => ({ hash: criterionHash(c.text), text: c.text, done: c.done })),
+      );
+    };
+
+    if (sub === "new") {
+      const slug = argv[1];
+      if (!slug) fail("usage: hands recipe new <slug> [--title <text>]");
+      const files = recipeFiles(slug!, cfg);
+      if (fs.existsSync(files.path)) fail(`"${files.slug}" already exists at ${files.path} — edit it directly`);
+      const title = strOpt(argv, "--title") ?? slug!;
+      fs.mkdirSync(files.dir, { recursive: true });
+      fs.writeFileSync(files.path, newRecipeStub(title));
+      syncCriteria(files.slug); // book-state recipes are gradeable immediately, not just once promoted
+      out(`✔ drafted "${files.slug}" at ${files.path} — edit it directly to fill in the description and criteria`);
+      return;
+    }
+
+    if (sub === "promote" || sub === "demote") {
+      const slug = argv[1];
+      if (!slug) fail(`usage: hands recipe ${sub} <slug>${sub === "promote" ? " [--rank N]" : ""}`);
+      const files = recipeFiles(slug!, cfg);
+      if (!fs.existsSync(files.path)) {
+        fail(`unknown recipe "${files.slug}" — no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+      }
+      const raw = fs.readFileSync(files.path, "utf8");
+      const now = Date.now();
+      // Journal wiring is deliberately scoped to just this write, not the whole CLI process — a CLI
+      // invocation is one-shot, unlike the long-running MCP server that wires it once at connect.
+      const journal = openJournal({ cwd: process.cwd(), config: cfg });
+      if (sub === "promote") {
+        const rankArg = strOpt(argv, "--rank");
+        const rank = rankArg ? Number.parseInt(rankArg, 10) : currentMenu(listRecipes(cfg)).length + 1;
+        if (rankArg !== undefined && !Number.isInteger(rank)) fail("--rank must be an integer");
+        fs.writeFileSync(files.path, stampRecipeState(raw, "menu", rank));
+        journal?.append("recipe.promoted", { slug: files.slug, rank, at: now });
+        out(`✔ "${files.slug}" onto the menu (#${rank})`);
+      } else {
+        fs.writeFileSync(files.path, stampRecipeState(raw, "book", null));
+        journal?.append("recipe.demoted", { slug: files.slug, at: now });
+        out(`✔ "${files.slug}" back to the book`);
+      }
+      if (!journal) out("  (books unavailable — state saved to the file, but this move won't show up in menu history)");
+      syncCriteria(files.slug);
+      return;
+    }
+
+    if (sub === "sync") {
+      const slug = argv[1];
+      if (!slug) fail("usage: hands recipe sync <slug>");
+      const files = recipeFiles(slug!, cfg);
+      if (!fs.existsSync(files.path)) {
+        fail(`unknown recipe "${files.slug}" — no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+      }
+      syncCriteria(files.slug);
+      const criteria = store.criteriaForRecipe(files.slug);
+      out(`✔ synced "${files.slug}" — ${criteria.length} active criteria`);
+      for (const c of criteria) out(`  ${c.criterion_hash}\t[${c.checkbox_done ? "x" : " "}]\t${c.text}`);
+      return;
+    }
+
+    if (sub === "grade") {
+      const slug = argv[1];
+      const verdict = strOpt(argv, "--verdict");
+      if (!slug || !verdict) fail("usage: hands recipe grade <slug> [--criterion <hash>] --verdict met|not_met|partial [--note <text>] [--evidence-task <id>]");
+      if (verdict !== "met" && verdict !== "not_met" && verdict !== "partial") {
+        fail(`--verdict must be met, not_met, or partial (got "${verdict}")`);
+      }
+      const files = recipeFiles(slug!, cfg);
+      if (!fs.existsSync(files.path)) {
+        fail(`unknown recipe "${files.slug}" — no file found at ${files.path} (\`hands recipe ls\` for the roster)`);
+      }
+      syncCriteria(files.slug); // never grade against a stale mirror
+      const criterionHashArg = strOpt(argv, "--criterion");
+      if (criterionHashArg) {
+        const active = store.criteriaForRecipe(files.slug);
+        if (!active.some((c) => c.criterion_hash === criterionHashArg)) {
+          fail(
+            `criterion "${criterionHashArg}" isn't among "${files.slug}"'s current criteria — ` +
+              `\`hands recipe sync ${files.slug}\` to see current hashes.`,
+          );
+        }
+      }
+      const evidenceArg = strOpt(argv, "--evidence-task");
+      const evidenceTaskId = evidenceArg ? Number.parseInt(evidenceArg, 10) : undefined;
+      if (evidenceArg !== undefined && !Number.isInteger(evidenceTaskId)) fail("--evidence-task must be an integer task id");
+      store.recordRecipeGrade({
+        recipeSlug: files.slug,
+        criterionHash: criterionHashArg ?? null,
+        verdict,
+        note: strOpt(argv, "--note") ?? null,
+        evidenceTaskId: evidenceTaskId ?? null,
+        originSha: currentWorktreeFacts(process.cwd()).originSha,
+        by: resolveAgentId(),
+      });
+      out(
+        `✔ graded "${files.slug}"${criterionHashArg ? ` (criterion ${criterionHashArg})` : " (overall)"}: ${verdict}. ` +
+          "Not written back into the recipe file — the checkbox stays the principal's own signal.",
+      );
+      return;
+    }
+
+    fail("usage: hands recipe <ls|new|promote|demote|history|sync|grade> [<slug>]");
+  } finally {
+    store.close();
+  }
 }
 
 function requireRemote() {
