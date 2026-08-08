@@ -1508,14 +1508,56 @@ async function main(): Promise<void> {
       case "serve":
       case "dashboard": {
         const { serve, ServeError } = await import("./serve.js");
+        const { flags } = parseArgs(rest, ["--address"]);
+        const lan = flags.has("--lan");
         let handle: Awaited<ReturnType<typeof serve>>;
         try {
-          handle = await serve();
+          handle = await serve(lan ? { host: "0.0.0.0" } : undefined);
         } catch (err) {
           if (err instanceof ServeError) fail(err.message);
           throw err;
         }
         out(`hands dashboard → ${handle.url}\n(Ctrl-C to stop)`);
+        // hands#110 — --lan is opt-in: without it, serve()'s default (127.0.0.1) and this whole
+        // block are untouched, so nothing about the normal desktop-dashboard posture changes.
+        // Binding wider is what makes a phone reachable at all, but 0.0.0.0 itself isn't a
+        // connectable address — a phone needs the machine's actual LAN-facing IPv4.
+        if (lan) {
+          const { pickLanAddress } = await import("./lan.js");
+          const addressOverride = flags.get("--address");
+          const pick = addressOverride
+            ? { address: addressOverride, iface: null, candidates: [], ambiguous: false }
+            : pickLanAddress();
+          if (!pick.address) {
+            out(
+              "\n--lan requested, but no LAN-reachable network interface was found on this machine " +
+                "— it may not be on a network a phone can join. No pairing QR to show; use the " +
+                "manual host field in the mobile app's Settings tab instead.",
+            );
+          } else {
+            if (pick.ambiguous) {
+              const others = pick.candidates
+                .filter((c) => c.address !== pick.address)
+                .map((c) => `${c.iface}=${c.address}`)
+                .join(", ");
+              out(
+                `\n${pick.candidates.length} network interfaces found — guessed ${pick.iface} ` +
+                  `(${pick.address}). If the phone can't connect, override with: hands serve --lan ` +
+                  `--address <ip>. Other candidates: ${others}`,
+              );
+            }
+            const pairingUrl = `http://${pick.address}:${handle.port}/`;
+            out(
+              `\nScan from the mobile app's Settings tab to pair: ${pairingUrl}\n` +
+                "⚠ this exposes EVERY route on this server to anyone on the current network while " +
+                "--lan is running — not just read access to the dashboard, also filing feedback, " +
+                "chat, and answering questions as if they were you. There is no authentication on " +
+                "this tier. Stop with Ctrl-C when you're done pairing.\n",
+            );
+            const qrcodeTerminal = await import("qrcode-terminal");
+            qrcodeTerminal.default.generate(pairingUrl, { small: true });
+          }
+        }
         // Ctrl-C/a kill has no handler by default, so close() (SSE clients, timers, the DB
         // handle, the pidfile) never ran — this repo's dashboard skill and `hands doctor` now
         // depend on the pidfile actually being cleaned up on a normal stop (hands#77/#82).
@@ -1602,6 +1644,7 @@ async function main(): Promise<void> {
         out("  hands whoami               show the signed-in identity (local only, no network call)");
         out('  hands feedback "<body>" [--title "<title>"]  file a note to the maintainer (GitHub issue)');
         out("  hands serve               live dashboard → http://localhost:4319");
+        out("  hands serve --lan [--address <ip>]  also print a QR to pair the mobile app over the LAN");
         out("  hands paths               show where this directory resolves (debug)");
         // Asking for help is not an error; an unrecognized word is.
         process.exit(cmd && !askedForHelp ? 2 : 0);

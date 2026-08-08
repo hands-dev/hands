@@ -4,12 +4,14 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { colors, fonts, spacing } from "../theme/theme";
 import { DEFAULT_HOST, setServerHost } from "../lib/settings";
 import type { HandsStreamState } from "../lib/useHandsStream";
+import { QrScanner } from "./QrScanner";
 
 /**
- * The one setting this walking skeleton has: where "hands serve" is running
- * (hands#107). localhost works in a simulator; a physical device needs the
- * dev machine's LAN IP instead, and that's not something to auto-discover —
- * a plain text field the user types their own machine's address into.
+ * Where "hands serve" is running. Pairing (hands#110) is the happy path — "Scan QR" against
+ * `hands serve --lan`'s printed code — but the manual text field STAYS as the fallback for no
+ * camera, a stale QR, or a simulator (which reaches `localhost` directly and never needs pairing
+ * at all). Originally (hands#107) this was the field alone; a physical device needing the dev
+ * machine's LAN IP is exactly the friction pairing removes.
  */
 export function SettingsScreen({
   host,
@@ -21,11 +23,12 @@ export function SettingsScreen({
   stream: HandsStreamState;
 }) {
   const [draft, setDraft] = useState(host);
+  const [scanning, setScanning] = useState(false);
 
   useEffect(() => setDraft(host), [host]);
 
-  const save = async () => {
-    const next = draft.trim() || DEFAULT_HOST;
+  const save = async (value: string) => {
+    const next = value.trim() || DEFAULT_HOST;
     setDraft(next);
     await setServerHost(next);
     onHostChange(next);
@@ -37,8 +40,12 @@ export function SettingsScreen({
         <Text style={styles.label}>Server host</Text>
         <Text style={styles.hint}>
           Simulator on this machine: "{DEFAULT_HOST}". A physical phone needs your computer's LAN
-          IP instead, e.g. "192.168.1.42:4319" — localhost on a phone means the phone itself.
+          IP instead — scan the QR code `hands serve --lan` prints, or type it below (e.g.
+          "192.168.1.42:4319"); localhost on a phone means the phone itself.
         </Text>
+        <Pressable style={styles.button} onPress={() => setScanning(true)}>
+          <Text style={styles.buttonText}>Scan QR</Text>
+        </Pressable>
         <TextInput
           style={styles.input}
           value={draft}
@@ -49,8 +56,8 @@ export function SettingsScreen({
           autoCorrect={false}
           keyboardType="url"
         />
-        <Pressable style={styles.button} onPress={() => void save()}>
-          <Text style={styles.buttonText}>Save & reconnect</Text>
+        <Pressable style={styles.secondaryButton} onPress={() => void save(draft)}>
+          <Text style={styles.secondaryButtonText}>Save & reconnect</Text>
         </Pressable>
 
         <View style={styles.statusBlock}>
@@ -60,6 +67,15 @@ export function SettingsScreen({
           </Text>
         </View>
       </View>
+
+      <QrScanner
+        visible={scanning}
+        onCancel={() => setScanning(false)}
+        onScanned={(scannedHost) => {
+          setScanning(false);
+          void save(scannedHost);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -96,7 +112,10 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: spacing.md,
     alignItems: "center",
+    marginBottom: spacing.md,
   },
   buttonText: { color: colors.ink, fontFamily: fonts.uiMedium, fontSize: 15 },
+  secondaryButton: { alignItems: "center", paddingVertical: spacing.sm },
+  secondaryButtonText: { color: colors.muted, fontFamily: fonts.ui, fontSize: 13 },
   statusBlock: { marginTop: spacing.xl },
 });
