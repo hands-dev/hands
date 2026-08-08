@@ -27,6 +27,9 @@ directory: **"Expo"** (capitalized) always means the React Native tooling; **"th
   silently ended up in.
 - **React Navigation (bottom tabs)** for the 4-screen skeleton (Rail, Line, Needs you, Settings) —
   standard, well-supported, nothing fancier needed yet.
+- **`expo-camera`'s `CameraView` for QR pairing (hands#110)**, not a third-party scanner — Expo's
+  own first-party module, already inside Expo Go's bundled native modules (no custom dev client
+  needed), with a built-in `barcodeScannerSettings={{barcodeTypes: ["qr"]}}` mode.
 - **Tokens port, components don't port.** React Native has no CSS/Tailwind. `theme/tokens.json` is
   a plain copy of `brand/tokens/tokens.json` (the same file BRAND.md points every other platform
   at), consumed as data in `theme/theme.ts` — colors, station palette, spacing. `Archivo` and
@@ -69,9 +72,25 @@ npm run ios        # or: npm run android
 
 Defaults to `localhost:4319` (`hands serve`'s default port) — works immediately in a simulator on
 this machine. **A physical phone cannot reach `localhost`** — that resolves to the phone itself,
-not your computer. Open the Settings tab and enter your computer's LAN IP instead (e.g.
-`192.168.1.42:4319`); there's no auto-discovery, just a text field that persists via
-`@react-native-async-storage/async-storage`.
+not your computer.
+
+**Pairing (hands#110), the normal path for a physical device:** run `hands serve --lan` (not plain
+`hands serve` — that stays `127.0.0.1`-only, opt-in required) on your computer. It binds wide
+enough for a phone to reach it, detects the machine's LAN-facing IPv4 address, and prints a QR
+code in the terminal. Open the Settings tab, tap "Scan QR", point the camera at it — done, no
+typing. `engine/src/lan.ts` picks the address (deprioritizing obvious VPN/container interfaces);
+if the machine has more than one plausible interface it says so and offers `hands serve --lan
+--address <ip>` to override rather than guessing wrong into a QR that silently fails to connect.
+
+**⚠ `--lan` has no authentication.** Binding wide enough for a phone to reach the dashboard also
+makes every route — including the state-changing ones (feedback, chat, answering questions) —
+reachable by anyone on the same network for as long as it's running. Same free-tier posture as
+everything else here (no token, no auth scheme), just wider than the `127.0.0.1` default. Stop the
+server when you're done pairing.
+
+**Manual fallback** stays for when a camera isn't available, permission was denied, or the QR is
+stale: Settings tab, type your computer's LAN IP directly (e.g. `192.168.1.42:4319`) into the text
+field, which persists via `@react-native-async-storage/async-storage` same as a scanned host does.
 
 `npm run web` also works (react-native-web) — used during development to preview without a
 simulator. Not a target platform for this ticket; keep it working as a convenience, but the real

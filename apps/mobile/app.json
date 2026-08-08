@@ -31,6 +31,13 @@
           "imageWidth": 160,
           "backgroundColor": "#0B0B0C"
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "hands uses the camera to scan a pairing QR code from `hands serve --lan` — nothing is recorded or uploaded.",
+          "barcodeScannerEnabled": true
+        }
       ]
     ]
   }
