@@ -1,6 +1,6 @@
 ---
 name: rail
-description: Print the current rail — tickets grouped by dish, specials coverage, the needs-you lane, and station on-duty count — in the deterministic format the expo's own reports use. Invocable directly in any session, not routed through a running expo loop. Use when the principal says /hands:rail, "what's on the rail?", "show me the tickets", or wants a status snapshot without opening the dashboard.
+description: Print the current rail — tickets grouped by dish, menu coverage, the needs-you lane, and station on-duty count — in the deterministic format the expo's own reports use. Invocable directly in any session, not routed through a running expo loop. Use when the principal says /hands:rail, "what's on the rail?", "show me the tickets", or wants a status snapshot without opening the dashboard.
 ---
 
 # Rail — the deterministic status snapshot
@@ -15,7 +15,7 @@ tickets, never touch state.
 1. **One call, one source of truth.** `hands_board({ full: true })` — the exact MCP call (and
    therefore the exact underlying store) `engine/src/serve.ts`'s `/api/state` reads from for the
    dashboard's rail. Do not re-derive or separately re-query anything below — every field needed
-   comes back in this one response (`peers`, `activeTasks`, `openQuestions`, `priorities`). If
+   comes back in this one response (`peers`, `activeTasks`, `openQuestions`, `menu`). If
    chat output and the dashboard ever show different rails for the same instant, that's a bug —
    they must compute from this identical read.
 
@@ -25,7 +25,7 @@ tickets, never touch state.
    ```
    Rail: <dish>: #<id> <title> — <station>[·<craft>] (<state>)[; #<id> <title> — <station> (<state>)]
    Rail: unattached: #<id> <title> — <station-or-"queue"> (<state>)
-   Specials coverage: P1×<n>, P2×<n>, P3×<n>[, P<k> unstaffed]
+   Menu coverage: P1×<n>, P2×<n>, P3×<n>[, P<k> unstaffed]
    Needs you: <n> open — #<id> <one-line>[, #<id> <one-line>][ | none]
    Stations: <onDuty>/<total> on duty
    ```
@@ -36,10 +36,12 @@ tickets, never touch state.
      Each entry: `#<id> <title> — <station>[·<craft>] (<state>)`, where `<station>` is `assignee`
      (or `queue` when unassigned) and `<craft>` is that station's `focus` from `peers` (look it up
      by matching `peers[].id === assignee`; omit the `·<craft>` suffix when there isn't one).
-   - **Specials coverage:** `priorities.items` is the ranked list — index 0 is P1, index 1 is P2,
-     and so on. For each rank, count `activeTasks` whose `priority` equals that rank string
-     (`"P1"`, `"P2"`, …). Render `P<rank>×<count>` for staffed ranks; collect zero-count ranks
-     into a trailing `, P<k> unstaffed` (join multiple with `, `, e.g. `P3, P4 unstaffed`).
+   - **Menu coverage:** `menu.items` is the ranked recipe list — each item's own `rank` field IS
+     its P-number directly (rank 1 is P1, rank 2 is P2, and so on; recipes carry rank on the file
+     itself now, hands#96/#137 — no index math needed). For each ranked item, count `activeTasks`
+     whose `priority` equals that rank string (`"P1"`, `"P2"`, …). Render `P<rank>×<count>` for
+     staffed ranks; collect zero-count ranks into a trailing `, P<k> unstaffed` (join multiple with
+     `, `, e.g. `P3, P4 unstaffed`).
    - **Needs you:** from `openQuestions` (already state=`open` only — `needs_human` escalations
      are `/hands:hands`'s job, not this command's; the two are complementary, not overlapping).
      `<n>` is the count; list each as `#<id> <question, truncated to ~50 chars>`. Zero open →
