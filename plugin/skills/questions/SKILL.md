@@ -24,8 +24,16 @@ dashboard's buttons.
    - **Has `options`** → goes through the dialog (step 3).
    - **No `options`** → list it as plain text instead, same one-line style as `/hands:hands`:
      `#<id> <asker>: <question>` (+ `— <recommendation>` if the expo left one), with a pointer —
-     "answer these in chat with the expo." Print this block after the dialog work in step 5,
-     never silently drop them.
+     "reply here to answer, e.g. `#<id>: <your answer>`." Print this block after the dialog work
+     in step 5, never silently drop them. Don't point elsewhere ("ask the expo") — nothing catches
+     that handoff (hands#209), and this command already has everything `hands_answer` needs.
+
+   **Catching the reply (hands#209).** If the principal's next message answers one or more of the
+   free-text questions just listed — by id (`#<id>: ...`), or unambiguously by content when only
+   one was listed — that's step 5's free-text path, same as a structured pick: call
+   `hands_answer({ id, answer, by: "human", answeredVia: "tui" })` for each, check the result the
+   same way, and confirm. A reply that answers none of them is an ordinary message, not a miss —
+   don't force a match that isn't there.
 
 3. **Build the dialog batch(es).** Up to 4 structured questions per `AskUserQuestion` call — a
    hard limit the tool itself enforces (`questions[]` maxItems 4), not just pacing. More than 4 →
