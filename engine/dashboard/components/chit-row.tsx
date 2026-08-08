@@ -82,6 +82,15 @@ export function ChitRow({
           {task.priority}
         </Badge>
       ) : null}
+      {task.offMenu ? (
+        <Badge
+          variant="outline"
+          className="shrink-0 text-muted-foreground"
+          title={`Still laddering up to "${task.recipeSlug}", but that recipe is no longer on today's menu (hands#116) — work continuing on something the kitchen deprioritised, not an error.`}
+        >
+          off menu
+        </Badge>
+      ) : null}
       <span className="shrink-0">{stateBadge(task)}</span>
       <span className="w-16 shrink-0 pt-0.5 text-right text-xs text-muted-foreground">
         {ago(now, task.at)}

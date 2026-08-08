@@ -1,3 +1,4 @@
+import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HandsConfig } from "./config.js";
@@ -87,6 +88,20 @@ export function parseRecipe(slug: string, content: string | null): Recipe {
     }
   }
   return { slug, state, rank, title, criteria, criteriaDone: criteria.filter((c) => c.done).length, criteriaTotal: criteria.length };
+}
+
+/**
+ * Stable identity for one acceptance criterion (hands#116) — content-derived, not positional.
+ * Reordering criteria in the file is a no-op (the hash follows the text, not the line); rewording
+ * one starts its grading history fresh rather than silently carrying an old verdict forward onto
+ * different words. Trims and collapses internal whitespace before hashing so cosmetic
+ * reformatting (a line-wrap, a double space) doesn't count as a reword; anything past that is
+ * treated as a genuinely different criterion, deliberately — see `syncRecipeCriteria` in store.ts
+ * for what happens to a criterion whose hash disappears from a fresh parse.
+ */
+export function criterionHash(text: string): string {
+  const normalized = text.trim().replace(/\s+/g, " ");
+  return crypto.createHash("sha256").update(normalized).digest("hex").slice(0, 16);
 }
 
 /**

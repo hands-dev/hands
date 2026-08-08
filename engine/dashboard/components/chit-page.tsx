@@ -35,10 +35,20 @@ function ChitHeader({ task, now }: { task: SnapshotTask; now: number }) {
         </CardTitle>
         <CardDescription>
           {task.dish ? `${task.dish} · ` : ""}
+          {task.recipeSlug ? `${task.recipeSlug} · ` : ""}
           {task.assignee} · filed {ago(now, task.createdAt)}
         </CardDescription>
         <CardAction className="flex items-center gap-2">
           {task.priority ? <Badge variant="outline">{task.priority}</Badge> : null}
+          {task.offMenu ? (
+            <Badge
+              variant="outline"
+              className="text-muted-foreground"
+              title={`Still laddering up to "${task.recipeSlug}", but that recipe is no longer on today's menu (hands#116).`}
+            >
+              off menu
+            </Badge>
+          ) : null}
           {stateBadge(task)}
         </CardAction>
       </CardHeader>

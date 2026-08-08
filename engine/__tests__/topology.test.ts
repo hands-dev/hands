@@ -19,6 +19,12 @@ beforeEach(() => {
   process.env.HANDS_HOME = home; // notify() reads process.env
   stores = [];
   cleanups = [];
+  // hands#116 — hands_delegate now hard-requires an on-menu recipe.
+  fs.mkdirSync(path.join(home, "recipes"), { recursive: true });
+  fs.writeFileSync(
+    path.join(home, "recipes", "test-recipe.md"),
+    "# Test recipe\n> state: menu · rank: 1\n\n## Acceptance criteria\n- [ ] it works\n",
+  );
 });
 
 afterEach(async () => {
@@ -109,7 +115,7 @@ describe("strict-hub topology (server-enforced)", () => {
 
   it("still lets a station return/claim its own tasks", async () => {
     const expo = await connect("expo");
-    await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan X", to: "station-1", recipeSlug: "test-recipe" });
     const w1 = await connect("station-1", DEFAULT_CONFIG);
     const start = await call(w1, "hands_task_update", { id: 1, state: "in_progress" });
     expect(start.isError).toBe(false);
@@ -127,7 +133,7 @@ describe("strict-hub topology (server-enforced)", () => {
 
   it("hands_task_update surfaces a clear error when a station tries to reclaim a cancelled ticket (hands#97)", async () => {
     const expo = await connect("expo");
-    await call(expo, "hands_delegate", { title: "plan Y", to: "station-1" });
+    await call(expo, "hands_delegate", { title: "plan Y", to: "station-1", recipeSlug: "test-recipe" });
     const cancel = await call(expo, "hands_task_update", { id: 1, state: "cancelled" });
     expect(cancel.isError).toBe(false);
 

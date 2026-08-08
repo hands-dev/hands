@@ -143,6 +143,22 @@ export interface TaskRow {
   priority_ref: string | null;
   /** the DISH this ticket helps assemble — an external ref (Linear "ENG-1476", "PR #2455") */
   dish: string | null;
+  /**
+   * The recipe this ticket ladders up to (hands#116) — a soft reference to a recipe slug (no FK,
+   * same convention as `dish` above), but the LINK itself is hard-enforced at creation time:
+   * `hands_delegate` requires this to be set and to name a recipe currently `state: menu` — the
+   * principal's own words, "otherwise we're making dishes that aren't for sale that day." Nullable
+   * at the column level anyway (nothing in this schema enforces required-ness at the DB layer;
+   * validation lives in the tool), and it stays null forever for tickets created before this
+   * enforcement landed. Deliberately a SEPARATE column, not an overload of `dish`: `dish` is
+   * documented as a generic external ref and already carries non-recipe values (a Linear ticket, a
+   * PR number); conflating the two would make an already-ambiguous field worse. Set only at
+   * creation, same lifecycle as `dish` (no update path) — a recipe DEMOTED after a ticket links to
+   * it does not retroactively invalidate the ticket (see `offMenu` in server.ts/snapshot.ts): that
+   * would let an unrelated menu reshuffle silently stall real in-flight work, so it's surfaced as
+   * visible drift instead.
+   */
+  recipe_slug: string | null;
   thread_id: string | null;
   created_at: number;
   updated_at: number;
@@ -202,6 +218,63 @@ export function isSignoffStale(
   if (hasNewCollision) return true;
   if (!signoff.origin_sha || !currentOriginSha) return false; // nothing to compare — not stale by this check
   return signoff.origin_sha !== currentOriginSha;
+}
+
+/**
+ * One acceptance criterion, mirrored into SQL for stable identity (hands#116). The recipe file
+ * itself stays the one authored copy — this is a synced INDEX over its `## Acceptance criteria`
+ * checkboxes, refreshed by re-parsing on `recipe new`/`promote`/`demote`/`sync`, never the other
+ * way around. `criterion_hash` is content-derived (see `criterionHash` in recipes.ts), not
+ * positional — reordering criteria in the file is safe, rewording one starts its grading history
+ * fresh (a criterion whose words changed is arguably a different claim; failing toward "ungraded"
+ * beats silently misattributing an old verdict to new text). `active` goes to 0 rather than the row
+ * being deleted when a re-sync no longer finds the text in the file — the file wins on
+ * disagreement, but grading history against a removed/reworded criterion still matters for audit.
+ */
+export interface RecipeCriterionRow {
+  id: number;
+  recipe_slug: string;
+  criterion_hash: string;
+  /** last-synced text — lets a read show criteria without a second file parse */
+  text: string;
+  /** the markdown checkbox state as of last sync — the principal's own informal signal, never overwritten by grading */
+  checkbox_done: number;
+  /** 0 once a re-sync no longer finds this criterion's text in the file */
+  active: number;
+  first_seen_at: number;
+  last_synced_at: number;
+}
+
+/**
+ * One grading verdict (hands#116) — the sous's (or whoever grades before a sous exists) answer to
+ * "is this criterion met," recorded beside the recipe file, never written back into it. Append-
+ * only, same shape as `task_signoffs`: most-recent-row-per-(recipe_slug, criterion_hash) is the
+ * current verdict, `origin_sha` is the same event-based staleness anchor `isSignoffStale` already
+ * checks (reused unchanged — that function isn't signoff-specific in practice).
+ *
+ * `criterion_hash: null` means an overall/recipe-level grade rather than one criterion's.
+ *
+ * Deliberately NOT collapsed into `task_signoffs`: that table's `task_id` is the wrong shape for a
+ * verdict about a recipe's criterion, which may span many tickets or none yet. A parallel table,
+ * not a repurposed one.
+ *
+ * The one thing this plan is built to protect: when the recipe's own markdown checkbox and the
+ * most recent grade here disagree, that disagreement IS the signal — surfaced (dashboard, app),
+ * never silently resolved by picking one. Two sources of truth is a real cost only if the
+ * disagreement is hidden; showing both is what turns it into a feature instead of a drift bug.
+ */
+export interface RecipeGradeRow {
+  id: number;
+  recipe_slug: string;
+  criterion_hash: string | null;
+  /** met | not_met | partial — not binary; a criterion isn't a pass/fail gate the way pre-ship is */
+  verdict: "met" | "not_met" | "partial";
+  note: string | null;
+  /** optional: a ticket whose returned work is being cited as evidence for this verdict */
+  evidence_task_id: number | null;
+  origin_sha: string | null;
+  by: string;
+  created_at: number;
 }
 
 export interface TodoRow {
@@ -570,6 +643,54 @@ export class Store {
       );
 
       CREATE INDEX IF NOT EXISTS idx_task_signoffs_task ON task_signoffs (task_id, created_at);
+
+      -- hands#116 — a synced INDEX over recipe files' acceptance criteria, not
+      -- a second copy of their content. The recipe markdown stays the one
+      -- authored source; this table exists only because a checkbox in a file
+      -- has no identity beyond its position, and grading needs criteria to be
+      -- individually addressable. Refreshed by re-parsing on recipe
+      -- new/promote/demote/sync (see cmdRecipe); the file always wins on
+      -- disagreement — a criterion no longer found in a fresh parse goes to
+      -- active=0, never deleted (grading history survives a reword/removal)
+      -- and never trusted as still-current once stale.
+      CREATE TABLE IF NOT EXISTS recipe_criteria (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipe_slug     TEXT NOT NULL,
+        criterion_hash  TEXT NOT NULL,     -- content hash of the trimmed criterion text — NOT positional
+        text            TEXT NOT NULL,     -- last-synced text, so reads don't need a second file parse
+        checkbox_done   INTEGER NOT NULL,  -- the markdown checkbox as of last sync — the principal's own signal, never overwritten by grading
+        active          INTEGER NOT NULL DEFAULT 1,
+        first_seen_at   INTEGER NOT NULL,
+        last_synced_at  INTEGER NOT NULL,
+        UNIQUE(recipe_slug, criterion_hash)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recipe_criteria_recipe ON recipe_criteria (recipe_slug, active);
+
+      -- hands#116 — the sous's (or whoever grades before a sous exists)
+      -- verdict on a recipe's progress. Append-only, same shape as
+      -- task_signoffs (verdict/note/by/origin_sha staleness anchor), but a
+      -- PARALLEL table rather than a repurposed one: task_signoffs.task_id is
+      -- the wrong shape for a verdict about a recipe/criterion, which may
+      -- span many tickets or none yet. criterion_hash NULL = an
+      -- overall/recipe-level grade. Deliberately never written back into the
+      -- recipe file — a machine editing the principal's authored prose is
+      -- the exact thing #205's design avoided. When this disagrees with the
+      -- file's own checkbox, that disagreement is the useful signal to
+      -- surface, not something to silently resolve here.
+      CREATE TABLE IF NOT EXISTS recipe_grades (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        recipe_slug       TEXT NOT NULL,
+        criterion_hash    TEXT,            -- NULL = overall/recipe-level grade
+        verdict           TEXT NOT NULL,   -- met | not_met | partial
+        note              TEXT,
+        evidence_task_id  INTEGER,         -- optional soft ref: a ticket whose work is cited as evidence
+        origin_sha        TEXT,
+        by                TEXT NOT NULL,
+        created_at        INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_recipe_grades_lookup ON recipe_grades (recipe_slug, criterion_hash, created_at);
     `);
 
     // Crafts as sub-agent-deployed specializations (hands#81/#96/#49). Sub-agents never write
@@ -660,6 +781,7 @@ export class Store {
     this.ensureColumn("tasks", "finished_at", "INTEGER");
     this.ensureColumn("agents", "focus", "TEXT");
     this.ensureColumn("tasks", "dish", "TEXT");
+    this.ensureColumn("tasks", "recipe_slug", "TEXT");
 
     // Expo self-audit: hindsight verdict on each recommendation.
     this.ensureColumn("questions", "outcome", "TEXT");
@@ -1453,6 +1575,108 @@ export class Store {
       .all(taskId) as unknown as TaskSignoffRow[];
   }
 
+  // --- recipe criteria + grading (hands#116) ---
+
+  /**
+   * Re-sync a recipe's criteria into SQL from a fresh parse of its file. Not journaled — this is a
+   * derived mirror of file content, re-derivable identically at any time by re-parsing, the same
+   * reason `listRecipes()` itself is never journaled. Upserts every criterion currently in the
+   * file (matched by content hash, so reordering is a no-op and rewording starts that criterion's
+   * row fresh) and marks any previously-active row NOT in this parse `active = 0` — never deleted,
+   * so grading history against a removed/reworded criterion survives for audit. The file always
+   * wins: this only ever moves SQL toward what's currently on disk, never the reverse.
+   */
+  syncRecipeCriteria(
+    recipeSlug: string,
+    criteria: readonly { hash: string; text: string; done: boolean }[],
+    now = Date.now(),
+  ): void {
+    this.withRetry(() => {
+      const seen = new Set(criteria.map((c) => c.hash));
+      const upsert = this.db.prepare(
+        `INSERT INTO recipe_criteria (recipe_slug, criterion_hash, text, checkbox_done, active, first_seen_at, last_synced_at)
+         VALUES (?, ?, ?, ?, 1, ?, ?)
+         ON CONFLICT(recipe_slug, criterion_hash) DO UPDATE SET
+           text = excluded.text, checkbox_done = excluded.checkbox_done, active = 1, last_synced_at = excluded.last_synced_at`,
+      );
+      for (const c of criteria) {
+        upsert.run(recipeSlug, c.hash, c.text, c.done ? 1 : 0, now, now);
+      }
+      // anything previously active for this recipe but absent from this parse — soft-delete, don't touch text/checkbox history
+      const staleClause = seen.size > 0 ? `AND criterion_hash NOT IN (${[...seen].map(() => "?").join(",")})` : "";
+      this.db
+        .prepare(`UPDATE recipe_criteria SET active = 0, last_synced_at = ? WHERE recipe_slug = ? AND active = 1 ${staleClause}`)
+        .run(now, recipeSlug, ...seen);
+    });
+  }
+
+  /** A recipe's criteria — active only by default (soft-deleted ones stay in SQL for grading history but drop out of normal reads). */
+  criteriaForRecipe(recipeSlug: string, includeInactive = false): RecipeCriterionRow[] {
+    const clause = includeInactive ? "" : "AND active = 1";
+    return this.db
+      .prepare(`SELECT * FROM recipe_criteria WHERE recipe_slug = ? ${clause} ORDER BY id ASC`)
+      .all(recipeSlug) as unknown as RecipeCriterionRow[];
+  }
+
+  /**
+   * Record a grading verdict — append-only, never written back into the recipe file. Journaled
+   * (a genuine new fact, unlike the criteria sync above, which is a re-derivable cache). Mirrors
+   * `recordSignoff`'s shape but is deliberately a parallel table, not a reuse of `task_signoffs`:
+   * that table's `task_id` is the wrong key for a verdict about a recipe/criterion, which may span
+   * many tickets or none. `criterionHash: null` records an overall/recipe-level grade.
+   */
+  recordRecipeGrade(input: {
+    recipeSlug: string;
+    criterionHash?: string | null;
+    verdict: "met" | "not_met" | "partial";
+    note?: string | null;
+    evidenceTaskId?: number | null;
+    originSha?: string | null;
+    by: string;
+    now?: number;
+  }): number {
+    const now = input.now ?? Date.now();
+    const id = this.withRetry(() => {
+      const result = this.db
+        .prepare(
+          `INSERT INTO recipe_grades (recipe_slug, criterion_hash, verdict, note, evidence_task_id, origin_sha, by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.recipeSlug,
+          input.criterionHash ?? null,
+          input.verdict,
+          input.note ?? null,
+          input.evidenceTaskId ?? null,
+          input.originSha ?? null,
+          input.by,
+          now,
+        );
+      return Number(result.lastInsertRowid);
+    });
+    this.journal("recipe.graded", {
+      id,
+      recipeSlug: input.recipeSlug,
+      criterionHash: input.criterionHash ?? null,
+      verdict: input.verdict,
+      note: input.note ?? null,
+      evidenceTaskId: input.evidenceTaskId ?? null,
+      by: input.by,
+      at: now,
+    });
+    return id;
+  }
+
+  /** The most recent grade per (recipe, criterion) — including the recipe-level row (criterion_hash IS NULL), keyed `""` in the returned map. */
+  latestRecipeGrades(recipeSlug: string): Map<string, RecipeGradeRow> {
+    const rows = this.db
+      .prepare("SELECT * FROM recipe_grades WHERE recipe_slug = ? ORDER BY id ASC")
+      .all(recipeSlug) as unknown as RecipeGradeRow[];
+    const latest = new Map<string, RecipeGradeRow>();
+    for (const r of rows) latest.set(r.criterion_hash ?? "", r); // later rows overwrite — ORDER BY id ASC means last-write-wins naturally
+    return latest;
+  }
+
   // --- questions (worktree → expo escalation) ---
 
   askQuestion(input: {
@@ -1714,6 +1938,7 @@ export class Store {
     body?: string | null;
     priority?: string | null;
     dish?: string | null;
+    recipeSlug?: string | null;
     thread?: string | null;
     now?: number;
   }): number {
@@ -1722,8 +1947,8 @@ export class Store {
     const id = this.withRetry(() => {
       const result = this.db
         .prepare(
-          `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO tasks (created_by, assignee, title, body, state, priority_ref, dish, recipe_slug, thread_id, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.createdBy,
@@ -1733,6 +1958,7 @@ export class Store {
           state,
           input.priority ?? null,
           input.dish ?? null,
+          input.recipeSlug ?? null,
           input.thread ?? null,
           now,
           now,
@@ -1748,6 +1974,7 @@ export class Store {
       state,
       priority: input.priority ?? null,
       dish: input.dish ?? null,
+      recipeSlug: input.recipeSlug ?? null,
       thread: input.thread ?? null,
       at: now,
     });
@@ -1759,6 +1986,7 @@ export class Store {
     assignee?: string;
     createdBy?: string;
     active?: boolean;
+    recipeSlug?: string;
     limit?: number;
   }): TaskRow[] {
     const clauses: string[] = [];
@@ -1777,6 +2005,10 @@ export class Store {
     }
     if (options?.active) {
       clauses.push("state IN ('open','assigned','in_progress','returned')");
+    }
+    if (options?.recipeSlug) {
+      clauses.push("recipe_slug = ?");
+      params.push(options.recipeSlug);
     }
     const where = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(Math.max(1, Math.min(options?.limit ?? 100, 300)));
@@ -2529,8 +2761,8 @@ export class Store {
         this.withRetry(() =>
           this.db
             .prepare(
-              `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, dish, thread_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              `INSERT OR IGNORE INTO tasks (id, created_by, assignee, title, body, state, priority_ref, dish, recipe_slug, thread_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(
               f("id"),
@@ -2541,6 +2773,7 @@ export class Store {
               f("state"),
               f("priority"),
               f("dish"),
+              f("recipeSlug"),
               f("thread"),
               at,
               at,

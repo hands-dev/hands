@@ -30385,6 +30385,7 @@ import * as os5 from "node:os";
 import * as path11 from "node:path";
 
 // src/recipes.ts
+import * as crypto2 from "node:crypto";
 import * as fs11 from "node:fs";
 import * as path13 from "node:path";
 

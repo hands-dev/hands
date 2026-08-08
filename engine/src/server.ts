@@ -37,7 +37,7 @@ import {
   syncPush,
 } from "./remote.js";
 import { formatRosterContext, listCrafts, roleCraftFoldNudges } from "./crafts.js";
-import { currentMenu, listRecipes } from "./recipes.js";
+import { criterionHash, currentMenu, listRecipes, parseRecipe, recipeFiles } from "./recipes.js";
 import { isSignoffStale, type MessageRow, Store, type TaskRow } from "./store.js";
 import { inboxMonitorAlive as inboxMonitorAliveReal } from "./watchers.js";
 import { readJournal, readPreviousPage, readRoleState } from "./journal-read.js";
@@ -506,6 +506,8 @@ export function buildServer(
       if (!input.full) return asToolResult(base);
 
       // full:true — the expo's bundled pass: one read instead of four.
+      const menu = currentMenu(listRecipes(cfg));
+      const onMenu = new Set(menu.map((r) => r.slug)); // hands#116 — see hands_tasks' identical comment
       const activeTasks = store.listTasks({ active: true }).map((t) => ({
         id: t.id,
         title: t.title,
@@ -513,6 +515,8 @@ export function buildServer(
         state: t.state,
         priority: t.priority_ref ?? undefined,
         dish: t.dish ?? undefined,
+        recipeSlug: t.recipe_slug ?? undefined,
+        offMenu: t.recipe_slug != null && !onMenu.has(t.recipe_slug),
         updatedAt: new Date(t.updated_at).toISOString(),
       }));
       const openQuestions = store.listQuestions({ state: "open" }).map((q) => ({
@@ -522,7 +526,6 @@ export function buildServer(
         context: q.context ?? undefined,
         askedAt: new Date(q.created_at).toISOString(),
       }));
-      const menu = currentMenu(listRecipes(cfg));
       const confirmedRaw = store.getWatermark("*", "menu_confirmed_at");
       const confirmedAt = confirmedRaw ? Number(confirmedRaw) : null;
       return asToolResult({
@@ -890,6 +893,125 @@ export function buildServer(
     },
   );
 
+  /**
+   * Re-parse a recipe's file and mirror its current criteria into SQL (hands#116) — the same sync
+   * `hands recipe new/promote/demote/sync` (CLI) trigger, called here too so a grading or status
+   * read is never answered against a stale mirror. Cheap (one file parse); the file stays truth,
+   * this only ever moves SQL toward what's currently on disk. Returns the fresh parse so callers
+   * don't need a second read.
+   */
+  function syncAndParseRecipe(slug: string) {
+    const files = recipeFiles(slug, cfg);
+    let raw: string | null = null;
+    try {
+      raw = fs.readFileSync(files.path, "utf8");
+    } catch {
+      raw = null;
+    }
+    const recipe = parseRecipe(slug, raw);
+    store.syncRecipeCriteria(
+      slug,
+      recipe.criteria.map((c) => ({ hash: criterionHash(c.text), text: c.text, done: c.done })),
+    );
+    return recipe;
+  }
+
+  server.registerTool(
+    "hands_recipe_grade",
+    {
+      title: "Record a grading verdict for a recipe or one of its criteria (hands#116)",
+      description:
+        "Record whether a recipe — or one specific acceptance criterion — is met. Designed for " +
+        "whoever grades recipe progress (the sous, once it holds sign-off authority; the expo or " +
+        "anyone else in the meantime — not role-gated). Append-only: the most recent grade per " +
+        "(recipe, criterion) is the current verdict, history is kept. This NEVER edits the recipe's " +
+        "markdown checkbox — that stays the principal's own informal signal. If your verdict " +
+        "disagrees with the checkbox, record it anyway; the disagreement is the useful signal, " +
+        "surfaced on the dashboard/rail, not something to resolve here. Omit criterionHash for an " +
+        "overall/recipe-level grade rather than one criterion's.",
+      inputSchema: {
+        recipeSlug: z.string(),
+        criterionHash: z
+          .string()
+          .optional()
+          .describe("which criterion (from hands_recipe_status's criteria list) — omit for an overall/recipe-level grade"),
+        verdict: z.enum(["met", "not_met", "partial"]),
+        note: z.string().optional(),
+        evidenceTaskId: z.number().int().optional().describe("a ticket whose returned work is cited as evidence for this verdict"),
+        originSha: z.string().optional().describe("origin/main HEAD at grading time — the staleness anchor, same as hands_craft_signoff"),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      store.touch(agentId);
+      const recipe = syncAndParseRecipe(input.recipeSlug);
+      if (!recipe.title && recipe.criteria.length === 0) {
+        return { ...asToolResult({ ok: false, error: `no such recipe "${input.recipeSlug}"` }), isError: true };
+      }
+      if (input.criterionHash) {
+        const active = store.criteriaForRecipe(input.recipeSlug);
+        if (!active.some((c) => c.criterion_hash === input.criterionHash)) {
+          return {
+            ...asToolResult({
+              ok: false,
+              error:
+                `criterionHash "${input.criterionHash}" isn't among "${input.recipeSlug}"'s current criteria. ` +
+                `Current criteria: ${active.map((c) => `${c.criterion_hash} (${c.text})`).join("; ") || "(none)"}.`,
+            }),
+            isError: true,
+          };
+        }
+      }
+      const id = store.recordRecipeGrade({
+        recipeSlug: input.recipeSlug,
+        criterionHash: input.criterionHash ?? null,
+        verdict: input.verdict,
+        note: input.note ?? null,
+        evidenceTaskId: input.evidenceTaskId ?? null,
+        originSha: input.originSha ?? null,
+        by: agentId,
+      });
+      return asToolResult({ ok: true, id });
+    },
+  );
+
+  server.registerTool(
+    "hands_recipe_status",
+    {
+      title: "Where are we at with a recipe? (hands#116)",
+      description:
+        "Read-only: one recipe's criteria (checkbox state + last-synced text), the latest grade per " +
+        "criterion and overall, and the tickets currently laddering up to it. Re-syncs the recipe's " +
+        "criteria from its file before answering, so this is never stale relative to what's on disk. " +
+        "Where a criterion's checkbox and its latest grade disagree, both are returned as-is — that's " +
+        "the signal, not a bug to resolve client-side either.",
+      inputSchema: { recipeSlug: z.string() },
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => {
+      store.touch(agentId);
+      const recipe = syncAndParseRecipe(input.recipeSlug);
+      const criteria = store.criteriaForRecipe(input.recipeSlug);
+      const grades = store.latestRecipeGrades(input.recipeSlug);
+      const overallGrade = grades.get("");
+      const linkedTasks = store.listTasks({ recipeSlug: input.recipeSlug, limit: 300 });
+      return asToolResult({
+        slug: input.recipeSlug,
+        title: recipe.title,
+        state: recipe.state,
+        rank: recipe.rank,
+        criteria: criteria.map((c) => ({
+          hash: c.criterion_hash,
+          text: c.text,
+          checkboxDone: Boolean(c.checkbox_done),
+          grade: grades.get(c.criterion_hash) ?? null,
+        })),
+        overallGrade: overallGrade ?? null,
+        tickets: linkedTasks.map((t) => ({ id: t.id, title: t.title, state: t.state, assignee: t.assignee })),
+      });
+    },
+  );
+
   // --- tickets (expo → station delegation) ---
 
   server.registerTool(
@@ -911,6 +1033,15 @@ export function buildServer(
           .string()
           .optional()
           .describe('the DISH this ticket helps assemble — external ref ("ENG-1476", "PR #2455")'),
+        recipeSlug: z
+          .string()
+          .optional()
+          .describe(
+            "the recipe this ticket ladders up to (hands#116) — required, and must currently be " +
+              "on the menu (state: menu). Not the same as `dish`, which is a generic external ref " +
+              "(Linear/GitHub) unrelated to recipes. `hands recipe promote <slug>` first if the " +
+              "recipe you want isn't on the menu yet.",
+          ),
         force: z
           .boolean()
           .optional()
@@ -957,6 +1088,39 @@ export function buildServer(
           isError: true,
         };
       }
+      // Every ticket ladders up to a recipe that's on the menu today
+      // (hands#116, the principal's own words: "otherwise we're making
+      // dishes that aren't for sale that day"). Hard-enforced, not a nudge —
+      // unlike the attestation gate below, there's no flaky/stale-check risk
+      // here to justify a force:true escape hatch: "is this recipe on the
+      // menu right now" is an unambiguous, always-correct boolean. The
+      // escape hatch that DOES exist is cheap and intentional: promote the
+      // recipe (a one-line header stamp), don't skip the link.
+      const menu = currentMenu(listRecipes(cfg));
+      const menuList = menu.length > 0 ? menu.map((r) => r.slug).join(", ") : "(nothing on the menu right now)";
+      if (!input.recipeSlug) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error:
+              `hands_delegate requires recipeSlug — every ticket ladders up to a recipe on today's ` +
+              `menu (hands#116). Today's menu: ${menuList}. If the right recipe isn't listed, ` +
+              "hands recipe promote <slug> first (or hands recipe new <slug> if it doesn't exist yet).",
+          }),
+          isError: true,
+        };
+      }
+      if (!menu.some((r) => r.slug === input.recipeSlug)) {
+        return {
+          ...asToolResult({
+            ok: false,
+            error:
+              `"${input.recipeSlug}" is not on today's menu — today's menu: ${menuList}. ` +
+              `hands recipe promote ${input.recipeSlug} first.`,
+          }),
+          isError: true,
+        };
+      }
       const resolved = resolveRecipient(input.to);
       if ("error" in resolved) {
         return { ...asToolResult({ ok: false, error: resolved.error }), isError: true };
@@ -993,6 +1157,7 @@ export function buildServer(
         body: input.body ?? null,
         priority: input.priority ?? null,
         dish: input.dish ?? null,
+        recipeSlug: input.recipeSlug,
       });
       deliverWake([assignee], { from: agentId, subject: "task" });
       // hands#183 — a ticket delivered to a confirmed-dead process should say
@@ -1058,6 +1223,15 @@ export function buildServer(
         active: input.active,
         limit: input.limit,
       });
+      // hands#116 — computed live, never stored: a ticket's recipe_slug is
+      // fixed at creation, but whether that recipe is STILL on the menu is a
+      // fact of the menu's current state, not the ticket's. Demoting a
+      // recipe never invalidates a ticket already working against it (that
+      // would let an unrelated menu reshuffle silently stall real in-flight
+      // work) — it just becomes visible drift: work continuing on something
+      // the kitchen deprioritised, same "surface it, don't resolve it in
+      // software" principle as the checkbox/grade disagreement.
+      const onMenu = new Set(currentMenu(listRecipes(cfg)).map((r) => r.slug));
       return asToolResult({
         count: rows.length,
         tasks: rows.map((t) => {
@@ -1072,6 +1246,8 @@ export function buildServer(
             result: t.result ?? undefined,
             priority: t.priority_ref ?? undefined,
             dish: t.dish ?? undefined,
+            recipeSlug: t.recipe_slug ?? undefined,
+            offMenu: t.recipe_slug != null && !onMenu.has(t.recipe_slug),
             updatedAt: new Date(t.updated_at).toISOString(),
             // hands#139/#91/#95/#112 — the most recent CDC checkpoint
             // verdict (any of pre-fire/pre-return/pre-ship), if any.
