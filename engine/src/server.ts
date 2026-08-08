@@ -1332,7 +1332,7 @@ export function buildServer(
    */
   function preReturnSignoffProblem(t: TaskRow): string | null {
     const howTo =
-      `dispatch CDC: \`hands craft brief cdc --mode plan --task "pre-return: ${t.title}"\`, then record its verdict — ` +
+      `dispatch CDC: \`hands craft brief cdc --mode plan --checkpoint pre-return --ticket ${t.id}\`, then record its verdict — ` +
       `\`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-return", verdict, note, originSha })\`. To return anyway ` +
       "(trivial ticket, or CDC genuinely unavailable), pass `skipSignoff` with a reason on this call — recorded, never silent.";
 

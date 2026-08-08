@@ -1,11 +1,14 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resetConfigCache } from "../src/config.js";
+import { DEFAULT_CONFIG, resetConfigCache } from "../src/config.js";
 import { exportPendingCraftNotes } from "../src/crafts.js";
 import { resetRepoInfoCache } from "../src/paths.js";
 import { craftFiles } from "../src/remote.js";
+import { buildServer } from "../src/server.js";
 import { runSubagentStop } from "../src/subagent-stop.js";
 import { Store } from "../src/store.js";
 
@@ -28,6 +31,10 @@ function assistantLine(id: string, out: number): string {
   return `${JSON.stringify({ type: "assistant", message: { id, usage: { output_tokens: out } } })}\n`;
 }
 
+function assistantTextLine(text: string): string {
+  return `${JSON.stringify({ type: "assistant", message: { id: "m1", content: [{ type: "text", text }] } })}\n`;
+}
+
 describe("runSubagentStop", () => {
   it("sums deduped output tokens and records craft + spawn depth from the .meta.json sidecar", () => {
     const store = new Store({ env });
@@ -44,7 +51,7 @@ describe("runSubagentStop", () => {
 
     const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 5000 });
 
-    expect(result).toEqual({ recorded: true, agentType: "Explore", outputTokens: 150, craftNote: null });
+    expect(result).toEqual({ recorded: true, agentType: "Explore", outputTokens: 150, craftNote: null, cdcSignoff: null });
     expect(store.subagentSamples("station-1")).toEqual([
       { agentType: "Explore", spawnDepth: 1, outputTokens: 150, at: 5000 },
     ]);
@@ -63,7 +70,7 @@ describe("runSubagentStop", () => {
       now: 6000,
     });
 
-    expect(result).toEqual({ recorded: true, agentType: "general-purpose", outputTokens: 10, craftNote: null });
+    expect(result).toEqual({ recorded: true, agentType: "general-purpose", outputTokens: 10, craftNote: null, cdcSignoff: null });
     store.close();
   });
 
@@ -73,17 +80,13 @@ describe("runSubagentStop", () => {
       ownerAgentId: "station-1",
       agentTranscriptPath: path.join(root, "nope.jsonl"),
     });
-    expect(result).toEqual({ recorded: false, agentType: null, outputTokens: null, craftNote: null });
+    expect(result).toEqual({ recorded: false, agentType: null, outputTokens: null, craftNote: null, cdcSignoff: null });
     expect(store.subagentSamples("station-1")).toEqual([]);
     store.close();
   });
 });
 
 describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
-  function assistantTextLine(text: string): string {
-    return `${JSON.stringify({ type: "assistant", message: { id: "m1", content: [{ type: "text", text }] } })}\n`;
-  }
-
   it("harvests a craft-note block into craft_notes and marks the brief noted, independent of token accounting", () => {
     const store = new Store({ env });
     const briefId = store.createCraftBrief({ craftSlug: "ordering-api", mode: "plan", openedBy: "expo" });
@@ -194,6 +197,119 @@ describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
     fs.writeFileSync(transcript, assistantTextLine("just ordinary output, no fenced block"));
     const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 1000 });
     expect(result.craftNote).toBeNull();
+    store.close();
+  });
+});
+
+describe("runSubagentStop — CDC pre-return verdict harvest (hands#128)", () => {
+  it("records a signoff mechanically from a cdc-verdict block — no hands_craft_signoff call needed", () => {
+    const store = new Store({ env });
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 500 });
+    const briefId = store.createCraftBrief({ craftSlug: "cdc", mode: "plan", openedBy: "station-1", ticketId: taskId, now: 600 });
+    const transcript = path.join(root, "cdc-1.jsonl");
+    const verdict = [
+      "some reasoning about the board first",
+      "```cdc-verdict",
+      `brief: ${briefId}`,
+      "checkpoint: pre-return",
+      "verdict: approved",
+      "note: checked against origin/main, no collisions",
+      "originSha: abc123",
+      "```",
+    ].join("\n");
+    fs.writeFileSync(transcript, assistantTextLine(verdict));
+
+    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 1000 });
+
+    expect(result.cdcSignoff).toEqual({ taskId, checkpoint: "pre-return", verdict: "approved", signoffId: expect.any(Number) });
+    const signoff = store.latestSignoff(taskId, "pre-return");
+    expect(signoff?.verdict).toBe("approved");
+    expect(signoff?.by).toBe("station-1");
+    expect(signoff?.origin_sha).toBe("abc123");
+    store.close();
+  });
+
+  it("the harvested signoff actually satisfies the real hands_task_update pre-return gate end to end", async () => {
+    const store = new Store({ env });
+    store.registerAgent({ id: "station-1", cwd: "/", pid: 1 });
+    const server = buildServer(store, "station-1", DEFAULT_CONFIG, { currentOriginSha: () => "HEAD" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 500 });
+    const briefId = store.createCraftBrief({ craftSlug: "cdc", mode: "plan", openedBy: "station-1", ticketId: taskId, now: 600 });
+    const transcript = path.join(root, "cdc-2.jsonl");
+    fs.writeFileSync(
+      transcript,
+      assistantTextLine(`\`\`\`cdc-verdict\nbrief: ${briefId}\ncheckpoint: pre-return\nverdict: approved\noriginSha: HEAD\n\`\`\``),
+    );
+    runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 1000 });
+
+    const res = await client.callTool({
+      name: "hands_task_update",
+      arguments: { id: taskId, state: "returned", result: "done" },
+    });
+    expect(res.isError).not.toBe(true);
+    expect(store.getTask(taskId)?.state).toBe("returned");
+    await client.close();
+    await server.close();
+    store.close();
+  });
+
+  it("does NOT record a signoff for a ticket the dispatching agent doesn't own — mirrors hands_craft_signoff's own ownership check", () => {
+    const store = new Store({ env });
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-2", title: "someone else's ticket", now: 500 });
+    const briefId = store.createCraftBrief({ craftSlug: "cdc", mode: "plan", openedBy: "station-1", ticketId: taskId, now: 600 });
+    const transcript = path.join(root, "cdc-3.jsonl");
+    fs.writeFileSync(
+      transcript,
+      assistantTextLine(`\`\`\`cdc-verdict\nbrief: ${briefId}\ncheckpoint: pre-return\nverdict: approved\n\`\`\``),
+    );
+
+    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 1000 });
+
+    expect(result.cdcSignoff).toBeNull();
+    expect(store.latestSignoff(taskId, "pre-return")).toBeUndefined();
+    store.close();
+  });
+
+  it("does NOT record a signoff when the brief has no ticket_id — nothing to attach it to", () => {
+    const store = new Store({ env });
+    const briefId = store.createCraftBrief({ craftSlug: "cdc", mode: "plan", openedBy: "station-1", now: 600 }); // no ticketId
+    const transcript = path.join(root, "cdc-4.jsonl");
+    fs.writeFileSync(
+      transcript,
+      assistantTextLine(`\`\`\`cdc-verdict\nbrief: ${briefId}\ncheckpoint: pre-return\nverdict: approved\n\`\`\``),
+    );
+
+    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 1000 });
+    expect(result.cdcSignoff).toBeNull();
+    store.close();
+  });
+
+  it("does NOT auto-record pre-fire or pre-ship verdicts — scoped to pre-return only, expo still calls hands_craft_signoff by hand for those", () => {
+    const store = new Store({ env });
+    const taskId = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 500 });
+    const briefId = store.createCraftBrief({ craftSlug: "cdc", mode: "plan", openedBy: "expo", ticketId: taskId, now: 600 });
+    const transcript = path.join(root, "cdc-5.jsonl");
+    fs.writeFileSync(
+      transcript,
+      assistantTextLine(`\`\`\`cdc-verdict\nbrief: ${briefId}\ncheckpoint: pre-ship\nverdict: approved\n\`\`\``),
+    );
+
+    const result = runSubagentStop(store, { ownerAgentId: "expo", agentTranscriptPath: transcript, now: 1000 });
+    expect(result.cdcSignoff).toBeNull();
+    expect(store.latestSignoff(taskId, "pre-ship")).toBeUndefined();
+    store.close();
+  });
+
+  it("a transcript with no cdc-verdict block at all harvests null", () => {
+    const store = new Store({ env });
+    const transcript = path.join(root, "cdc-6.jsonl");
+    fs.writeFileSync(transcript, assistantTextLine("just ordinary output, no fenced block"));
+    const result = runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 1000 });
+    expect(result.cdcSignoff).toBeNull();
     store.close();
   });
 });

@@ -11199,7 +11199,44 @@ function parseCraftNoteBlock(text) {
   }
   return { briefId, craftSlug, nothingNew, entries };
 }
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE;
+function parseCdcVerdictBlock(text) {
+  let last = null;
+  const re = new RegExp(VERDICT_BLOCK_RE, "g");
+  for (let m = re.exec(text); m; m = re.exec(text)) last = m;
+  if (!last) return null;
+  const body = last[1] ?? "";
+  const result = { briefId: null, checkpoint: null, verdict: null, note: null, originSha: null };
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const brief = /^brief:\s*(\d+)/.exec(line);
+    if (brief) {
+      result.briefId = Number(brief[1]);
+      continue;
+    }
+    const checkpoint = /^checkpoint:\s*(pre-fire|pre-return|pre-ship)/.exec(line);
+    if (checkpoint) {
+      result.checkpoint = checkpoint[1];
+      continue;
+    }
+    const verdict = /^verdict:\s*(approved|rejected)/.exec(line);
+    if (verdict) {
+      result.verdict = verdict[1];
+      continue;
+    }
+    const note = /^note:\s*(.+)$/.exec(line);
+    if (note) {
+      result.note = note[1];
+      continue;
+    }
+    const originSha = /^originSha:\s*(\S+)/.exec(line);
+    if (originSha) {
+      result.originSha = originSha[1];
+    }
+  }
+  return result;
+}
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, VERDICT_BLOCK_RE;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -11214,6 +11251,7 @@ var init_crafts = __esm({
     NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
     KV_RE = /^(mise|book|skill|friction|refactor):\s*(.+)$/;
     SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
+    VERDICT_BLOCK_RE = /```cdc-verdict\r?\n([\s\S]*?)```/;
   }
 });
 
@@ -36022,6 +36060,24 @@ function harvestCraftNote(store, transcriptPath, now) {
   }
   return { craftSlug: parsed.craftSlug, briefId: parsed.briefId, entriesHarvested };
 }
+function harvestCdcVerdict(store, transcriptPath, ownerAgentId, now) {
+  const parsed = parseCdcVerdictBlock(assistantText(transcriptPath));
+  if (!parsed || parsed.checkpoint !== "pre-return" || !parsed.verdict || parsed.briefId === null) return null;
+  const brief = store.getCraftBrief(parsed.briefId);
+  if (!brief || brief.ticket_id === null) return null;
+  const task = store.getTask(brief.ticket_id);
+  if (!task || task.assignee !== ownerAgentId) return null;
+  const signoffId = store.recordSignoff({
+    taskId: brief.ticket_id,
+    checkpoint: "pre-return",
+    verdict: parsed.verdict,
+    note: parsed.note,
+    originSha: parsed.originSha,
+    by: ownerAgentId,
+    now
+  });
+  return { taskId: brief.ticket_id, checkpoint: "pre-return", verdict: parsed.verdict, signoffId };
+}
 function runSubagentStop(store, opts) {
   const now = opts.now ?? Date.now();
   const outputTokens = totalOutputTokens(opts.agentTranscriptPath);
@@ -36032,8 +36088,13 @@ function runSubagentStop(store, opts) {
     craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
   } catch {
   }
+  let cdcSignoff = null;
+  try {
+    cdcSignoff = harvestCdcVerdict(store, opts.agentTranscriptPath, opts.ownerAgentId, now);
+  } catch {
+  }
   if (outputTokens === null) {
-    return { recorded: false, agentType, outputTokens: null, craftNote };
+    return { recorded: false, agentType, outputTokens: null, craftNote, cdcSignoff };
   }
   try {
     store.recordSubagentSample({
@@ -36044,9 +36105,9 @@ function runSubagentStop(store, opts) {
       now
     });
   } catch {
-    return { recorded: false, agentType, outputTokens, craftNote };
+    return { recorded: false, agentType, outputTokens, craftNote, cdcSignoff };
   }
-  return { recorded: true, agentType, outputTokens, craftNote };
+  return { recorded: true, agentType, outputTokens, craftNote, cdcSignoff };
 }
 
 // src/server.ts
@@ -37069,7 +37130,7 @@ ${input.body ?? ""}`, [agentId, assignee]);
     return null;
   }
   function preReturnSignoffProblem(t) {
-    const howTo = `dispatch CDC: \`hands craft brief cdc --mode plan --task "pre-return: ${t.title}"\`, then record its verdict \u2014 \`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-return", verdict, note, originSha })\`. To return anyway (trivial ticket, or CDC genuinely unavailable), pass \`skipSignoff\` with a reason on this call \u2014 recorded, never silent.`;
+    const howTo = `dispatch CDC: \`hands craft brief cdc --mode plan --checkpoint pre-return --ticket ${t.id}\`, then record its verdict \u2014 \`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-return", verdict, note, originSha })\`. To return anyway (trivial ticket, or CDC genuinely unavailable), pass \`skipSignoff\` with a reason on this call \u2014 recorded, never silent.`;
     const signoff = store.latestSignoff(t.id, "pre-return");
     if (!signoff) return `task #${t.id} has no pre-return CDC sign-off \u2014 ${howTo}`;
     if (signoff.verdict !== "approved") {
