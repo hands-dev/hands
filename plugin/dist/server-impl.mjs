@@ -36075,8 +36075,9 @@ function craftRosterContext(config2, store, env = process.env, cwd = process.cwd
   );
   return formatRosterContext(roster, cwd, rate, now);
 }
-function buildServer(store, agentId, config2) {
+function buildServer(store, agentId, config2, deps = {}) {
   const cfg = config2 ?? loadConfig();
+  const checkMonitorAlive = deps.inboxMonitorAlive ?? inboxMonitorAlive;
   const principal = cfg.principal.name;
   const resolveRecipient = (ref) => {
     const id = resolveAgentRef(ref);
@@ -36314,7 +36315,7 @@ ${input.body}`, [agentId, ...recipients]);
           // nothing to do — it simply never wakes again. null = couldn't look,
           // which must not read as fine.
           // hands#202 — anchored to p.id's resolved path, never a bare substring.
-          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id, notifyPath(p.id)) : void 0
+          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? checkMonitorAlive(p.id, notifyPath(p.id)) : void 0
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -36526,7 +36527,7 @@ ${input.body}`, [agentId, ...recipients]);
           wokeSous = result.notified.includes("sous");
         } catch {
         }
-        if (inboxMonitorAlive("sous", notifyPath("sous")) === false) {
+        if (checkMonitorAlive("sous", notifyPath("sous")) === false) {
           sousWarning = "sous.enabled is true but no inbox monitor is tailing sous.notify \u2014 this escalation was recorded but nothing is running /loop /hands:sous to see it";
         }
       }
@@ -36688,7 +36689,7 @@ ${input.body}`, [agentId, ...recipients]);
       deliverWake([assignee], { from: agentId, subject: "task" });
       const assigneePeer = store.listPeers().find((p) => p.id === assignee);
       const deadWarning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
-      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee, notifyPath(assignee)) === false;
+      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && checkMonitorAlive(assignee, notifyPath(assignee)) === false;
       const monitorWarning = monitorDead ? `${assignee}'s inbox monitor is dead \u2014 it cannot be woken until its next pass (self-heal on the fallback heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a while; run \`hands doctor\` to confirm, or restart the station to fix it now.` : void 0;
       const leakWarning = crossPeerMentionWarning(`${input.title}
 ${input.body ?? ""}`, [agentId, assignee]);

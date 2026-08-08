@@ -19,7 +19,7 @@ import {
 import { idleMs } from "./station-logs.js";
 import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { Store } from "./store.js";
-import { inboxMonitorAlive } from "./watchers.js";
+import { inboxMonitorAlive as inboxMonitorAliveReal } from "./watchers.js";
 
 /**
  * `hands doctor` — the checks are not hypothetical. Every one of them
@@ -95,10 +95,18 @@ export function runDoctor(opts?: {
   entry?: string;
   /** pre-computed session scan (injectable for tests; defaults to a live scan) */
   scan?: SessionScan;
+  /**
+   * Injectable for tests (hands#105) — same rationale as `scan` above: the real scanner spawns
+   * and reads real OS processes, which belongs in the one dedicated integration suite that proves
+   * it (watchers.test.ts), not in a test whose actual subject is this function's severity-mapping
+   * logic. Defaults to the real scanner.
+   */
+  checkMonitorAlive?: (stationId: string, notifyPath: string) => boolean | null;
 }): DoctorReport {
   const cwd = opts?.cwd ?? process.cwd();
   const env = opts?.env ?? process.env;
   const now = opts?.now ?? Date.now();
+  const checkMonitorAlive = opts?.checkMonitorAlive ?? inboxMonitorAliveReal;
   const checks: Check[] = [];
 
   const info = repoInfo(cwd);
@@ -443,7 +451,7 @@ export function runDoctor(opts?: {
       // `<id>.notify` substring: station ids repeat across every kitchen on
       // the machine, and an unanchored match reads a different session's
       // live tail as this station's own.
-      const monitor = inboxMonitorAlive(station.id, notifyPath(station.id, env, info.repoRoot));
+      const monitor = checkMonitorAlive(station.id, notifyPath(station.id, env, info.repoRoot));
       if (monitor === false) {
         checks.push({
           name: `${station.id}.monitor`,
