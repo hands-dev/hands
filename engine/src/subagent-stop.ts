@@ -1,5 +1,5 @@
 import * as fs from "node:fs";
-import { parseCraftNoteBlock } from "./crafts.js";
+import { parseCdcVerdictBlock, parseCraftNoteBlock } from "./crafts.js";
 import type { Store } from "./store.js";
 
 export interface SubagentStopResult {
@@ -8,6 +8,9 @@ export interface SubagentStopResult {
   outputTokens: number | null;
   /** craft-note harvest (hands#81/#96) — null when the transcript carried no fenced block at all */
   craftNote: { craftSlug: string | null; briefId: number | null; entriesHarvested: number } | null;
+  /** cdc-verdict harvest (hands#128) — null when the transcript carried no fenced block, or the
+   * block wasn't a pre-return verdict this hook is scoped to auto-record. */
+  cdcSignoff: { taskId: number; checkpoint: "pre-return"; verdict: "approved" | "rejected"; signoffId: number } | null;
 }
 
 interface SubagentMeta {
@@ -152,14 +155,58 @@ function harvestCraftNote(store: Store, transcriptPath: string, now: number): Su
 }
 
 /**
- * The SubagentStop-hook workhorse. Two independent jobs on every subagent
+ * Harvest a ```cdc-verdict``` block mechanically (hands#128) — CDC's pre-return checkpoint used to
+ * exist only as prose: the sub-agent's returned text told the dispatching station what it judged,
+ * and recording that verdict via hands_craft_signoff depended entirely on the station reading it
+ * and remembering to make a second tool call. A live DB query found zero rows in task_signoffs
+ * ever, across real dispatches that WERE picked up — this is the direct fix, the same mechanical-
+ * harvest shape hands#56/#81/#96 already built for craft notes.
+ *
+ * Deliberately scoped to `pre-return` only. pre-fire/pre-ship are expo-dispatched and a pre-ship
+ * verdict can cover a whole dish spanning several tickets — recording those automatically from one
+ * sub-agent's single verdict block risks attributing a signoff to the wrong ticket, so those stay
+ * on the existing manual hands_craft_signoff path. pre-return is unambiguous: one station, one
+ * ticket it owns, exactly the shape `ownsPreReturn` in server.ts's hands_craft_signoff already
+ * checks — replicated here since this call bypasses that MCP tool entirely.
+ *
+ * Requires the brief to carry a `ticket_id` (hands#128's `--checkpoint pre-return --ticket <id>`
+ * requirement on `hands craft brief`) — a verdict with no ticket linkage has nothing to attach a
+ * signoff to and is left unharvested, same as a craft-note block with no craft slug.
+ */
+function harvestCdcVerdict(
+  store: Store,
+  transcriptPath: string,
+  ownerAgentId: string,
+  now: number,
+): SubagentStopResult["cdcSignoff"] {
+  const parsed = parseCdcVerdictBlock(assistantText(transcriptPath));
+  if (!parsed || parsed.checkpoint !== "pre-return" || !parsed.verdict || parsed.briefId === null) return null;
+  const brief = store.getCraftBrief(parsed.briefId);
+  if (!brief || brief.ticket_id === null) return null;
+  const task = store.getTask(brief.ticket_id);
+  if (!task || task.assignee !== ownerAgentId) return null; // not this station's ticket to sign off
+  const signoffId = store.recordSignoff({
+    taskId: brief.ticket_id,
+    checkpoint: "pre-return",
+    verdict: parsed.verdict,
+    note: parsed.note,
+    originSha: parsed.originSha,
+    by: ownerAgentId,
+    now,
+  });
+  return { taskId: brief.ticket_id, checkpoint: "pre-return", verdict: parsed.verdict, signoffId };
+}
+
+/**
+ * The SubagentStop-hook workhorse. Three independent jobs on every subagent
  * finish: (1) hands#103 — records one token-usage completion sample, the gap
  * that left subagent activity invisible to anything but the dashboard's
  * periodic transcript scan; (2) hands#81/#96 — harvests a craft-note block
  * if the transcript carried one, so a craft sub-agent's learnings reach
- * storage whether or not its orchestrator ever reads its return. Both are
- * best-effort: an unreadable transcript, or one with neither usage data nor
- * a note, records nothing rather than failing the hook.
+ * storage whether or not its orchestrator ever reads its return; (3) hands#128
+ * — harvests a CDC pre-return verdict the same way. All best-effort: an
+ * unreadable transcript, or one with none of the three, records nothing
+ * rather than failing the hook.
  */
 export function runSubagentStop(
   store: Store,
@@ -174,16 +221,22 @@ export function runSubagentStop(
   const outputTokens = totalOutputTokens(opts.agentTranscriptPath);
   const meta = readMeta(opts.agentTranscriptPath);
   const agentType = meta.agentType ?? opts.agentType ?? null;
-  // Independent of token accounting below — a craft-note harvest must not depend on usage data
-  // being present (hands#56's fix: the note reaches storage regardless of what else worked).
+  // Independent of token accounting below — a craft-note/cdc-verdict harvest must not depend on
+  // usage data being present (hands#56's fix: the note reaches storage regardless of what else worked).
   let craftNote: SubagentStopResult["craftNote"] = null;
   try {
     craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
   } catch {
     // best-effort — a harvest failure must never fail the hook
   }
+  let cdcSignoff: SubagentStopResult["cdcSignoff"] = null;
+  try {
+    cdcSignoff = harvestCdcVerdict(store, opts.agentTranscriptPath, opts.ownerAgentId, now);
+  } catch {
+    // best-effort — a harvest failure must never fail the hook
+  }
   if (outputTokens === null) {
-    return { recorded: false, agentType, outputTokens: null, craftNote };
+    return { recorded: false, agentType, outputTokens: null, craftNote, cdcSignoff };
   }
   try {
     store.recordSubagentSample({
@@ -196,7 +249,7 @@ export function runSubagentStop(
   } catch {
     // best-effort, same contract as the transcript read above — a transient
     // write failure drops one telemetry sample, not the hook itself
-    return { recorded: false, agentType, outputTokens, craftNote };
+    return { recorded: false, agentType, outputTokens, craftNote, cdcSignoff };
   }
-  return { recorded: true, agentType, outputTokens, craftNote };
+  return { recorded: true, agentType, outputTokens, craftNote, cdcSignoff };
 }

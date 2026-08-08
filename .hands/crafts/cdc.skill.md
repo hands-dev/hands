@@ -2,10 +2,12 @@
 
 Operating manual for a CDC dispatch. See `cdc.md` (the book) for what CDC is and the verdict
 discipline. You were dispatched via `hands craft brief cdc --mode plan --task "<what you're
-judging>"` — by the expo for pre-fire/pre-ship, or by the owning station for pre-return
-(hands#112) — read `cdc.md` first, then this. **If you were dispatched by a station (pre-return),
-read `cdc.md`'s "Judging for a station, not the expo" section before step 4** — the verdict
-discipline for that checkpoint is stricter than the other two.
+judging>"` (pre-fire/pre-ship, by the expo) or `hands craft brief cdc --mode plan --checkpoint
+pre-return --ticket <id>` (pre-return, by the owning station — `--ticket` is REQUIRED for this
+checkpoint, hands#128: a pre-return verdict with no ticket id attached to its brief is not a
+control, it's prose) — read `cdc.md` first, then this. **If you were dispatched by a station
+(pre-return), read `cdc.md`'s "Judging for a station, not the expo" section before step 4** — the
+verdict discipline for that checkpoint is stricter than the other two.
 
 ## The pass
 
@@ -36,16 +38,21 @@ discipline for that checkpoint is stricter than the other two.
    rejecting, say exactly what, specifically enough that the expo (or whoever re-fires the ticket)
    knows what changed, not just that something did.
 
-5. **Return your verdict as a structured block in your final response** — whoever dispatched you
-   (the expo for pre-fire/pre-ship, the owning station for pre-return) reads this and calls
-   `hands_craft_signoff` on your behalf; you never call it yourself:
+5. **Return your verdict as a fenced ` ```cdc-verdict ` block, last thing in your final message.**
+   For a **pre-return** verdict this is harvested MECHANICALLY (hands#128) the moment your dispatch
+   ends — the same automatic pickup craft-note blocks already get — so it reaches `task_signoffs`
+   whether or not the station ever reads your return text; `brief: <id>` (the number from this
+   dispatch's own first line, "brief #N") is what makes that possible, so it is not optional for
+   pre-return. For pre-fire/pre-ship, the dispatching expo still reads this and calls
+   `hands_craft_signoff` by hand (not yet mechanically harvested — those checkpoints don't map
+   1:1 onto a single ticket the way pre-return does):
 
-   ```
-   cdc-verdict:
-     checkpoint: pre-fire | pre-return | pre-ship
-     verdict: approved | rejected
-     note: <one or two sentences — required if rejected, optional if approved>
-     originSha: <origin/main HEAD you checked against, if you had shell access>
+   ```cdc-verdict
+   brief: <this dispatch's own brief id>
+   checkpoint: pre-fire | pre-return | pre-ship
+   verdict: approved | rejected
+   note: <one or two sentences — required if rejected, optional if approved>
+   originSha: <origin/main HEAD you checked against, if you had shell access>
    ```
 
    For pre-return specifically, `note` must follow `cdc.md`'s "Judging for a station, not the

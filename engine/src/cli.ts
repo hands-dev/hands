@@ -103,11 +103,14 @@ import {
 import {
   booksDistilledRecently,
   buildFoldContext,
+  CDC_CHECKPOINTS,
+  checkpointTicketProblem,
   composeChit,
   craftAgentPath,
   craftKnown,
   exportPendingCraftNotes,
   FOLD_READY_THRESHOLD,
+  isCdcCheckpoint,
   isRoleCraft,
   listCrafts,
   materializeCraftAgents,
@@ -616,7 +619,7 @@ function cmdCraft(argv: string[]): void {
       const slug = argv[1];
       if (!slug) {
         fail(
-          "usage: hands craft brief <slug> [--task <text>] [--ticket <id>] [--mode plan|execute] [--cwd <dir>]",
+          "usage: hands craft brief <slug> [--task <text>] [--ticket <id>] [--checkpoint pre-fire|pre-return|pre-ship] [--mode plan|execute] [--cwd <dir>]",
         );
       }
       const mode = strOpt(argv, "--mode") === "execute" ? "execute" : "plan";
@@ -663,12 +666,28 @@ function cmdCraft(argv: string[]): void {
       const ticketArg = strOpt(argv, "--ticket");
       const ticketId = ticketArg !== undefined ? Number.parseInt(ticketArg, 10) : null;
       if (ticketArg !== undefined && !Number.isInteger(ticketId)) fail("--ticket must be an integer ticket id");
+      const checkpointArg = strOpt(argv, "--checkpoint");
+      if (checkpointArg !== undefined && !isCdcCheckpoint(checkpointArg)) {
+        fail(`--checkpoint must be one of ${CDC_CHECKPOINTS.join(", ")} — got "${checkpointArg}"`);
+      }
+      if (checkpointArg !== undefined && isCdcCheckpoint(checkpointArg)) {
+        const problem = checkpointTicketProblem(checkpointArg, ticketId);
+        if (problem) fail(problem);
+      }
+      let task = strOpt(argv, "--task") ?? null;
+      if (task === null && checkpointArg !== undefined) {
+        // Mirrors preReturnSignoffProblem/preShipSignoffProblem's own suggested dispatch text
+        // exactly, so the task line a CDC sub-agent sees matches what the refusal message
+        // already promised — one convention, not two that can drift apart.
+        const subject = ticketId !== null ? store.getTask(ticketId)?.title ?? `ticket #${ticketId}` : slug!;
+        task = `${checkpointArg}: ${subject}`;
+      }
       const briefId = store.createCraftBrief({
         craftSlug: files.slug,
         mode,
         cwd,
         openedBy: resolveAgentId(),
-        task: strOpt(argv, "--task") ?? null,
+        task,
         ticketId,
       });
       const brief = store.getCraftBrief(briefId)!;

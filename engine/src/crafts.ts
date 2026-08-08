@@ -704,6 +704,86 @@ export function parseCraftNoteBlock(text: string): ParsedCraftNote | null {
   return { briefId, craftSlug, nothingNew, entries };
 }
 
+export const CDC_CHECKPOINTS = ["pre-fire", "pre-return", "pre-ship"] as const;
+export type CdcCheckpoint = (typeof CDC_CHECKPOINTS)[number];
+
+export function isCdcCheckpoint(value: string): value is CdcCheckpoint {
+  return (CDC_CHECKPOINTS as readonly string[]).includes(value);
+}
+
+/**
+ * hands#128: a pre-return CDC dispatch is always judging one specific ticket the calling station
+ * owns (unlike pre-fire, which by design precedes a ticket existing) — so for this checkpoint,
+ * unlike `--ticket` generally, a missing ticket id is not optional metadata, it's a broken
+ * dispatch. `craft_briefs.ticket_id` stayed NULL on every real pre-return dispatch in production
+ * even though the task text said "pre-return for ticket #N" in prose — a flag nobody was required
+ * to pass is not a control. Scoped to pre-return only: pre-ship's ticket linkage is genuinely
+ * ambiguous (one CDC dispatch can cover a whole dish spanning several tickets) and isn't enforced
+ * here.
+ */
+export function checkpointTicketProblem(checkpoint: CdcCheckpoint, ticketId: number | null): string | null {
+  if (checkpoint === "pre-return" && ticketId === null) {
+    return "--checkpoint pre-return requires --ticket <id> — CDC's pre-return verdict is always for one specific ticket";
+  }
+  return null;
+}
+
+export interface ParsedCdcVerdict {
+  briefId: number | null;
+  checkpoint: "pre-fire" | "pre-return" | "pre-ship" | null;
+  verdict: "approved" | "rejected" | null;
+  note: string | null;
+  originSha: string | null;
+}
+
+const VERDICT_BLOCK_RE = /```cdc-verdict\r?\n([\s\S]*?)```/;
+
+/**
+ * Pull the last ```cdc-verdict``` block out of a finished CDC sub-agent's transcript text —
+ * mechanical, not a model call, the exact same shape as parseCraftNoteBlock above. hands#128: CDC
+ * previously returned this as free text with nothing structural reading it back — recording a
+ * verdict depended entirely on whoever dispatched CDC remembering to call hands_craft_signoff by
+ * hand, the same reliability gap hands#56/#81/#96 already fixed for craft notes via mechanical
+ * harvest. subagent-stop.ts's harvestCdcVerdict is the read side of this.
+ */
+export function parseCdcVerdictBlock(text: string): ParsedCdcVerdict | null {
+  let last: RegExpExecArray | null = null;
+  const re = new RegExp(VERDICT_BLOCK_RE, "g");
+  for (let m = re.exec(text); m; m = re.exec(text)) last = m;
+  if (!last) return null;
+  const body = last[1] ?? "";
+  const result: ParsedCdcVerdict = { briefId: null, checkpoint: null, verdict: null, note: null, originSha: null };
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const brief = /^brief:\s*(\d+)/.exec(line);
+    if (brief) {
+      result.briefId = Number(brief[1]);
+      continue;
+    }
+    const checkpoint = /^checkpoint:\s*(pre-fire|pre-return|pre-ship)/.exec(line);
+    if (checkpoint) {
+      result.checkpoint = checkpoint[1] as ParsedCdcVerdict["checkpoint"];
+      continue;
+    }
+    const verdict = /^verdict:\s*(approved|rejected)/.exec(line);
+    if (verdict) {
+      result.verdict = verdict[1] as ParsedCdcVerdict["verdict"];
+      continue;
+    }
+    const note = /^note:\s*(.+)$/.exec(line);
+    if (note) {
+      result.note = note[1]!;
+      continue;
+    }
+    const originSha = /^originSha:\s*(\S+)/.exec(line);
+    if (originSha) {
+      result.originSha = originSha[1]!;
+    }
+  }
+  return result;
+}
+
 const MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
 
 /**

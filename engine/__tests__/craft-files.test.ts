@@ -9,6 +9,7 @@ import {
   booksDistilledRecently,
   buildFoldContext,
   capText,
+  checkpointTicketProblem,
   composeChit,
   craftAgentPath,
   craftKnown,
@@ -17,10 +18,12 @@ import {
   FOLD_READY_THRESHOLD,
   formatRawTaggedLine,
   formatRosterContext,
+  isCdcCheckpoint,
   isRoleCraft,
   listCrafts,
   materializeCraftAgents,
   nearestCraftSlugs,
+  parseCdcVerdictBlock,
   parseCraftHeader,
   parseCraftNoteBlock,
   readMiseMerged,
@@ -654,6 +657,79 @@ describe("composeChit + parseCraftNoteBlock (the dispatch/return round trip)", (
     const text =
       "```craft-note\nbrief: 1\ncraft: first\nnothing-new: true\n```\nmore text\n```craft-note\nbrief: 2\ncraft: second\nnothing-new: true\n```";
     expect(parseCraftNoteBlock(text)?.craftSlug).toBe("second");
+  });
+});
+
+describe("checkpointTicketProblem / isCdcCheckpoint — hands#128: pre-return can't exist without a ticket id", () => {
+  it("isCdcCheckpoint accepts exactly the three real checkpoints", () => {
+    expect(isCdcCheckpoint("pre-fire")).toBe(true);
+    expect(isCdcCheckpoint("pre-return")).toBe(true);
+    expect(isCdcCheckpoint("pre-ship")).toBe(true);
+    expect(isCdcCheckpoint("pre-launch")).toBe(false);
+    expect(isCdcCheckpoint("")).toBe(false);
+  });
+
+  it("pre-return with no ticket id is a problem, named plainly", () => {
+    const problem = checkpointTicketProblem("pre-return", null);
+    expect(problem).toContain("--checkpoint pre-return requires --ticket");
+  });
+
+  it("pre-return WITH a ticket id is fine", () => {
+    expect(checkpointTicketProblem("pre-return", 128)).toBeNull();
+  });
+
+  it("pre-fire and pre-ship never require a ticket id — pre-fire genuinely precedes one existing, pre-ship's dish-spanning linkage is a deliberately separate, unfixed gap", () => {
+    expect(checkpointTicketProblem("pre-fire", null)).toBeNull();
+    expect(checkpointTicketProblem("pre-ship", null)).toBeNull();
+  });
+});
+
+describe("parseCdcVerdictBlock — hands#128, the mechanical-harvest read side for CDC pre-return verdicts", () => {
+  it("parses a full verdict block", () => {
+    const text = [
+      "some reasoning first",
+      "```cdc-verdict",
+      "brief: 42",
+      "checkpoint: pre-return",
+      "verdict: approved",
+      "note: checked against origin/main, no collisions",
+      "originSha: abc123",
+      "```",
+    ].join("\n");
+    expect(parseCdcVerdictBlock(text)).toEqual({
+      briefId: 42,
+      checkpoint: "pre-return",
+      verdict: "approved",
+      note: "checked against origin/main, no collisions",
+      originSha: "abc123",
+    });
+  });
+
+  it("note and originSha are optional — a bare approval still parses", () => {
+    const text = "```cdc-verdict\nbrief: 1\ncheckpoint: pre-return\nverdict: approved\n```";
+    expect(parseCdcVerdictBlock(text)).toEqual({
+      briefId: 1,
+      checkpoint: "pre-return",
+      verdict: "approved",
+      note: null,
+      originSha: null,
+    });
+  });
+
+  it("returns null when no block is present", () => {
+    expect(parseCdcVerdictBlock("just an ordinary transcript, no fenced block")).toBeNull();
+  });
+
+  it("picks the LAST block when a transcript contains more than one", () => {
+    const text =
+      "```cdc-verdict\nbrief: 1\ncheckpoint: pre-return\nverdict: rejected\n```\nmore text\n```cdc-verdict\nbrief: 2\ncheckpoint: pre-return\nverdict: approved\n```";
+    expect(parseCdcVerdictBlock(text)?.briefId).toBe(2);
+    expect(parseCdcVerdictBlock(text)?.verdict).toBe("approved");
+  });
+
+  it("a craft-note block does not get mistaken for a cdc-verdict block", () => {
+    const text = "```craft-note\nbrief: 1\ncraft: saucier\nnothing-new: true\n```";
+    expect(parseCdcVerdictBlock(text)).toBeNull();
   });
 });
 

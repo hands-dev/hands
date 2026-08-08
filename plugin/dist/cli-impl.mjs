@@ -25881,6 +25881,52 @@ function parseCraftNoteBlock(text) {
   }
   return { briefId, craftSlug, nothingNew, entries };
 }
+function isCdcCheckpoint(value) {
+  return CDC_CHECKPOINTS.includes(value);
+}
+function checkpointTicketProblem(checkpoint, ticketId) {
+  if (checkpoint === "pre-return" && ticketId === null) {
+    return "--checkpoint pre-return requires --ticket <id> \u2014 CDC's pre-return verdict is always for one specific ticket";
+  }
+  return null;
+}
+function parseCdcVerdictBlock(text) {
+  let last = null;
+  const re = new RegExp(VERDICT_BLOCK_RE, "g");
+  for (let m = re.exec(text); m; m = re.exec(text)) last = m;
+  if (!last) return null;
+  const body = last[1] ?? "";
+  const result = { briefId: null, checkpoint: null, verdict: null, note: null, originSha: null };
+  for (const raw of body.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    const brief = /^brief:\s*(\d+)/.exec(line);
+    if (brief) {
+      result.briefId = Number(brief[1]);
+      continue;
+    }
+    const checkpoint = /^checkpoint:\s*(pre-fire|pre-return|pre-ship)/.exec(line);
+    if (checkpoint) {
+      result.checkpoint = checkpoint[1];
+      continue;
+    }
+    const verdict = /^verdict:\s*(approved|rejected)/.exec(line);
+    if (verdict) {
+      result.verdict = verdict[1];
+      continue;
+    }
+    const note = /^note:\s*(.+)$/.exec(line);
+    if (note) {
+      result.note = note[1];
+      continue;
+    }
+    const originSha = /^originSha:\s*(\S+)/.exec(line);
+    if (originSha) {
+      result.originSha = originSha[1];
+    }
+  }
+  return result;
+}
 function extractMiseKey(entry) {
   const trimmed = entry.trim();
   const m = MISE_KEY_DELIM_RE.exec(trimmed);
@@ -26038,7 +26084,7 @@ function buildFoldContext(store, craft, holder, env = process.env, cwd = process
     exportRefused: refused
   };
 }
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, READY_CLAUSE_RE, FOCUS_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, EXPORT_LEASE_TTL_MS, SHRINK_REFUSAL_FLOOR_BYTES, SHRINK_REFUSAL_RATIO, FOLD_INSTRUCTIONS;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, READY_CLAUSE_RE, FOCUS_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, CDC_CHECKPOINTS, VERDICT_BLOCK_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, EXPORT_LEASE_TTL_MS, SHRINK_REFUSAL_FLOOR_BYTES, SHRINK_REFUSAL_RATIO, FOLD_INSTRUCTIONS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -26056,6 +26102,8 @@ var init_crafts = __esm({
     NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
     KV_RE = /^(mise|book|skill|friction|refactor):\s*(.+)$/;
     SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
+    CDC_CHECKPOINTS = ["pre-fire", "pre-return", "pre-ship"];
+    VERDICT_BLOCK_RE = /```cdc-verdict\r?\n([\s\S]*?)```/;
     MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
     RAW_NOTES_HEADING = "## Raw notes (unfolded)";
     EXPORT_LEASE_TTL_MS = 15e3;
@@ -51727,6 +51775,24 @@ function harvestCraftNote(store, transcriptPath, now) {
   }
   return { craftSlug: parsed.craftSlug, briefId: parsed.briefId, entriesHarvested };
 }
+function harvestCdcVerdict(store, transcriptPath, ownerAgentId, now) {
+  const parsed = parseCdcVerdictBlock(assistantText(transcriptPath));
+  if (!parsed || parsed.checkpoint !== "pre-return" || !parsed.verdict || parsed.briefId === null) return null;
+  const brief = store.getCraftBrief(parsed.briefId);
+  if (!brief || brief.ticket_id === null) return null;
+  const task = store.getTask(brief.ticket_id);
+  if (!task || task.assignee !== ownerAgentId) return null;
+  const signoffId = store.recordSignoff({
+    taskId: brief.ticket_id,
+    checkpoint: "pre-return",
+    verdict: parsed.verdict,
+    note: parsed.note,
+    originSha: parsed.originSha,
+    by: ownerAgentId,
+    now
+  });
+  return { taskId: brief.ticket_id, checkpoint: "pre-return", verdict: parsed.verdict, signoffId };
+}
 function runSubagentStop(store, opts) {
   const now = opts.now ?? Date.now();
   const outputTokens = totalOutputTokens(opts.agentTranscriptPath);
@@ -51737,8 +51803,13 @@ function runSubagentStop(store, opts) {
     craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
   } catch {
   }
+  let cdcSignoff = null;
+  try {
+    cdcSignoff = harvestCdcVerdict(store, opts.agentTranscriptPath, opts.ownerAgentId, now);
+  } catch {
+  }
   if (outputTokens === null) {
-    return { recorded: false, agentType, outputTokens: null, craftNote };
+    return { recorded: false, agentType, outputTokens: null, craftNote, cdcSignoff };
   }
   try {
     store.recordSubagentSample({
@@ -51749,9 +51820,9 @@ function runSubagentStop(store, opts) {
       now
     });
   } catch {
-    return { recorded: false, agentType, outputTokens, craftNote };
+    return { recorded: false, agentType, outputTokens, craftNote, cdcSignoff };
   }
-  return { recorded: true, agentType, outputTokens, craftNote };
+  return { recorded: true, agentType, outputTokens, craftNote, cdcSignoff };
 }
 
 // src/server.ts
@@ -52774,7 +52845,7 @@ ${input.body ?? ""}`, [agentId, assignee]);
     return null;
   }
   function preReturnSignoffProblem(t) {
-    const howTo = `dispatch CDC: \`hands craft brief cdc --mode plan --task "pre-return: ${t.title}"\`, then record its verdict \u2014 \`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-return", verdict, note, originSha })\`. To return anyway (trivial ticket, or CDC genuinely unavailable), pass \`skipSignoff\` with a reason on this call \u2014 recorded, never silent.`;
+    const howTo = `dispatch CDC: \`hands craft brief cdc --mode plan --checkpoint pre-return --ticket ${t.id}\`, then record its verdict \u2014 \`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-return", verdict, note, originSha })\`. To return anyway (trivial ticket, or CDC genuinely unavailable), pass \`skipSignoff\` with a reason on this call \u2014 recorded, never silent.`;
     const signoff = store.latestSignoff(t.id, "pre-return");
     if (!signoff) return `task #${t.id} has no pre-return CDC sign-off \u2014 ${howTo}`;
     if (signoff.verdict !== "approved") {
@@ -54456,7 +54527,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       const slug = argv[1];
       if (!slug) {
         fail(
-          "usage: hands craft brief <slug> [--task <text>] [--ticket <id>] [--mode plan|execute] [--cwd <dir>]"
+          "usage: hands craft brief <slug> [--task <text>] [--ticket <id>] [--checkpoint pre-fire|pre-return|pre-ship] [--mode plan|execute] [--cwd <dir>]"
         );
       }
       const mode = strOpt(argv, "--mode") === "execute" ? "execute" : "plan";
@@ -54487,12 +54558,25 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       const ticketArg = strOpt(argv, "--ticket");
       const ticketId = ticketArg !== void 0 ? Number.parseInt(ticketArg, 10) : null;
       if (ticketArg !== void 0 && !Number.isInteger(ticketId)) fail("--ticket must be an integer ticket id");
+      const checkpointArg = strOpt(argv, "--checkpoint");
+      if (checkpointArg !== void 0 && !isCdcCheckpoint(checkpointArg)) {
+        fail(`--checkpoint must be one of ${CDC_CHECKPOINTS.join(", ")} \u2014 got "${checkpointArg}"`);
+      }
+      if (checkpointArg !== void 0 && isCdcCheckpoint(checkpointArg)) {
+        const problem = checkpointTicketProblem(checkpointArg, ticketId);
+        if (problem) fail(problem);
+      }
+      let task = strOpt(argv, "--task") ?? null;
+      if (task === null && checkpointArg !== void 0) {
+        const subject = ticketId !== null ? store.getTask(ticketId)?.title ?? `ticket #${ticketId}` : slug;
+        task = `${checkpointArg}: ${subject}`;
+      }
       const briefId = store.createCraftBrief({
         craftSlug: files.slug,
         mode,
         cwd,
         openedBy: resolveAgentId(),
-        task: strOpt(argv, "--task") ?? null,
+        task,
         ticketId
       });
       const brief = store.getCraftBrief(briefId);
