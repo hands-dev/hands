@@ -64,14 +64,25 @@ jobs:
           npm run bundle
           node scripts/extract-public-types.mjs ../../vendor-out/hands-dashboard-snapshot.d.ts
 
-      - name: Validate the extracted .d.ts actually compiles
+      - name: Validate the extracted types actually compile
         # hands-website has no PR CI, so a truncated/malformed extraction
         # (the brace-depth counter has a known latent gap around braces
         # inside doc comments) would otherwise first surface as a broken
         # production Vercel build, post-merge. Catch it here instead, before
         # anything is vendored anywhere.
+        #
+        # hands#217: this MUST run against a .ts file, not the .d.ts itself.
+        # tsc treats an unresolved type reference inside a .d.ts as an
+        # ambient declaration rather than an error — so validating the real
+        # .d.ts here reported success unconditionally for the exact failure
+        # mode this step exists to catch (proven: extract-interfaces.test.ts
+        # reproduces this exact pass/fail split with real tsc invocations).
+        # A plain copy to a .ts extension is enough to make tsc apply real
+        # module-level resolution instead.
         working-directory: hands/engine
-        run: npx tsc --noEmit --skipLibCheck --strict ../../vendor-out/hands-dashboard-snapshot.d.ts
+        run: |
+          cp ../../vendor-out/hands-dashboard-snapshot.d.ts ../../vendor-out/hands-dashboard-snapshot.validate.ts
+          npx tsc --noEmit --skipLibCheck --strict ../../vendor-out/hands-dashboard-snapshot.validate.ts
 
       - name: Collect the built assets
         run: |
