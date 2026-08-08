@@ -55,7 +55,6 @@ function AnswerOptions({ q }: { q: SnapshotQuestion }) {
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [freeText, setFreeText] = useState("");
 
-  if (!q.options?.length) return null;
   if (result?.ok) {
     return <p className="pl-4 text-xs text-muted-foreground">✓ you answered: {result.answer}</p>;
   }
@@ -88,39 +87,43 @@ function AnswerOptions({ q }: { q: SnapshotQuestion }) {
     });
   }
 
-  const options = q.options; // narrowed above; keep the closure below simple
+  const options = q.options;
   return (
     <div className="flex flex-col gap-2 pl-4">
-      <div className="flex flex-wrap gap-2">
-        {options.map((o) => (
-          <Button
-            key={o.label}
-            type="button"
-            size="sm"
-            variant={q.multiSelect && picked.has(o.label) ? "default" : "outline"}
-            disabled={status === "sending"}
-            title={o.description}
-            onClick={() => toggle(o.label)}
-          >
-            {o.label}
-            {o.recommended ? <span className="ml-1 text-[10px] opacity-70">(Recommended)</span> : null}
-          </Button>
-        ))}
-      </div>
-      {options.map((o) => (
-        <p key={o.label} className="text-xs text-muted-foreground">
-          <span className="font-medium">{o.label}:</span> {o.description}
-        </p>
-      ))}
-      {q.multiSelect ? (
-        <Button
-          type="button"
-          size="sm"
-          disabled={status === "sending" || picked.size === 0}
-          onClick={() => void submit({ chosenLabels: [...picked] })}
-        >
-          Submit
-        </Button>
+      {options?.length ? (
+        <>
+          <div className="flex flex-wrap gap-2">
+            {options.map((o) => (
+              <Button
+                key={o.label}
+                type="button"
+                size="sm"
+                variant={q.multiSelect && picked.has(o.label) ? "default" : "outline"}
+                disabled={status === "sending"}
+                title={o.description}
+                onClick={() => toggle(o.label)}
+              >
+                {o.label}
+                {o.recommended ? <span className="ml-1 text-[10px] opacity-70">(Recommended)</span> : null}
+              </Button>
+            ))}
+          </div>
+          {options.map((o) => (
+            <p key={o.label} className="text-xs text-muted-foreground">
+              <span className="font-medium">{o.label}:</span> {o.description}
+            </p>
+          ))}
+          {q.multiSelect ? (
+            <Button
+              type="button"
+              size="sm"
+              disabled={status === "sending" || picked.size === 0}
+              onClick={() => void submit({ chosenLabels: [...picked] })}
+            >
+              Submit
+            </Button>
+          ) : null}
+        </>
       ) : null}
       {result && !result.ok && result.reason === "http" ? (
         <p className="text-xs text-destructive">{result.message}</p>
