@@ -21555,6 +21555,11 @@ function isPidAlive(pid) {
     return err.code !== "ESRCH";
   }
 }
+function isSignoffStale(signoff, currentOriginSha, hasNewCollision = false) {
+  if (hasNewCollision) return true;
+  if (!signoff.origin_sha || !currentOriginSha) return false;
+  return signoff.origin_sha !== currentOriginSha;
+}
 function sleepSync(ms) {
   const shared = new Int32Array(new SharedArrayBuffer(4));
   Atomics.wait(shared, 0, 0, ms);
@@ -24531,6 +24536,23 @@ function activity(raw) {
     return { files: [], ticket: null };
   }
 }
+function computeCollisions(agents) {
+  const collisions = [];
+  const online = agents.filter((a) => a.online);
+  for (let i = 0; i < online.length; i++) {
+    for (let j = i + 1; j < online.length; j++) {
+      const a = online[i];
+      const b = online[j];
+      const shared = a.files.find((f) => b.files.includes(f));
+      if (shared) {
+        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path14.basename(shared) });
+      } else if (a.ticket && a.ticket === b.ticket) {
+        collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
+      }
+    }
+  }
+  return collisions;
+}
 function readinessOf(store, agentId, worktree) {
   if (!/^station-\d+$/.test(agentId)) return { ready: "ready", readyReason: null };
   const record2 = store.getAttestation(agentId);
@@ -24573,20 +24595,7 @@ function buildSnapshot(store, now = Date.now(), env = process.env) {
       themeColor: index !== null ? themeColorForIndex(index).hex : null
     };
   });
-  const collisions = [];
-  const online = agents.filter((a) => a.online);
-  for (let i = 0; i < online.length; i++) {
-    for (let j = i + 1; j < online.length; j++) {
-      const a = online[i];
-      const b = online[j];
-      const shared = a.files.find((f) => b.files.includes(f));
-      if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path14.basename(shared) });
-      } else if (a.ticket && a.ticket === b.ticket) {
-        collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
-      }
-    }
-  }
+  const collisions = computeCollisions(agents);
   const journal = store.journalSince(0, 40).reverse().map((j) => ({ id: j.id, by: j.agent_id, kind: j.kind, text: j.text, ref: j.ref, at: j.created_at }));
   const messages = store.history({ limit: 40 }).reverse().map(toSnapshotMessage);
   const menu = currentMenu(listRecipes(loadConfig({ env }), env)).map((r) => ({
@@ -51614,6 +51623,7 @@ function readPreviousPage(opts) {
 // src/server.ts
 init_attest();
 init_provision();
+init_snapshot();
 var MENU_STALE_MS = 24 * 60 * 6e4;
 var POLL_INTERVAL_MS = 250;
 var MAX_WAIT_SECONDS = 120;
@@ -51646,6 +51656,7 @@ function craftRosterContext(config2, store, env = process.env, cwd = process.cwd
 function buildServer(store, agentId, config2, deps = {}) {
   const cfg = config2 ?? loadConfig();
   const checkMonitorAlive = deps.inboxMonitorAlive ?? inboxMonitorAlive;
+  const getCurrentOriginSha = deps.currentOriginSha ?? (() => currentWorktreeFacts(process.cwd()).originSha);
   const principal = cfg.principal.name;
   const resolveRecipient = (ref) => {
     const id = resolveAgentRef(ref);
@@ -52131,7 +52142,7 @@ ${input.body}`, [agentId, ...recipients]);
     "hands_craft_signoff",
     {
       title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
-      description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved) or 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before you may act on \xA75 (review depth / merge) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh.",
+      description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved) or 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before hands_task_update will let you mark them 'done' (hands#111 \u2014 code-enforced, not just this reminder) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh before you get there.",
       inputSchema: {
         taskId: external_exports3.number().int(),
         checkpoint: external_exports3.enum(["pre-fire", "pre-ship"]),
@@ -52323,15 +52334,38 @@ ${input.body ?? ""}`, [agentId, assignee]);
       });
     }
   );
+  function preShipSignoffProblem(t) {
+    const dishOrTitle = t.dish ?? t.title;
+    const howTo = `dispatch CDC: \`hands craft brief cdc --mode plan --task "pre-ship: ${dishOrTitle}"\`, then record its verdict \u2014 \`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-ship", verdict, note, originSha })\`. To ship anyway (trivial dish, or CDC genuinely unavailable), pass \`skipSignoff\` with a reason on this call \u2014 recorded, never silent.`;
+    const signoff = store.latestSignoff(t.id, "pre-ship");
+    if (!signoff) return `task #${t.id} has no pre-ship CDC sign-off \u2014 ${howTo}`;
+    if (signoff.verdict !== "approved") {
+      return `task #${t.id}'s latest pre-ship sign-off was REJECTED` + (signoff.note ? ` \u2014 ${signoff.note}` : "") + `. Revise and get a fresh approved sign-off, or ${howTo}`;
+    }
+    const currentOriginSha = getCurrentOriginSha();
+    const collisionAgents = store.listPeers(Date.now()).map((p) => {
+      const a = activity(p.activity);
+      return { id: p.id, online: p.online, files: a.files, ticket: a.ticket };
+    });
+    const hasNewCollision = t.assignee != null && computeCollisions(collisionAgents).some(
+      (c) => c.kind === "file" && (c.a === t.assignee || c.b === t.assignee)
+    );
+    if (isSignoffStale(signoff, currentOriginSha, hasNewCollision)) {
+      const reason = hasNewCollision ? `a live collision now involves ${t.assignee}` : `origin/main has moved since it was judged (signed off against ${signoff.origin_sha}, HEAD is now ${currentOriginSha})`;
+      return `task #${t.id}'s pre-ship sign-off is stale \u2014 ${reason}. Get a fresh one: ${howTo}`;
+    }
+    return null;
+  }
   server.registerTool(
     "hands_task_update",
     {
       title: "Advance a ticket (fire / plate / serve / 86)",
-      description: "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), 'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it.",
+      description: "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), 'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it. 'done' requires a fresh, approved CDC pre-ship sign-off (hands#111/#139) \u2014 code-enforced, refuses otherwise. Pass `skipSignoff` with a reason to ship without one (trivial dish, CDC genuinely unavailable) \u2014 recorded in the journal, never silent.",
       inputSchema: {
         id: external_exports3.number().int(),
         state: external_exports3.enum(["in_progress", "returned", "done", "cancelled"]),
-        result: external_exports3.string().optional().describe("the artifact/summary when returning")
+        result: external_exports3.string().optional().describe("the artifact/summary when returning"),
+        skipSignoff: external_exports3.string().optional().describe("explicit reason to mark 'done' without a fresh CDC pre-ship sign-off \u2014 recorded, never silent")
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
     },
@@ -52339,6 +52373,19 @@ ${input.body ?? ""}`, [agentId, assignee]);
       store.touch(agentId);
       const task = store.getTask(input.id);
       if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
+      if (input.state === "done") {
+        if (input.skipSignoff) {
+          store.journalAdd({
+            agentId,
+            kind: "note",
+            ref: `task:${input.id}`,
+            text: `CDC pre-ship sign-off overridden for task #${input.id} \u2014 ${input.skipSignoff}`
+          });
+        } else {
+          const problem = preShipSignoffProblem(task);
+          if (problem) return { ...asToolResult({ ok: false, error: problem }), isError: true };
+        }
+      }
       const claim = input.state === "in_progress" && !task.assignee ? agentId : null;
       const outcome = store.updateTaskState({
         id: input.id,

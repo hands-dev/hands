@@ -437,20 +437,24 @@ sanction to run this flow for that dish **now**.
 
 Pull the facts first: `gh pr view <N> --json additions,deletions,files,title,statusCheckRollup,mergeable`.
 
-**Gate — a fresh CDC pre-ship sign-off, before A or B (hands#139).** You reviewed this dish on its
-own merits; CDC's whole reason for existing is that isn't the same as reviewing it against
+**Gate — a fresh CDC pre-ship sign-off, before A or B (hands#139/#111).** You reviewed this dish on
+its own merits; CDC's whole reason for existing is that isn't the same as reviewing it against
 *everything else on the board right now* — a PR correct in isolation can still collide with
 something else in flight, and nobody catches that unless something is looking at both at once.
-Check `hands_tasks`' `signoff` field for the dish's ticket(s): needs a `pre-ship` entry with
-`verdict: "approved"` AND a fresh `originSha` — compare it yourself against current `git rev-parse
-origin/main`; if they differ, or a new entry in `collisions` touches this dish's files, the
-sign-off is stale and doesn't count. Missing or stale → dispatch CDC now (`hands craft brief cdc
---mode plan --task "pre-ship: <dish>"`, same brief-only path as pre-fire), record its verdict —
-`hands_craft_signoff({ taskId, checkpoint: "pre-ship", verdict, note, originSha })` — for every
-ticket under the dish. `rejected` → you may not proceed to A/B; that's the whole point of "last
-line of defense." Skip this gate only for genuinely trivial dishes (a typo fix, a doc-only PR) —
-judgment call, same bar as review-depth's own "trivial" bucket below, not a loophole for anything
-you'd rather not wait on.
+**This is enforced in code, not just this paragraph** — `hands_task_update({ state: "done" })`
+refuses outright without a fresh, `approved` `pre-ship` sign-off for that ticket (staleness is the
+same check either way: `origin/main` moved past the sha CDC judged against, or a live collision now
+touches the ticket's own assignee). So check `hands_tasks`' `signoff` field yourself before you get
+here — it's cheaper to know in advance than to get refused — but the tool call is the actual
+backstop, not your memory of this paragraph on a long pass. Missing or stale → dispatch CDC now
+(`hands craft brief cdc --mode plan --task "pre-ship: <dish>"`, same brief-only path as pre-fire),
+record its verdict — `hands_craft_signoff({ taskId, checkpoint: "pre-ship", verdict, note,
+originSha })` — for every ticket under the dish. `rejected` → you may not proceed to A/B; that's
+the whole point of "last line of defense." For a genuinely trivial dish (a typo fix, a doc-only
+PR) where dispatching CDC is real overhead for no real risk, or CDC dispatch is itself broken —
+`hands_task_update({ state: "done", skipSignoff: "<why>" })` ships anyway, but the reason lands in
+the journal, visible to everyone, forever. That visibility **is** the judgment call now — not a
+silent skip, an accountable one.
 
 **A) Review depth — yours to decide (reversible):** trivial → `/code-review low` or skip with a
 reason; moderate → `/code-review` (usage mode `"low"`: `/code-review low` instead — see "Usage

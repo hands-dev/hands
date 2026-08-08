@@ -209,7 +209,8 @@ export interface Snapshot {
   };
 }
 
-function activity(raw: string | null): { files: string[]; ticket: string | null } {
+/** Exported for hands_task_update's pre-ship staleness gate (hands#111/#139) — same parse everywhere an agent's raw `activity` column needs reading. */
+export function activity(raw: string | null): { files: string[]; ticket: string | null } {
   if (!raw) return { files: [], ticket: null };
   try {
     const a = JSON.parse(raw) as { files?: string[]; ticket?: string | null };
@@ -217,6 +218,35 @@ function activity(raw: string | null): { files: string[]; ticket: string | null 
   } catch {
     return { files: [], ticket: null };
   }
+}
+
+/**
+ * All-pairs collisions among ONLINE agents (shared file, or same ticket).
+ * Extracted out of buildSnapshot (hands#111) so hands_task_update's pre-ship
+ * staleness gate can ask the exact same question the dashboard's collision
+ * strip already answers — "is anyone colliding right now" — without a
+ * second, drifting implementation. Takes the minimal shape it needs rather
+ * than the full SnapshotAgent, so a caller that only has peers (not a whole
+ * built snapshot) doesn't need to construct one.
+ */
+export function computeCollisions(
+  agents: Array<{ id: string; online: boolean; files: string[]; ticket: string | null }>,
+): Collision[] {
+  const collisions: Collision[] = [];
+  const online = agents.filter((a) => a.online);
+  for (let i = 0; i < online.length; i++) {
+    for (let j = i + 1; j < online.length; j++) {
+      const a = online[i]!;
+      const b = online[j]!;
+      const shared = a.files.find((f) => b.files.includes(f));
+      if (shared) {
+        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path.basename(shared) });
+      } else if (a.ticket && a.ticket === b.ticket) {
+        collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
+      }
+    }
+  }
+  return collisions;
 }
 
 /** Read-only view of the whole bus for the dashboard. */
@@ -289,21 +319,7 @@ export function buildSnapshot(
     };
   });
 
-  // All-pairs collisions among ONLINE agents (shared file, or same ticket).
-  const collisions: Collision[] = [];
-  const online = agents.filter((a) => a.online);
-  for (let i = 0; i < online.length; i++) {
-    for (let j = i + 1; j < online.length; j++) {
-      const a = online[i]!;
-      const b = online[j]!;
-      const shared = a.files.find((f) => b.files.includes(f));
-      if (shared) {
-        collisions.push({ a: a.id, b: b.id, kind: "file", detail: path.basename(shared) });
-      } else if (a.ticket && a.ticket === b.ticket) {
-        collisions.push({ a: a.id, b: b.id, kind: "ticket", detail: a.ticket });
-      }
-    }
-  }
+  const collisions = computeCollisions(agents);
 
   const journal: SnapshotJournal[] = store
     .journalSince(0, 40)
