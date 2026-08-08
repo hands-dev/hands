@@ -29,6 +29,13 @@ describe("scanClaudeSessions — platform support", () => {
       expect(scanClaudeSessions("linux").method).toBe("proc");
     }
   });
+
+  it("reports unsupported on darwin — no lsof scan (hands#206: TCC privacy prompts)", () => {
+    const scan = scanClaudeSessions("darwin");
+    expect(scan.method).toBe("unsupported");
+    expect(scan.sessions).toEqual([]);
+    expect(scan.reason).toBeTruthy();
+  });
 });
 
 describe("identityConflicts — hands#152", () => {
