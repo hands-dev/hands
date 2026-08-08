@@ -30258,7 +30258,7 @@ var StdioServerTransport = class {
 };
 
 // src/remote.ts
-import { execFileSync as execFileSync5 } from "node:child_process";
+import { execFileSync as execFileSync6 } from "node:child_process";
 import * as fs12 from "node:fs";
 import * as os7 from "node:os";
 import * as path15 from "node:path";
@@ -30322,12 +30322,13 @@ var ONLINE_WINDOW_MS = 15 * 6e4;
 var IDLE_THRESHOLD_MS = 3 * 6e4;
 
 // src/provision.ts
-import { execFileSync as execFileSync4, spawnSync } from "node:child_process";
+import { execFileSync as execFileSync5, spawnSync } from "node:child_process";
 import * as fs10 from "node:fs";
 import * as os6 from "node:os";
 import * as path12 from "node:path";
 
 // src/crafts.ts
+import { execFileSync as execFileSync4 } from "node:child_process";
 import * as fs8 from "node:fs";
 import * as path9 from "node:path";
 var WEEK_MS = 7 * 24 * 60 * 6e4;
@@ -30392,7 +30393,7 @@ import * as path13 from "node:path";
 // src/remote.ts
 var GIT_TIMEOUT_MS = 2e4;
 function git(cwd, args) {
-  return execFileSync5("git", args, {
+  return execFileSync6("git", args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

@@ -25549,6 +25549,7 @@ var init_remote = __esm({
 });
 
 // src/crafts.ts
+import { execFileSync as execFileSync8 } from "node:child_process";
 import * as fs15 from "node:fs";
 import * as path16 from "node:path";
 function isRoleCraft(slug) {
@@ -25941,8 +25942,28 @@ function formatRawTaggedLine(note) {
 function forTarget(pending, target) {
   return pending.filter((n) => n.kind !== "mise" && n.kind === "skill" === (target === "skill"));
 }
+function gitCommittedContent(filePath) {
+  try {
+    return execFileSync8("git", ["show", `HEAD:./${path16.basename(filePath)}`], {
+      cwd: path16.dirname(filePath),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3e3
+    });
+  } catch {
+    return null;
+  }
+}
+function wouldShrinkDrastically(filePath, candidate) {
+  const committed = gitCommittedContent(filePath);
+  if (committed === null) return false;
+  const committedSize = Buffer.byteLength(committed, "utf8");
+  if (committedSize < SHRINK_REFUSAL_FLOOR_BYTES) return false;
+  return Buffer.byteLength(candidate, "utf8") < committedSize * SHRINK_REFUSAL_RATIO;
+}
 function exportPendingCraftNotes(store, files, holder) {
   let touched = 0;
+  const refused = [];
   const miseLease = `${files.slug}:mise`;
   if (store.acquireCraftFoldLease(miseLease, holder, EXPORT_LEASE_TTL_MS)) {
     try {
@@ -25966,15 +25987,22 @@ function exportPendingCraftNotes(store, files, holder) {
       for (const [path28, target] of [[files.book, "book"], [files.skill, "skill"]]) {
         const relevant = forTarget(pending, target);
         if (relevant.length === 0) continue;
+        const candidate = rebuildRawSection(readFileSafe2(path28), relevant);
+        if (wouldShrinkDrastically(path28, candidate)) {
+          const reason = "candidate export was drastically smaller than the file's last git-committed version \u2014 refused to write; on-disk content left untouched, notes stay pending";
+          refused.push({ target, reason });
+          store.journal("craft.rebuild_refused", { craft: files.slug, target, reason });
+          continue;
+        }
         fs15.mkdirSync(files.dir, { recursive: true });
-        fs15.writeFileSync(path28, rebuildRawSection(readFileSafe2(path28), relevant));
+        fs15.writeFileSync(path28, candidate);
         touched += relevant.length;
       }
     } finally {
       store.releaseCraftFoldLease(files.slug, holder);
     }
   }
-  return touched;
+  return { touched, refused };
 }
 function readMiseMerged(store, slug, cap = 6e3) {
   let text = null;
@@ -25987,7 +26015,7 @@ function readRawMerged(path28, pending, target, cap = 6e3) {
 }
 function buildFoldContext(store, craft, holder, env = process.env, cwd = process.cwd()) {
   const files = craftFiles(craft, env, cwd);
-  exportPendingCraftNotes(store, files, holder);
+  const { refused } = exportPendingCraftNotes(store, files, holder);
   const pending = store.pendingCraftNotes(files.slug);
   return {
     craftSlug: files.slug,
@@ -26006,10 +26034,11 @@ function buildFoldContext(store, craft, holder, env = process.env, cwd = process
       spilloverCraft: n.spillover_craft
     })),
     throughNoteId: pending.reduce((max, n) => Math.max(max, n.id), 0),
-    instructions: FOLD_INSTRUCTIONS
+    instructions: FOLD_INSTRUCTIONS,
+    exportRefused: refused
   };
 }
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, READY_CLAUSE_RE, FOCUS_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, EXPORT_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, READY_CLAUSE_RE, FOCUS_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, EXPORT_LEASE_TTL_MS, SHRINK_REFUSAL_FLOOR_BYTES, SHRINK_REFUSAL_RATIO, FOLD_INSTRUCTIONS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -26030,6 +26059,8 @@ var init_crafts = __esm({
     MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
     RAW_NOTES_HEADING = "## Raw notes (unfolded)";
     EXPORT_LEASE_TTL_MS = 15e3;
+    SHRINK_REFUSAL_FLOOR_BYTES = 200;
+    SHRINK_REFUSAL_RATIO = 0.5;
     FOLD_INSTRUCTIONS = "Distill: rewrite the book/skill IN PLACE from the pending notes below plus what's already there \u2014 never append. The book/skill text you were given already contains a `## Raw notes (unfolded)` section (the same entries listed in pendingNotes below) \u2014 fold them into the curated prose above, then remove that section entirely as part of your rewrite. Placement rule: a sequence of steps is SKILL; a decision, a why, or a fact is BOOK. (mise.md maintains itself automatically now \u2014 nothing to do there unless correcting something wrong.) Discard notes that merely restate what's already written \u2014 that discard step is what keeps a craft from turning into a growing log instead of a distillation. Keep the book \u2264150 lines. Stamp the header when done: `> covers: <domains> \xB7 distilled: <today> from <n> learnings`. Then run `hands craft fold-done <craft> --through <n>` with the same throughNoteId this printed.";
   }
 });
@@ -26256,7 +26287,7 @@ __export(feedback_exports, {
   fileFeedback: () => fileFeedback,
   runGh: () => runGh
 });
-import { execFileSync as execFileSync9 } from "node:child_process";
+import { execFileSync as execFileSync10 } from "node:child_process";
 function githubHandle(cwd, gh2) {
   try {
     return gh2(["api", "user", "--jq", ".login"], cwd).trim() || null;
@@ -26313,7 +26344,7 @@ var init_feedback = __esm({
   "src/feedback.ts"() {
     "use strict";
     FEEDBACK_REPO = "hands-dev/hands";
-    runGh = (args, cwd) => execFileSync9("gh", args, {
+    runGh = (args, cwd) => execFileSync10("gh", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -41717,7 +41748,7 @@ var require_main = __commonJS({
 init_config();
 init_identity();
 init_paths();
-import { execFileSync as execFileSync12, spawnSync as spawnSync2 } from "node:child_process";
+import { execFileSync as execFileSync13, spawnSync as spawnSync2 } from "node:child_process";
 import * as os16 from "node:os";
 
 // src/server.ts
@@ -51732,7 +51763,7 @@ init_watchers();
 
 // src/journal-read.ts
 init_remote();
-import { execFileSync as execFileSync8 } from "node:child_process";
+import { execFileSync as execFileSync9 } from "node:child_process";
 import * as fs17 from "node:fs";
 import * as path17 from "node:path";
 var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -51741,7 +51772,7 @@ function mirrorHealth(dir, url2) {
   if (!isRemote) return { behind: 0, ahead: 0, problem: null };
   const git6 = (args) => {
     try {
-      return execFileSync8("git", args, {
+      return execFileSync9("git", args, {
         cwd: dir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
@@ -53459,7 +53490,7 @@ function idleMs(cwd, now = Date.now(), home) {
 
 // src/doctor.ts
 init_config();
-import { execFileSync as execFileSync10 } from "node:child_process";
+import { execFileSync as execFileSync11 } from "node:child_process";
 import * as fs25 from "node:fs";
 import * as path24 from "node:path";
 init_paths();
@@ -53590,7 +53621,7 @@ function isProcessAlive(pid) {
 }
 function gitHead(cwd) {
   try {
-    return execFileSync10("git", ["rev-parse", "HEAD"], {
+    return execFileSync11("git", ["rev-parse", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -53962,7 +53993,7 @@ init_watchers();
 init_attest();
 
 // src/version.ts
-import { execFileSync as execFileSync11 } from "node:child_process";
+import { execFileSync as execFileSync12 } from "node:child_process";
 import * as fs26 from "node:fs";
 import * as os13 from "node:os";
 import * as path25 from "node:path";
@@ -53993,7 +54024,7 @@ function readStamp(dir) {
 }
 function gitShort(cwd) {
   try {
-    return execFileSync11("git", ["rev-parse", "--short", "HEAD"], {
+    return execFileSync12("git", ["rev-parse", "--short", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -54340,14 +54371,14 @@ ${distilledCount} book(s) distilled in the last 7 days.`);
       materializeCraftAgents(cfg, info.repoRoot, process.env, info.repoRoot);
       if (sub === "promote") {
         try {
-          execFileSync12("git", ["add", ...moved.map((m) => path27.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
+          execFileSync13("git", ["add", ...moved.map((m) => path27.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
         } catch {
         }
         out2(`\u2714 "${files.slug}" promoted to shared \u2014 staged at ${shared}, not committed`);
         out2(`  next: git commit -m "craft: promote ${files.slug} to shared" && open a PR`);
       } else {
         try {
-          execFileSync12("git", ["rm", "--cached", "-q", ...moved.map((m) => path27.join(shared, m))], {
+          execFileSync13("git", ["rm", "--cached", "-q", ...moved.map((m) => path27.join(shared, m))], {
             cwd: info.repoRoot,
             stdio: "ignore"
           });
@@ -54475,7 +54506,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       if (!brief) fail(`no such brief: #${briefId}`);
       store.markCraftBriefPickedUp(briefId);
       const files = craftFiles(brief.craft_slug);
-      exportPendingCraftNotes(store, files, `mise-read:${process.pid}`);
+      const { refused: exportRefused } = exportPendingCraftNotes(store, files, `mise-read:${process.pid}`);
       const stillPending = store.pendingCraftNotes(files.slug);
       const book = readRawMerged(files.book, stillPending, "book");
       const mise = readMiseMerged(store, files.slug);
@@ -54497,6 +54528,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
             book,
             siblings,
             staleness,
+            exportRefused,
             usageMode: cfg.usage.mode,
             readIn: staleness !== "fresh" ? `git log --oneline --since "${distilled ?? "30 days ago"}" -- ${covers ?? "."}` : null,
             returnContract: "Before you return: emit a fenced ```craft-note block (brief, craft, nothing-new, then zero or more mise/book/skill/friction/spillover(<craft>) lines) as the LAST thing in your final message."
