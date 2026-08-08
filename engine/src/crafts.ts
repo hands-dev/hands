@@ -95,17 +95,21 @@ const COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
 // a craft distilled for the first time under this build rewrites it to `distilled:`.
 const DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
 const READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
+// Free text, like covers, not a single token like distilled/ready — captured up to the next
+// `·` clause or end of line, same non-greedy shape COVERS_RE uses.
+const FOCUS_RE = /·\s*focus:\s*(.*?)\s*(?:·|$)/;
 
 export function parseCraftHeader(
   bookContent: string | null,
-): { covers: string | null; distilled: string | null; ready: CraftReadiness | null } {
-  if (!bookContent) return { covers: null, distilled: null, ready: null };
+): { covers: string | null; distilled: string | null; ready: CraftReadiness | null; focus: string | null } {
+  if (!bookContent) return { covers: null, distilled: null, ready: null, focus: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
   const readyMatch = READY_RE.exec(line);
   return {
     covers: COVERS_RE.exec(line)?.[1]?.trim() || null,
     distilled: DISTILLED_RE.exec(line)?.[1] ?? null,
     ready: readyMatch ? { at: readyMatch[1]!, by: readyMatch[2]! } : null,
+    focus: FOCUS_RE.exec(line)?.[1]?.trim() || null,
   };
 }
 
@@ -129,6 +133,32 @@ export function stampCraftReadiness(bookContent: string, ready: CraftReadiness |
   }
   const stripped = lines[idx]!.replace(READY_CLAUSE_RE, "");
   lines[idx] = ready ? `${stripped} · ready: ${ready.at} by ${ready.by}` : stripped;
+  return lines.join("\n");
+}
+
+const FOCUS_CLAUSE_RE = /\s*·\s*focus:\s*[^·]*/;
+
+/**
+ * Stamp or clear a craft's `focus` — the LENS it optimizes for, on its book's header line. Argued
+ * in hands#114: genuinely separate from `covers` (scope — which files/domains, or for a role
+ * craft, when to dispatch it at all). For a domain craft the two coincide (its job and its scope
+ * are the same thing — "sauces, stocks" IS what it's trying to get better at). For a ROLE craft
+ * they diverge: CDC's covers is "everything, whole board," its focus is narrow — "quality of what
+ * ships," not speed, not style, not architecture. That divergence is why role crafts specifically
+ * need this field and ordinary crafts mostly don't (covers already does the job for them). A
+ * stated focus is what makes an ingest pass selective (does this observation serve the focus) and
+ * a lint pass meaningful (is this page still true FOR that focus) — without one, either judgment
+ * has no standard to check against. Same mechanical header-stamp shape as stampCraftReadiness — a
+ * judgment recorded in the craft's own file, never touched by the mechanical export path.
+ */
+export function stampCraftFocus(bookContent: string, focus: string | null): string {
+  const lines = bookContent.split("\n");
+  const idx = lines.findIndex((l) => l.trim().startsWith(">"));
+  if (idx === -1) {
+    return focus ? `> focus: ${focus}\n${bookContent}` : bookContent;
+  }
+  const stripped = lines[idx]!.replace(FOCUS_CLAUSE_RE, "");
+  lines[idx] = focus ? `${stripped} · focus: ${focus}` : stripped;
   return lines.join("\n");
 }
 

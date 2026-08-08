@@ -27,6 +27,7 @@ import {
   readRawMerged,
   rebuildRawSection,
   roleCraftFoldNudges,
+  stampCraftFocus,
   stampCraftReadiness,
   sweepHeldSeatHeader,
   upsertMiseLine,
@@ -222,7 +223,7 @@ describe("parseCraftHeader", () => {
   it("parses covers + distilled from the header line", () => {
     expect(
       parseCraftHeader("> covers: app.py, orders/ · distilled: 2026-08-01 from 4 learnings\nbody text"),
-    ).toEqual({ covers: "app.py, orders/", distilled: "2026-08-01", ready: null });
+    ).toEqual({ covers: "app.py, orders/", distilled: "2026-08-01", ready: null, focus: null });
   });
 
   it("tolerates the pre-cutover 'last held' key (parse tolerance, not a compat shim)", () => {
@@ -230,6 +231,7 @@ describe("parseCraftHeader", () => {
       covers: "app.py",
       distilled: "2026-08-01",
       ready: null,
+      focus: null,
     });
   });
 
@@ -238,12 +240,28 @@ describe("parseCraftHeader", () => {
       covers: "app.py",
       distilled: "2026-08-01",
       ready: { at: "2026-08-07", by: "sous" },
+      focus: null,
     });
   });
 
+  it("parses the focus clause, genuinely separate from covers (hands#114)", () => {
+    expect(parseCraftHeader("> covers: whole-board judgment · focus: quality of what ships\n")).toEqual({
+      covers: "whole-board judgment",
+      distilled: null,
+      ready: null,
+      focus: "quality of what ships",
+    });
+  });
+
+  it("focus stops at the next clause, same non-greedy shape as covers", () => {
+    expect(
+      parseCraftHeader("> covers: app.py · focus: quality of what ships · distilled: 2026-08-01\n").focus,
+    ).toBe("quality of what ships");
+  });
+
   it("returns nulls for missing/absent content", () => {
-    expect(parseCraftHeader(null)).toEqual({ covers: null, distilled: null, ready: null });
-    expect(parseCraftHeader("no header line here")).toEqual({ covers: null, distilled: null, ready: null });
+    expect(parseCraftHeader(null)).toEqual({ covers: null, distilled: null, ready: null, focus: null });
+    expect(parseCraftHeader("no header line here")).toEqual({ covers: null, distilled: null, ready: null, focus: null });
   });
 });
 
@@ -256,7 +274,12 @@ describe("stampCraftReadiness — hands#92's sous-owned execute-mode gate", () =
 
   it("adds after an existing distilled clause, not replacing it", () => {
     const result = stampCraftReadiness("> covers: app.py · distilled: 2026-08-01\n", { at: "2026-08-07", by: "sous" });
-    expect(parseCraftHeader(result)).toEqual({ covers: "app.py", distilled: "2026-08-01", ready: { at: "2026-08-07", by: "sous" } });
+    expect(parseCraftHeader(result)).toEqual({
+      covers: "app.py",
+      distilled: "2026-08-01",
+      ready: { at: "2026-08-07", by: "sous" },
+      focus: null,
+    });
   });
 
   it("replaces an existing ready clause rather than duplicating it", () => {
@@ -289,6 +312,54 @@ describe("stampCraftReadiness — hands#92's sous-owned execute-mode gate", () =
   it("prepends a header line rather than losing the stamp when there's no header at all", () => {
     const result = stampCraftReadiness("no header here", { at: "2026-08-07", by: "sous" });
     expect(result).toBe("> ready: 2026-08-07 by sous\nno header here");
+  });
+});
+
+describe("stampCraftFocus — the lens a craft's ingest/lint checks against, separate from covers (hands#114)", () => {
+  it("adds a focus clause to a header with none", () => {
+    const result = stampCraftFocus("> covers: whole-board judgment\nbody", "quality of what ships");
+    expect(result).toBe("> covers: whole-board judgment · focus: quality of what ships\nbody");
+    expect(parseCraftHeader(result).focus).toBe("quality of what ships");
+    expect(parseCraftHeader(result).covers).toBe("whole-board judgment"); // unaffected
+  });
+
+  it("coexists with distilled/ready clauses without corrupting either", () => {
+    const withDistilled = stampCraftFocus("> covers: app.py · distilled: 2026-08-01\n", "shipped quality");
+    expect(parseCraftHeader(withDistilled)).toEqual({
+      covers: "app.py",
+      distilled: "2026-08-01",
+      ready: null,
+      focus: "shipped quality",
+    });
+  });
+
+  it("replaces an existing focus clause rather than duplicating it", () => {
+    const once = stampCraftFocus("> covers: app.py\n", "first lens");
+    const twice = stampCraftFocus(once, "second lens");
+    expect(parseCraftHeader(twice).focus).toBe("second lens");
+    expect(twice.match(/focus:/g)).toHaveLength(1);
+  });
+
+  it("clears (focus: null) drops the clause", () => {
+    const stamped = stampCraftFocus("> covers: app.py\n", "a lens");
+    const cleared = stampCraftFocus(stamped, null);
+    expect(parseCraftHeader(cleared).focus).toBeNull();
+    expect(cleared).not.toContain("focus:");
+  });
+
+  it("clearing a header with no focus clause is a harmless no-op", () => {
+    const input = "> covers: app.py\nbody";
+    expect(stampCraftFocus(input, null)).toBe(input);
+  });
+
+  it("leaves body prose untouched, header line only", () => {
+    const result = stampCraftFocus("> covers: app.py\n\n## A section\nsome real content\n", "a lens");
+    expect(result).toContain("## A section\nsome real content");
+  });
+
+  it("prepends a header line rather than losing the stamp when there's no header at all", () => {
+    const result = stampCraftFocus("no header here", "a lens");
+    expect(result).toBe("> focus: a lens\nno header here");
   });
 });
 
