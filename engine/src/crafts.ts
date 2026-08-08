@@ -24,17 +24,23 @@ import type { CraftBriefRow, CraftNoteRow, Store } from "./store.js";
  * of whether a spawned sub-agent even inherits its parent's MCP connections.
  *
  * Sub-agents never write craft files directly — they emit notes, harvested by
- * subagent-stop.ts into Store.insertCraftNote. Durability and visibility are
- * two different concerns, though: a note that only reaches the DB is durable
- * but invisible to the next dispatch's `hands craft mise`. So every note also
- * gets applied to the actual file the moment it's harvested
- * (applyImmediateCraftNote, below) — mechanically for mise.md (a key-value
- * upsert, no judgment needed) and as a durable, clearly-delimited raw append
- * for book.md/skill.md (real curation — discarding restatements, keeping the
- * book bounded — still needs a model, so it moves to a single predictable
- * trigger, `/hands:last-call`, instead of an ad hoc idle-wake fold; see
- * hands#118). `hands craft fold`/`fold-done` is what last-call runs to
- * distill the raw sections into curated prose, in place, never by appending.
+ * subagent-stop.ts into Store.insertCraftNote (the coordination DB — one per
+ * kitchen, concurrency-safe, the actual source of truth). The git-committed
+ * file is a downstream, best-effort EXPORT (`exportPendingCraftNotes`,
+ * below), never written per-dispatch: mise.md is REBUILT WHOLESALE from every
+ * mise note ever inserted (mechanical, no judgment needed, convergent
+ * regardless of which worktree exports it), book.md/skill.md's raw-notes
+ * section is rebuilt from every currently-pending note for that target (real
+ * curation into prose still needs a model, so it moves to a single
+ * predictable trigger, `/hands:last-call`, instead of an ad hoc idle-wake
+ * fold; see hands#118). `hands craft fold`/`fold-done` is what last-call runs
+ * to distill the raw sections into curated prose, in place. (hands#114/#223:
+ * an earlier design applied each note incrementally, straight onto whatever
+ * the CALLING worktree's own file checkout already had — since shared craft
+ * files are repo-committed and independently checked out per worktree with
+ * nothing to reconcile them, that let four stations dispatching one craft
+ * produce four divergent books. Wholesale rebuild from the DB is what makes
+ * every worktree converge on the same file, not just avoid losing data.)
  */
 
 /**
@@ -144,12 +150,16 @@ function readFileSafe(p: string): string | null {
   }
 }
 
+/** Truncate to `cap` code points, tail replaced with a note — the shared cap logic behind readCraftFileCapped and the merged-read functions below. */
+export function capText(text: string | null, cap = 6000): string | null {
+  if (!text) return null;
+  const points = Array.from(text);
+  return points.length <= cap ? text : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
+}
+
 /** Like readFileSafe, but capped — for handing content to a model or over the wire (dashboard). */
 export function readCraftFileCapped(p: string, cap = 6000): string | null {
-  const body = readFileSafe(p);
-  if (!body) return null;
-  const points = Array.from(body);
-  return points.length <= cap ? body : `${points.slice(0, cap).join("")}\n…(truncated — trim this file)`;
+  return capText(readFileSafe(p), cap);
 }
 
 function listSlugsIn(dir: string | null): string[] {
@@ -705,7 +715,32 @@ export function appendRawNote(text: string | null, taggedLine: string): string {
   return `${prefix}${RAW_NOTES_HEADING}\n${line}\n`;
 }
 
-function formatRawTaggedLine(note: CraftNoteRow): string {
+/** Everything above the raw-notes section — the curated prose a fold pass owns, untouched by mechanical export. */
+function stripRawSection(text: string | null): string {
+  if (!text) return "";
+  const idx = text.indexOf(RAW_NOTES_HEADING);
+  return (idx === -1 ? text : text.slice(0, idx)).replace(/\s+$/, "");
+}
+
+/**
+ * Rebuild book.md's/skill.md's raw-notes section from scratch against `pendingForTarget` (already
+ * filtered to the right kind/target), on top of the file's stable curated prefix — a pure
+ * function of (prefix, pending), not an incremental append (hands#114/#223): any two callers
+ * computing this from the same prefix and the same pending set converge on byte-identical output,
+ * regardless of which worktree wrote what when. Empty `pendingForTarget` returns just the
+ * prefix — correct once everything's been distilled and fold's own rewrite already removed the
+ * section (FOLD_INSTRUCTIONS has it delete the section as part of its rewrite).
+ */
+export function rebuildRawSection(currentFileContent: string | null, pendingForTarget: readonly CraftNoteRow[]): string {
+  const prefix = stripRawSection(currentFileContent);
+  if (pendingForTarget.length === 0) return prefix ? `${prefix}\n` : "";
+  let text: string | null = prefix || null;
+  for (const note of pendingForTarget) text = appendRawNote(text, formatRawTaggedLine(note));
+  return text ?? "";
+}
+
+/** Exported for readRawMerged/exportPendingCraftNotes below — the same rendering the real write path uses. */
+export function formatRawTaggedLine(note: CraftNoteRow): string {
   if (note.kind === "book") return `[book] ${note.body}`;
   if (note.kind === "friction") return `[friction] ${note.body}`;
   if (note.kind === "refactor") return `[refactor] ${note.body}`;
@@ -713,54 +748,109 @@ function formatRawTaggedLine(note: CraftNoteRow): string {
   return note.body; // skill — untagged, the file itself supplies the type
 }
 
-const IMMEDIATE_WRITE_LEASE_TTL_MS = 15_000;
+/** `pending` (any mix of kinds) filtered to the raw-append target a note belongs to — book for everything except mise/skill. */
+function forTarget(pending: readonly CraftNoteRow[], target: "book" | "skill"): CraftNoteRow[] {
+  return pending.filter((n) => n.kind !== "mise" && (n.kind === "skill") === (target === "skill"));
+}
+
+const EXPORT_LEASE_TTL_MS = 15_000;
 
 /**
- * Apply one harvested note to its craft's actual file, right now — best-effort, never the only
- * path to durability (the note is already journaled in craft_notes regardless). Returns false on
- * lease contention (a concurrent harvest, or a last-call distillation already holding the
- * book/skill lease); the caller should treat that as "fine, it'll be caught on the next pass,"
- * never as an error. mise gets its OWN lease key (`<slug>:mise`, same table+mechanism as the
- * book/skill fold lease, just a different resource id) so a long-running last-call rewrite of
- * book.md/skill.md never blocks a mise write — they don't touch the same file.
+ * The ONLY write path into a craft's git-committed files (hands#114/#223's storage fix). Every
+ * note is already durable the instant it's harvested — `insertCraftNote` writes to `craft_notes`
+ * in the coordination DB, one shared DB per kitchen, concurrency-safe by construction. The
+ * git-committed file is downstream of that: a periodic, best-effort, WHOLESALE-REBUILD export,
+ * never an incremental per-note append every dispatch races to make.
+ *
+ * Previously (hands#118) the harvester called an incremental per-note apply directly on every
+ * dispatch's finish, appending straight onto whatever the local worktree's copy of the file
+ * already had. That's exactly what let hands#223 happen: repo-committed shared-craft files are
+ * checked out independently per worktree with nothing to reconcile them, so four stations
+ * dispatching one craft produced four independently-appended copies (observed: 6461/6857/4269/
+ * 4269 bytes, one checkout clobbered to one line) — AND, worse, a mise note was marked "resolved"
+ * globally the instant ANY worktree applied it, so a note that only ever landed in worktree A's
+ * file would never propagate into worktree B's, even though nothing was technically lost from the
+ * DB. Rebuilding wholesale fixes both: mise.md is replayed from Store.allMiseCraftNotes (every
+ * mise note ever inserted for this slug, not just currently-pending ones — see that method's own
+ * doc comment), and book.md/skill.md's raw section is rebuilt from ALL currently-pending notes for
+ * that target, never appended onto file-specific history. Any worktree computing either from the
+ * same DB state gets byte-identical output.
+ *
+ * Called from `hands craft fold` (guaranteed, lease-already-held) and opportunistically from
+ * `hands craft mise` (best-effort, its own lease attempt — contention just means this round
+ * skips; readMiseMerged/readRawMerged cover reads regardless of whether export landed anything).
+ * Returns how many notes' content is now reflected on disk this round (0 if both leases were
+ * contended).
  */
-export function applyImmediateCraftNote(store: Store, files: CraftFiles, note: CraftNoteRow, holder: string): boolean {
-  if (note.kind === "mise") {
-    const leaseKey = `${files.slug}:mise`;
-    if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
+export function exportPendingCraftNotes(store: Store, files: CraftFiles, holder: string): number {
+  let touched = 0;
+
+  const miseLease = `${files.slug}:mise`;
+  if (store.acquireCraftFoldLease(miseLease, holder, EXPORT_LEASE_TTL_MS)) {
     try {
-      fs.mkdirSync(files.dir, { recursive: true });
-      fs.writeFileSync(files.mise, upsertMiseLine(readFileSafe(files.mise), note.body));
-      store.markCraftNoteFolded(note.id);
-      return true;
+      const allMise = store.allMiseCraftNotes(files.slug);
+      const newlyUnfolded = allMise.filter((n) => !n.folded_at);
+      // Only rewrite (and count as "touched") when there's genuinely new content — mise.md is
+      // purely a browsability snapshot now (readMiseMerged never reads it), so re-writing
+      // identical content on every export call would just be wasted I/O with no correctness
+      // benefit, and would make this function look like it's doing work when it isn't.
+      if (newlyUnfolded.length > 0) {
+        let text: string | null = null;
+        for (const note of allMise) text = upsertMiseLine(text, note.body);
+        fs.mkdirSync(files.dir, { recursive: true });
+        fs.writeFileSync(files.mise, text ?? "");
+        for (const note of newlyUnfolded) store.markCraftNoteFolded(note.id);
+        touched += newlyUnfolded.length;
+      }
     } finally {
-      store.releaseCraftFoldLease(leaseKey, holder);
+      store.releaseCraftFoldLease(miseLease, holder);
     }
   }
 
-  const target = note.kind === "skill" ? files.skill : files.book;
-  if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
-  try {
-    fs.mkdirSync(files.dir, { recursive: true });
-    fs.writeFileSync(target, appendRawNote(readFileSafe(target), formatRawTaggedLine(note)));
-    return true;
-  } finally {
-    store.releaseCraftFoldLease(files.slug, holder);
+  if (store.acquireCraftFoldLease(files.slug, holder, EXPORT_LEASE_TTL_MS)) {
+    try {
+      const pending = store.pendingCraftNotes(files.slug);
+      for (const [path, target] of [[files.book, "book"], [files.skill, "skill"]] as const) {
+        const relevant = forTarget(pending, target);
+        if (relevant.length === 0) continue;
+        fs.mkdirSync(files.dir, { recursive: true });
+        fs.writeFileSync(path, rebuildRawSection(readFileSafe(path), relevant));
+        touched += relevant.length;
+      }
+    } finally {
+      store.releaseCraftFoldLease(files.slug, holder);
+    }
   }
+
+  return touched;
 }
 
 /**
- * Catch-up sweep for any mise notes that missed their immediate write (lease contention at
- * harvest time) — belt-and-suspenders so a mise learning can never get permanently stuck. Called
- * from `hands craft fold` (via buildFoldContext) and, transitively, by last-call.
+ * mise.md's content as any dispatch should see it — purely derived from the DB
+ * (Store.allMiseCraftNotes), never from the file (hands#114/#223): this is what makes it
+ * convergent across worktrees regardless of which one's file happens to be current, or whether
+ * an export has ever run at all.
  */
-export function applyPendingMiseNotes(store: Store, files: CraftFiles, holder: string): number {
-  const pending = store.pendingCraftNotes(files.slug).filter((n) => n.kind === "mise");
-  let applied = 0;
-  for (const note of pending) {
-    if (applyImmediateCraftNote(store, files, note, holder)) applied++;
-  }
-  return applied;
+export function readMiseMerged(store: Store, slug: string, cap = 6000): string | null {
+  let text: string | null = null;
+  for (const note of store.allMiseCraftNotes(slug)) text = upsertMiseLine(text, note.body);
+  return capText(text, cap);
+}
+
+/**
+ * book.md's or skill.md's content as any dispatch should see it: the file's stable prefix plus a
+ * freshly rebuilt raw-notes section from every currently-pending note for `target` — convergent
+ * for the same reason readMiseMerged is (hands#114/#223). `pending` is the full pending set for
+ * the slug (any mix of kinds); this filters to `target` itself.
+ */
+export function readRawMerged(
+  path: string,
+  pending: readonly CraftNoteRow[],
+  target: "book" | "skill",
+  cap = 6000,
+): string | null {
+  const rebuilt = rebuildRawSection(readFileSafe(path), forTarget(pending, target));
+  return capText(rebuilt || null, cap);
 }
 
 export const FOLD_INSTRUCTIONS =
@@ -789,18 +879,27 @@ export interface FoldContext {
   instructions: string;
 }
 
-/** Read everything a fold pass needs — called after the caller has already acquired the lease. */
+/**
+ * Read everything a fold pass needs — called after the caller has already acquired the fold
+ * lease with `holder`. `holder` MUST be the same identity used for that lease acquisition:
+ * exportPendingCraftNotes's book/skill writes reacquire the SAME lease key
+ * (`acquireCraftFoldLease` is reentrant for a matching holder, not for a different one), so a
+ * mismatched holder here would make every book/skill export silently look like contention.
+ */
 export function buildFoldContext(
   store: Store,
   craft: string,
+  holder: string,
   env: NodeJS.ProcessEnv = process.env,
   cwd: string = process.cwd(),
 ): FoldContext {
   const files = craftFiles(craft, env, cwd);
-  // Catch up any mise notes that missed their immediate write at harvest time (lease
-  // contention) — never leaves a mise learning permanently stuck, and means pendingNotes below
-  // naturally excludes mise entries without any extra filtering.
-  applyPendingMiseNotes(store, files, `fold-catchup:${process.pid}`);
+  // Force every pending note (mise AND book/skill) into the file before reading it — hands#114/
+  // #223's storage fix removed the per-dispatch immediate write, so without this the file could
+  // be arbitrarily behind `pendingNotes`, breaking FOLD_INSTRUCTIONS' assumption that the two
+  // already match. This also means pendingNotes below naturally excludes mise entries (they're
+  // marked folded the instant they're mechanically applied) without any extra filtering.
+  exportPendingCraftNotes(store, files, holder);
   const pending = store.pendingCraftNotes(files.slug);
   return {
     craftSlug: files.slug,

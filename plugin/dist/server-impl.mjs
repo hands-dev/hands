@@ -8445,6 +8445,19 @@ var init_store = __esm({
         return this.db.prepare("SELECT * FROM craft_notes WHERE craft_slug = ? ORDER BY id DESC LIMIT ?").all(craftSlug, limit);
       }
       /**
+       * Every mise-kind note ever inserted for a craft, oldest first, folded or not (hands#114/#223's
+       * storage fix) — mise.md's content is a PURE FUNCTION of this list (replay each body through
+       * upsertMiseLine), not an incrementally-appended file: a mise note is marked folded the instant
+       * it's mechanically applied, so `pendingCraftNotes` alone can't reconstruct the full file once
+       * anything has been applied at least once. Replaying the FULL history from empty is what makes
+       * mise.md reconstructible identically from any worktree, regardless of which one happened to
+       * apply which note first — the actual fix for divergent per-worktree exports, not just "don't
+       * lose data still pending."
+       */
+      allMiseCraftNotes(craftSlug) {
+        return this.db.prepare("SELECT * FROM craft_notes WHERE craft_slug = ? AND kind = 'mise' ORDER BY id").all(craftSlug);
+      }
+      /**
        * Every craft slug carrying at least one pending note — independent of whether a book file
        * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
        * doctor's backlog check doesn't miss a craft just because listCrafts()'s file-based roster
@@ -10749,12 +10762,14 @@ function readFileSafe2(p) {
     return null;
   }
 }
-function readCraftFileCapped(p, cap = 6e3) {
-  const body = readFileSafe2(p);
-  if (!body) return null;
-  const points = Array.from(body);
-  return points.length <= cap ? body : `${points.slice(0, cap).join("")}
+function capText(text, cap = 6e3) {
+  if (!text) return null;
+  const points = Array.from(text);
+  return points.length <= cap ? text : `${points.slice(0, cap).join("")}
 \u2026(truncated \u2014 trim this file)`;
+}
+function readCraftFileCapped(p, cap = 6e3) {
+  return capText(readFileSafe2(p), cap);
 }
 function listSlugsIn(dir) {
   if (!dir) return [];
@@ -10980,75 +10995,7 @@ function parseCraftNoteBlock(text) {
   }
   return { briefId, craftSlug, nothingNew, entries };
 }
-function extractMiseKey(entry) {
-  const trimmed = entry.trim();
-  const m = MISE_KEY_DELIM_RE.exec(trimmed);
-  return (m ? trimmed.slice(0, m.index) : trimmed).trim();
-}
-function upsertMiseLine(text, entry) {
-  const line = entry.trim();
-  const key = extractMiseKey(line);
-  const lines = (text ?? "").split("\n");
-  let replaced = false;
-  const next = lines.map((l) => {
-    const m = /^- (.*)$/.exec(l);
-    if (m && !replaced && extractMiseKey(m[1]) === key) {
-      replaced = true;
-      return `- ${line}`;
-    }
-    return l;
-  });
-  if (!replaced) {
-    while (next.length > 0 && next[next.length - 1].trim() === "") next.pop();
-    next.push(`- ${line}`);
-  }
-  return `${next.join("\n").trim()}
-`;
-}
-function appendRawNote(text, taggedLine) {
-  const body = (text ?? "").replace(/\s+$/, "");
-  const line = `- ${taggedLine.trim()}`;
-  if (body.includes(RAW_NOTES_HEADING)) return `${body}
-${line}
-`;
-  const prefix = body ? `${body}
-
-` : "";
-  return `${prefix}${RAW_NOTES_HEADING}
-${line}
-`;
-}
-function formatRawTaggedLine(note) {
-  if (note.kind === "book") return `[book] ${note.body}`;
-  if (note.kind === "friction") return `[friction] ${note.body}`;
-  if (note.kind === "refactor") return `[refactor] ${note.body}`;
-  if (note.kind === "spillover") return `[spillover \xB7 from ${note.spillover_craft ?? "unknown"}] ${note.body}`;
-  return note.body;
-}
-function applyImmediateCraftNote(store, files, note, holder) {
-  if (note.kind === "mise") {
-    const leaseKey = `${files.slug}:mise`;
-    if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
-    try {
-      fs15.mkdirSync(files.dir, { recursive: true });
-      fs15.writeFileSync(files.mise, upsertMiseLine(readFileSafe2(files.mise), note.body));
-      store.markCraftNoteFolded(note.id);
-      return true;
-    } finally {
-      store.releaseCraftFoldLease(leaseKey, holder);
-    }
-  }
-  const target = note.kind === "skill" ? files.skill : files.book;
-  if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
-  try {
-    fs15.mkdirSync(files.dir, { recursive: true });
-    fs15.writeFileSync(target, appendRawNote(readFileSafe2(target), formatRawTaggedLine(note)));
-    return true;
-  } finally {
-    store.releaseCraftFoldLease(files.slug, holder);
-  }
-}
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -11062,9 +11009,6 @@ var init_crafts = __esm({
     NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
     KV_RE = /^(mise|book|skill|friction|refactor):\s*(.+)$/;
     SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
-    MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
-    RAW_NOTES_HEADING = "## Raw notes (unfolded)";
-    IMMEDIATE_WRITE_LEASE_TTL_MS = 15e3;
   }
 });
 
@@ -35786,7 +35730,6 @@ function runPublish(store, opts) {
 
 // src/subagent-stop.ts
 init_crafts();
-init_remote();
 import * as fs16 from "node:fs";
 function totalOutputTokens(transcriptPath) {
   let raw;
@@ -35847,15 +35790,14 @@ function assistantText(transcriptPath) {
   }
   return chunks.join("\n");
 }
-function harvestCraftNote(store, transcriptPath, now, env, cwd) {
+function harvestCraftNote(store, transcriptPath, now) {
   const parsed = parseCraftNoteBlock(assistantText(transcriptPath));
   if (!parsed) return null;
   let entriesHarvested = 0;
   if (parsed.craftSlug) {
-    const holder = `harvest:${process.pid}`;
     for (const entry of parsed.entries) {
       const targetSlug = entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug;
-      const id = store.insertCraftNote({
+      store.insertCraftNote({
         craftSlug: targetSlug,
         briefId: parsed.briefId,
         sourceAgent: `subagent:${parsed.craftSlug}`,
@@ -35865,11 +35807,6 @@ function harvestCraftNote(store, transcriptPath, now, env, cwd) {
         now
       });
       entriesHarvested++;
-      try {
-        const row = store.getCraftNote(id);
-        if (row) applyImmediateCraftNote(store, craftFiles(targetSlug, env, cwd), row, holder);
-      } catch {
-      }
     }
   }
   if (parsed.briefId !== null) {
@@ -35887,13 +35824,7 @@ function runSubagentStop(store, opts) {
   const agentType = meta3.agentType ?? opts.agentType ?? null;
   let craftNote = null;
   try {
-    craftNote = harvestCraftNote(
-      store,
-      opts.agentTranscriptPath,
-      now,
-      opts.env ?? process.env,
-      opts.cwd ?? process.cwd()
-    );
+    craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
   } catch {
   }
   if (outputTokens === null) {

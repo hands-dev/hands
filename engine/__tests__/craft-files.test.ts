@@ -6,14 +6,16 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, resetConfigCache } from "../src/config.js";
 import {
   appendRawNote,
-  applyImmediateCraftNote,
-  applyPendingMiseNotes,
   booksDistilledRecently,
+  buildFoldContext,
+  capText,
   composeChit,
   craftAgentPath,
   craftKnown,
   craftSkillPath,
+  exportPendingCraftNotes,
   FOLD_READY_THRESHOLD,
+  formatRawTaggedLine,
   formatRosterContext,
   isRoleCraft,
   listCrafts,
@@ -21,6 +23,9 @@ import {
   nearestCraftSlugs,
   parseCraftHeader,
   parseCraftNoteBlock,
+  readMiseMerged,
+  readRawMerged,
+  rebuildRawSection,
   roleCraftFoldNudges,
   stampCraftReadiness,
   sweepHeldSeatHeader,
@@ -1076,8 +1081,8 @@ describe("Store.markCraftNoteFolded — single-row fold-mark (hands#118)", () =>
   });
 });
 
-describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
-  it("mise: upserts into mise.md and marks the note folded immediately", () => {
+describe("exportPendingCraftNotes — write-on-export (hands#114/#223, superseding hands#118's per-note apply)", () => {
+  it("mise: rebuilds mise.md wholesale and marks every applied note folded", () => {
     const store = new Store({ env });
     const files = craftFiles("saucier", env);
     const id = store.insertCraftNote({
@@ -1086,15 +1091,15 @@ describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
       kind: "mise",
       body: "engine/src/foo.ts — exports bar()",
     });
-    const note = store.getCraftNote(id)!;
-    const applied = applyImmediateCraftNote(store, files, note, "harvest:test");
-    expect(applied).toBe(true);
+    const applied = exportPendingCraftNotes(store, files, "export:test");
+    expect(applied).toBe(1);
     expect(fs.readFileSync(files.mise, "utf8")).toContain("engine/src/foo.ts — exports bar()");
+    expect(store.getCraftNote(id)?.folded_at).not.toBeNull();
     expect(store.pendingCraftNotes("saucier")).toEqual([]);
     store.close();
   });
 
-  it("book: appends to book.md's raw section, tagged, and stays pending", () => {
+  it("book: rebuilds book.md's raw section, tagged, and stays pending", () => {
     const store = new Store({ env });
     const files = craftFiles("saucier", env);
     const id = store.insertCraftNote({
@@ -1103,8 +1108,7 @@ describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
       kind: "book",
       body: "beurre blanc breaks over 58C",
     });
-    const note = store.getCraftNote(id)!;
-    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(1);
     const bookText = fs.readFileSync(files.book, "utf8");
     expect(bookText).toContain("## Raw notes (unfolded)");
     expect(bookText).toContain("- [book] beurre blanc breaks over 58C");
@@ -1115,30 +1119,28 @@ describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
   it("refactor: routes to book.md (like book/friction), tagged [refactor] (hands#92)", () => {
     const store = new Store({ env });
     const files = craftFiles("saucier", env);
-    const id = store.insertCraftNote({
+    store.insertCraftNote({
       craftSlug: "saucier",
       sourceAgent: "subagent:saucier",
       kind: "refactor",
       body: "the reduction step is duplicated in three call sites",
     });
-    const note = store.getCraftNote(id)!;
-    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    exportPendingCraftNotes(store, files, "export:test");
     const bookText = fs.readFileSync(files.book, "utf8");
     expect(bookText).toContain("- [refactor] the reduction step is duplicated in three call sites");
     store.close();
   });
 
-  it("skill: appends to skill.md's raw section untagged", () => {
+  it("skill: rebuilds skill.md's raw section untagged", () => {
     const store = new Store({ env });
     const files = craftFiles("saucier", env);
-    const id = store.insertCraftNote({
+    store.insertCraftNote({
       craftSlug: "saucier",
       sourceAgent: "subagent:saucier",
       kind: "skill",
       body: "taste before plating",
     });
-    const note = store.getCraftNote(id)!;
-    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    exportPendingCraftNotes(store, files, "export:test");
     const skillText = fs.readFileSync(files.skill, "utf8");
     expect(skillText).toContain("## Raw notes (unfolded)");
     expect(skillText).toContain("- taste before plating");
@@ -1149,21 +1151,20 @@ describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
   it("spillover: tags the source craft and stays pending", () => {
     const store = new Store({ env });
     const files = craftFiles("ordering-api", env);
-    const id = store.insertCraftNote({
+    store.insertCraftNote({
       craftSlug: "ordering-api",
       sourceAgent: "subagent:saucier",
       kind: "spillover",
       body: "menu validation lives in app.py",
       spilloverCraft: "saucier",
     });
-    const note = store.getCraftNote(id)!;
-    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    exportPendingCraftNotes(store, files, "export:test");
     const bookText = fs.readFileSync(files.book, "utf8");
     expect(bookText).toContain("- [spillover · from saucier] menu validation lives in app.py");
     store.close();
   });
 
-  it("skips cleanly (returns false, note stays pending) when the lease is already held", () => {
+  it("skips cleanly (returns 0, notes stay pending) when the book/skill lease is already held by someone else", () => {
     const store = new Store({ env });
     const files = craftFiles("saucier", env);
     expect(store.acquireCraftFoldLease("saucier", "someone-else", 60_000)).toBe(true); // book/skill lease
@@ -1173,43 +1174,235 @@ describe("applyImmediateCraftNote — write-on-harvest (hands#118)", () => {
       kind: "book",
       body: "held-out learning",
     });
-    const note = store.getCraftNote(id)!;
-    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(false);
+    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(0);
     expect(store.pendingCraftNotes("saucier").map((n) => n.id)).toEqual([id]);
     expect(fs.existsSync(files.book)).toBe(false); // never written
     store.close();
   });
 
-  it("a mise write is NOT blocked by a held book/skill fold lease — different files, different lease key", () => {
+  it("a mise export is NOT blocked by a held book/skill fold lease — different files, different lease key", () => {
     const store = new Store({ env });
     const files = craftFiles("saucier", env);
     expect(store.acquireCraftFoldLease("saucier", "someone-else", 60_000)).toBe(true); // book/skill lease only
-    const id = store.insertCraftNote({
+    store.insertCraftNote({
       craftSlug: "saucier",
       sourceAgent: "subagent:saucier",
       kind: "mise",
       body: "engine/src/bar.ts — does Y",
     });
-    const note = store.getCraftNote(id)!;
-    expect(applyImmediateCraftNote(store, files, note, "harvest:test")).toBe(true);
+    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(1);
+    store.close();
+  });
+
+  it("is idempotent for mise — a second sweep with nothing new applies zero", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a/b.ts — does A" });
+    exportPendingCraftNotes(store, files, "export:test");
+    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(0);
     store.close();
   });
 });
 
-describe("applyPendingMiseNotes — catch-up sweep (hands#118)", () => {
-  it("applies every still-pending mise note and leaves book/skill notes untouched", () => {
+describe("exportPendingCraftNotes — the sole write path (hands#114/#223 storage fix)", () => {
+  it("applies every pending note of every kind — mise mechanically folded, book/skill raw-appended and left pending", () => {
     const store = new Store({ env });
     const files = craftFiles("saucier", env);
     store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a/b.ts — does A" });
     store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "c/d.ts — does C" });
     const bookId = store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "a fact" });
 
-    const applied = applyPendingMiseNotes(store, files, "fold-catchup:test");
-    expect(applied).toBe(2);
+    const applied = exportPendingCraftNotes(store, files, "export:test");
+    expect(applied).toBe(3); // unlike the old mise-only sweep, this lands book/skill too
     const miseText = fs.readFileSync(files.mise, "utf8");
     expect(miseText).toContain("a/b.ts — does A");
     expect(miseText).toContain("c/d.ts — does C");
+    expect(fs.readFileSync(files.book, "utf8")).toContain("[book] a fact");
+    // mise is mechanical (fully applied = folded); book still awaits real distillation via fold.
     expect(store.pendingCraftNotes("saucier").map((n) => n.id)).toEqual([bookId]);
     store.close();
+  });
+
+  it("is idempotent — a second sweep with nothing new pending applies zero", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a/b.ts — does A" });
+    exportPendingCraftNotes(store, files, "export:test");
+    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(0);
+    store.close();
+  });
+});
+
+describe("readMiseMerged / readRawMerged — always-convergent derived reads (hands#114/#223)", () => {
+  it("readMiseMerged is purely DB-derived — sees a note even when no file has ever been written", () => {
+    const store = new Store({ env });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "c/d.ts — never exported" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "irrelevant to mise" });
+
+    const merged = readMiseMerged(store, "saucier");
+    expect(merged).toContain("c/d.ts — never exported");
+    expect(merged).not.toContain("irrelevant to mise");
+    store.close();
+  });
+
+  it("readMiseMerged reflects notes already folded by a PRIOR export too — not just still-pending ones", () => {
+    // This is the exact gap the original (per-note, file-based) design had: a mise note is marked
+    // folded the instant any export applies it, so a merge that only looked at pendingCraftNotes
+    // would silently drop it for every OTHER reader from that point on.
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a.ts — already folded" });
+    exportPendingCraftNotes(store, files, "export:test"); // folds it
+    expect(store.pendingCraftNotes("saucier")).toEqual([]); // confirm it's no longer pending
+
+    expect(readMiseMerged(store, "saucier")).toContain("a.ts — already folded");
+    store.close();
+  });
+
+  it("readRawMerged rebuilds book.md's raw section from pending notes on top of the file's stable prefix, skipping mise/skill", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: sauces\n\ncurated prose stays\n");
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "not yet exported" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "irrelevant to book" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "skill", body: "irrelevant to book too" });
+
+    const merged = readRawMerged(files.book, store.pendingCraftNotes("saucier"), "book");
+    expect(merged).toContain("curated prose stays");
+    expect(merged).toContain("[book] not yet exported");
+    expect(merged).not.toContain("irrelevant to book");
+    store.close();
+  });
+
+  it("readRawMerged targets skill.md for kind skill, separately from book", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "skill", body: "step 1: whisk" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "not a skill note" });
+
+    const pending = store.pendingCraftNotes("saucier");
+    const skillMerged = readRawMerged(files.skill, pending, "skill");
+    expect(skillMerged).toContain("step 1: whisk");
+    expect(skillMerged).not.toContain("not a skill note");
+    store.close();
+  });
+
+  it("capText truncates at the code-point cap and leaves short text untouched", () => {
+    expect(capText(null)).toBeNull();
+    expect(capText("short")).toBe("short");
+    const long = "x".repeat(20);
+    expect(capText(long, 10)).toBe(`${"x".repeat(10)}\n…(truncated — trim this file)`);
+  });
+});
+
+describe("rebuildRawSection — pure function of (prefix, pending), the convergence mechanism itself", () => {
+  it("keeps the curated prefix and rebuilds the raw section fresh from pending", () => {
+    const rebuilt = rebuildRawSection("> covers: sauces\n\nsome curated prose", [
+      { id: 1, craft_slug: "x", brief_id: null, source_agent: "s", kind: "book", body: "fact one", spillover_craft: null, created_at: 0, folded_at: null },
+    ]);
+    expect(rebuilt).toContain("some curated prose");
+    expect(rebuilt).toContain("## Raw notes (unfolded)");
+    expect(rebuilt).toContain("[book] fact one");
+  });
+
+  it("returns just the prefix, no raw-notes heading at all, when nothing is pending", () => {
+    const rebuilt = rebuildRawSection("> covers: sauces\n\nsome curated prose\n\n## Raw notes (unfolded)\n- [book] stale", []);
+    expect(rebuilt).toContain("some curated prose");
+    expect(rebuilt).not.toContain("## Raw notes");
+    expect(rebuilt).not.toContain("stale"); // an existing raw section is stripped, not preserved, when nothing's pending
+  });
+
+  it("is a pure function — two calls with the same inputs produce byte-identical output", () => {
+    const pending = [
+      { id: 1, craft_slug: "x", brief_id: null, source_agent: "a", kind: "book" as const, body: "from station A", spillover_craft: null, created_at: 0, folded_at: null },
+      { id: 2, craft_slug: "x", brief_id: null, source_agent: "b", kind: "book" as const, body: "from station B", spillover_craft: null, created_at: 0, folded_at: null },
+    ];
+    const prefix = "> covers: sauces\n\nprose";
+    expect(rebuildRawSection(prefix, pending)).toBe(rebuildRawSection(prefix, pending));
+    // order doesn't matter to WHAT'S included, only to display order — same inputs, same set → same convergent result
+    expect(rebuildRawSection(prefix, pending)).toBe(rebuildRawSection(prefix, [...pending]));
+  });
+});
+
+describe("the storage fix under real concurrency — two worktrees, one shared DB (hands#114/#223)", () => {
+  it("neither worktree's live read ever loses a note, even though their LOCAL exported files diverge and a mise note gets folded by whichever export lands first", () => {
+    // One shared Store (the coordination DB — genuinely one per kitchen, never per-worktree) but
+    // TWO separate on-disk directories, simulating two stations' independent git checkouts of the
+    // same repo-committed shared craft file — exactly hands#223's shape.
+    const store = new Store({ env });
+    const worktreeA = fs.mkdtempSync(path.join(home, "worktree-a-"));
+    const worktreeB = fs.mkdtempSync(path.join(home, "worktree-b-"));
+    const filesA = { ...craftFiles("saucier", env), dir: worktreeA, book: path.join(worktreeA, "saucier.md"), mise: path.join(worktreeA, "saucier.mise.md"), skill: path.join(worktreeA, "saucier.skill.md") };
+    const filesB = { ...craftFiles("saucier", env), dir: worktreeB, book: path.join(worktreeB, "saucier.md"), mise: path.join(worktreeB, "saucier.mise.md"), skill: path.join(worktreeB, "saucier.skill.md") };
+
+    // A dispatch from worktree A harvests a note (DB write only, per hands#114 — no file write here).
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-a", kind: "mise", body: "a.ts — from station A" });
+    // Worktree A's own `hands craft mise` runs an opportunistic export — lands ONLY in A's file,
+    // and marks the note folded GLOBALLY (mise is mechanical — this is correct, not a bug).
+    exportPendingCraftNotes(store, filesA, "mise-read:A");
+    expect(store.pendingCraftNotes("saucier")).toEqual([]); // already folded, by A's export
+
+    // A SECOND dispatch, from worktree B, harvests its own note — B's file has never seen A's note.
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-b", kind: "mise", body: "b.ts — from station B" });
+    expect(fs.existsSync(filesB.mise)).toBe(false); // B's local file is still completely unaware of A's note
+
+    // B's own `hands craft mise` call: opportunistic export, then a merged read — must see BOTH
+    // notes even though B's note is the only one that was ever pending by the time B looked, and
+    // A's note is already folded (not in pendingCraftNotes at all anymore).
+    exportPendingCraftNotes(store, filesB, "mise-read:B");
+    const bMerged = readMiseMerged(store, "saucier");
+    expect(bMerged).toContain("from station A"); // came from allMiseCraftNotes, not B's own file or the pending queue
+    expect(bMerged).toContain("from station B");
+
+    // And A, reading again later, still sees both too — even though A's file was written FIRST,
+    // before B's note even existed, and nothing ever copied B's write into A's file.
+    const aMerged = readMiseMerged(store, "saucier");
+    expect(aMerged).toContain("from station A");
+    expect(aMerged).toContain("from station B");
+
+    // The LOCAL FILES do genuinely differ — that's the part the fix doesn't (and needn't) prevent.
+    expect(fs.readFileSync(filesA.mise, "utf8")).not.toContain("from station B");
+
+    fs.rmSync(worktreeA, { recursive: true, force: true });
+    fs.rmSync(worktreeB, { recursive: true, force: true });
+    store.close();
+  });
+});
+
+describe("buildFoldContext — holder-aware export before reading (hands#114/#223)", () => {
+  it("exports pending book/skill notes (not just mise) before returning content, using the SAME holder as the caller's lease", () => {
+    const store = new Store({ env });
+    const files = craftFiles("saucier", env);
+    fs.mkdirSync(files.dir, { recursive: true });
+    fs.writeFileSync(files.book, "> covers: sauces\n");
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "a fresh fact" });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a/b.ts — does A" });
+
+    const holder = "expo";
+    expect(store.acquireCraftFoldLease("saucier", holder)).toBe(true);
+    const ctx = buildFoldContext(store, "saucier", holder, env);
+
+    // The file on disk was actually updated (not just the in-memory return value) — proves the
+    // export ran under the SAME lease the caller already held, not a mismatched holder that would
+    // have silently looked like contention and skipped.
+    expect(fs.readFileSync(files.book, "utf8")).toContain("[book] a fresh fact");
+    expect(ctx.book).toContain("[book] a fresh fact");
+    // mise was mechanically applied+folded by the same export sweep, so pendingNotes excludes it —
+    // exactly what FOLD_INSTRUCTIONS assumes ("mise.md maintains itself automatically").
+    expect(ctx.pendingNotes.map((n) => n.kind)).toEqual(["book"]);
+    store.close();
+  });
+});
+
+describe("formatRawTaggedLine — exported for the merge functions above", () => {
+  it("tags each kind the same way the real write path does", () => {
+    const note = (kind: string, body: string, spilloverCraft: string | null = null) =>
+      ({ id: 1, craft_slug: "x", brief_id: null, source_agent: "s", kind, body, spillover_craft: spilloverCraft, created_at: 0, folded_at: null }) as Parameters<typeof formatRawTaggedLine>[0];
+    expect(formatRawTaggedLine(note("book", "a fact"))).toBe("[book] a fact");
+    expect(formatRawTaggedLine(note("friction", "this was annoying"))).toBe("[friction] this was annoying");
+    expect(formatRawTaggedLine(note("refactor", "should extract this"))).toBe("[refactor] should extract this");
+    expect(formatRawTaggedLine(note("spillover", "not mine", "other-craft"))).toBe("[spillover · from other-craft] not mine");
+    expect(formatRawTaggedLine(note("skill", "step 1"))).toBe("step 1"); // untagged
   });
 });

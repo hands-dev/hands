@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resetConfigCache } from "../src/config.js";
+import { exportPendingCraftNotes } from "../src/crafts.js";
 import { resetRepoInfoCache } from "../src/paths.js";
 import { craftFiles } from "../src/remote.js";
 import { runSubagentStop } from "../src/subagent-stop.js";
@@ -99,24 +100,51 @@ describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
     ].join("\n");
     fs.writeFileSync(transcript, assistantTextLine(note));
 
-    const craftEnv = { ...env, HANDS_NO_REPO_CONFIG: "1" };
     const result = runSubagentStop(store, {
       ownerAgentId: "station-1",
       agentTranscriptPath: transcript,
       now: 7000,
-      env: craftEnv,
-      cwd: root,
     });
 
     expect(result.craftNote).toEqual({ craftSlug: "ordering-api", briefId, entriesHarvested: 2 });
-    // mise applies itself immediately (hands#118) — only the book note is still pending.
+    // hands#114/#223: the hook no longer mirrors notes into the craft's git-committed file — that
+    // per-dispatch, per-worktree write is exactly what produced divergent books. Both notes stay
+    // pending in the DB (the sole source of truth) until exportPendingCraftNotes (crafts.ts) —
+    // called from `hands craft fold`/`hands craft mise`, not from this hook — lands them on disk.
     const pending = store.pendingCraftNotes("ordering-api");
-    expect(pending).toHaveLength(1);
-    expect(pending.map((n) => n.kind)).toEqual(["book"]);
+    expect(pending.map((n) => n.kind).sort()).toEqual(["book", "mise"]);
+    const craftEnv = { ...env, HANDS_NO_REPO_CONFIG: "1" };
     const files = craftFiles("ordering-api", craftEnv, root);
+    expect(fs.existsSync(files.mise)).toBe(false);
+    expect(fs.existsSync(files.book)).toBe(false);
+    expect(store.getCraftBrief(briefId)?.noted_at).toBe(7000);
+    store.close();
+  });
+
+  it("exportPendingCraftNotes (the new sole write path) lands what this hook harvested", () => {
+    const store = new Store({ env });
+    const transcript = path.join(root, "agent-3b.jsonl");
+    const note = [
+      "```craft-note",
+      "brief: 12",
+      "craft: ordering-api",
+      "nothing-new: false",
+      "mise: engine/src/orders/validate.ts — moved here",
+      "book: menu validation runs before auth",
+      "```",
+    ].join("\n");
+    fs.writeFileSync(transcript, assistantTextLine(note));
+    runSubagentStop(store, { ownerAgentId: "station-1", agentTranscriptPath: transcript, now: 7500 });
+
+    const craftEnv = { ...env, HANDS_NO_REPO_CONFIG: "1" };
+    const files = craftFiles("ordering-api", craftEnv, root);
+    const applied = exportPendingCraftNotes(store, files, "test-export");
+
+    expect(applied).toBe(2);
     expect(fs.readFileSync(files.mise, "utf8")).toContain("engine/src/orders/validate.ts — moved here");
     expect(fs.readFileSync(files.book, "utf8")).toContain("[book] menu validation runs before auth");
-    expect(store.getCraftBrief(briefId)?.noted_at).toBe(7000);
+    // mise is mechanical — fully applied means folded; book still awaits real distillation.
+    expect(store.pendingCraftNotes("ordering-api").map((n) => n.kind)).toEqual(["book"]);
     store.close();
   });
 
@@ -137,8 +165,6 @@ describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
       ownerAgentId: "station-1",
       agentTranscriptPath: transcript,
       now: 8000,
-      env: { ...env, HANDS_NO_REPO_CONFIG: "1" },
-      cwd: root,
     });
 
     expect(store.pendingCraftNotes("ordering-api")).toHaveLength(0);

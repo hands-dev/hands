@@ -2121,6 +2121,22 @@ export class Store {
   }
 
   /**
+   * Every mise-kind note ever inserted for a craft, oldest first, folded or not (hands#114/#223's
+   * storage fix) — mise.md's content is a PURE FUNCTION of this list (replay each body through
+   * upsertMiseLine), not an incrementally-appended file: a mise note is marked folded the instant
+   * it's mechanically applied, so `pendingCraftNotes` alone can't reconstruct the full file once
+   * anything has been applied at least once. Replaying the FULL history from empty is what makes
+   * mise.md reconstructible identically from any worktree, regardless of which one happened to
+   * apply which note first — the actual fix for divergent per-worktree exports, not just "don't
+   * lose data still pending."
+   */
+  allMiseCraftNotes(craftSlug: string): CraftNoteRow[] {
+    return this.db
+      .prepare("SELECT * FROM craft_notes WHERE craft_slug = ? AND kind = 'mise' ORDER BY id")
+      .all(craftSlug) as unknown as CraftNoteRow[];
+  }
+
+  /**
    * Every craft slug carrying at least one pending note — independent of whether a book file
    * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
    * doctor's backlog check doesn't miss a craft just because listCrafts()'s file-based roster
