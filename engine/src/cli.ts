@@ -12,6 +12,8 @@
  *   hands craft ls             the craft roster — scope, ready/plan-only, covers, distilled, notes
  *   hands craft ready <s>      mark ready for service (execute mode) — sous-owned once one exists
  *   hands craft unready <s>    revert to plan-mode only
+ *   hands craft focus <s> ["<text>" | --clear]  the LENS a craft's ingest/lint checks against —
+ *                              genuinely separate from covers (scope); no arg prints the current one
  *   hands craft sync           materialize crafts as real Agent types + Skills (one-call dispatch)
  *   hands craft sweep-headers  drop retired "last held: DATE by AGENT" ownership clauses (hands#167)
  *   hands craft promote <s>    move a personal craft to the repo-shared tier
@@ -113,6 +115,7 @@ import {
   parseCraftHeader,
   readMiseMerged,
   readRawMerged,
+  stampCraftFocus,
   stampCraftReadiness,
   sweepHeldSeatHeader,
 } from "./crafts.js";
@@ -446,6 +449,35 @@ function cmdCraft(argv: string[]): void {
       return;
     }
 
+    if (sub === "focus") {
+      // hands#114: the LENS a craft's ingest/lint discipline checks against — genuinely separate
+      // from `covers` (scope). No role-craft gate like ready/unready has: there's no structural
+      // reason to forbid an ordinary craft from stating one too, even though covers alone usually
+      // already does that job for a domain craft.
+      const slug = argv[1];
+      if (!slug) fail('usage: hands craft focus <slug> ["<text>" | --clear]');
+      const files = craftFiles(slug!);
+      if (!fs.existsSync(files.book)) {
+        fail(`unknown craft "${files.slug}" — no book found for it (\`hands craft ls\` for the roster)`);
+      }
+      const raw = fs.readFileSync(files.book, "utf8");
+      const rest = argv.slice(2);
+      if (rest.length === 0) {
+        const { focus } = parseCraftHeader(raw);
+        out(focus ? `${files.slug}: ${focus}` : `${files.slug}: no focus set`);
+        return;
+      }
+      if (rest[0] === "--clear") {
+        fs.writeFileSync(files.book, stampCraftFocus(raw, null));
+        out(`✔ "${files.slug}" focus cleared`);
+        return;
+      }
+      const focus = rest.join(" ").trim();
+      fs.writeFileSync(files.book, stampCraftFocus(raw, focus));
+      out(`✔ "${files.slug}" focus set: ${focus}`);
+      return;
+    }
+
     if (sub === "promote" || sub === "localize") {
       const slug = argv[1];
       if (!slug) fail(`usage: hands craft ${sub} <slug>`);
@@ -662,7 +694,7 @@ function cmdCraft(argv: string[]): void {
       const book = readRawMerged(files.book, stillPending, "book");
       const mise = readMiseMerged(store, files.slug);
       const skill = readRawMerged(files.skill, stillPending, "skill");
-      const { covers, distilled } = parseCraftHeader(book);
+      const { covers, distilled, focus } = parseCraftHeader(book);
       const distilledMs = distilled ? Date.parse(distilled) : Number.NaN;
       const staleness =
         !book && !mise && !skill
@@ -679,6 +711,7 @@ function cmdCraft(argv: string[]): void {
             craft: files.slug,
             scope: files.scope,
             covers,
+            focus,
             distilled,
             mise,
             skill,
@@ -722,7 +755,7 @@ function cmdCraft(argv: string[]): void {
     }
 
     fail(
-      "usage: hands craft <ls|ready|unready|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]",
+      "usage: hands craft <ls|ready|unready|focus|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]",
     );
   } finally {
     store.close();

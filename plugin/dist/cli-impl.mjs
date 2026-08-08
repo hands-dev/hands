@@ -25555,13 +25555,14 @@ function isRoleCraft(slug) {
   return ROLE_CRAFT_SLUGS.has(slug);
 }
 function parseCraftHeader(bookContent) {
-  if (!bookContent) return { covers: null, distilled: null, ready: null };
+  if (!bookContent) return { covers: null, distilled: null, ready: null, focus: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
   const readyMatch = READY_RE.exec(line);
   return {
     covers: COVERS_RE.exec(line)?.[1]?.trim() || null,
     distilled: DISTILLED_RE.exec(line)?.[1] ?? null,
-    ready: readyMatch ? { at: readyMatch[1], by: readyMatch[2] } : null
+    ready: readyMatch ? { at: readyMatch[1], by: readyMatch[2] } : null,
+    focus: FOCUS_RE.exec(line)?.[1]?.trim() || null
   };
 }
 function stampCraftReadiness(bookContent, ready) {
@@ -25573,6 +25574,17 @@ ${bookContent}` : bookContent;
   }
   const stripped = lines[idx].replace(READY_CLAUSE_RE, "");
   lines[idx] = ready ? `${stripped} \xB7 ready: ${ready.at} by ${ready.by}` : stripped;
+  return lines.join("\n");
+}
+function stampCraftFocus(bookContent, focus) {
+  const lines = bookContent.split("\n");
+  const idx = lines.findIndex((l) => l.trim().startsWith(">"));
+  if (idx === -1) {
+    return focus ? `> focus: ${focus}
+${bookContent}` : bookContent;
+  }
+  const stripped = lines[idx].replace(FOCUS_CLAUSE_RE, "");
+  lines[idx] = focus ? `${stripped} \xB7 focus: ${focus}` : stripped;
   return lines.join("\n");
 }
 function sweepHeldSeatHeader(bookContent) {
@@ -25997,7 +26009,7 @@ function buildFoldContext(store, craft, holder, env = process.env, cwd = process
     instructions: FOLD_INSTRUCTIONS
   };
 }
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, READY_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, EXPORT_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, READY_CLAUSE_RE, FOCUS_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, EXPORT_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -26006,7 +26018,9 @@ var init_crafts = __esm({
     COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
     DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
     READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
+    FOCUS_RE = /·\s*focus:\s*(.*?)\s*(?:·|$)/;
     READY_CLAUSE_RE = /\s*·\s*ready:\s*\S+\s+by\s+\S+/;
+    FOCUS_CLAUSE_RE = /\s*·\s*focus:\s*[^·]*/;
     HELD_SEAT_CLAUSE_RE = /·\s*last held:\s*(\S+)(?:\s+by\s+\S+)?/i;
     FOLD_READY_THRESHOLD = 3;
     WEEK_MS = 7 * 24 * 60 * 6e4;
@@ -54270,6 +54284,30 @@ ${distilledCount} book(s) distilled in the last 7 days.`);
       out2("  a synced Agent dispatch picks this up on the next `hands craft sync`; `hands craft brief --mode execute` works immediately.");
       return;
     }
+    if (sub === "focus") {
+      const slug = argv[1];
+      if (!slug) fail('usage: hands craft focus <slug> ["<text>" | --clear]');
+      const files = craftFiles(slug);
+      if (!fs28.existsSync(files.book)) {
+        fail(`unknown craft "${files.slug}" \u2014 no book found for it (\`hands craft ls\` for the roster)`);
+      }
+      const raw = fs28.readFileSync(files.book, "utf8");
+      const rest = argv.slice(2);
+      if (rest.length === 0) {
+        const { focus: focus2 } = parseCraftHeader(raw);
+        out2(focus2 ? `${files.slug}: ${focus2}` : `${files.slug}: no focus set`);
+        return;
+      }
+      if (rest[0] === "--clear") {
+        fs28.writeFileSync(files.book, stampCraftFocus(raw, null));
+        out2(`\u2714 "${files.slug}" focus cleared`);
+        return;
+      }
+      const focus = rest.join(" ").trim();
+      fs28.writeFileSync(files.book, stampCraftFocus(raw, focus));
+      out2(`\u2714 "${files.slug}" focus set: ${focus}`);
+      return;
+    }
     if (sub === "promote" || sub === "localize") {
       const slug = argv[1];
       if (!slug) fail(`usage: hands craft ${sub} <slug>`);
@@ -54442,7 +54480,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       const book = readRawMerged(files.book, stillPending, "book");
       const mise = readMiseMerged(store, files.slug);
       const skill = readRawMerged(files.skill, stillPending, "skill");
-      const { covers, distilled } = parseCraftHeader(book);
+      const { covers, distilled, focus } = parseCraftHeader(book);
       const distilledMs = distilled ? Date.parse(distilled) : Number.NaN;
       const staleness = !book && !mise && !skill ? "cold" : Number.isNaN(distilledMs) || Date.now() - distilledMs > 14 * 24 * 60 * 6e4 ? "stale" : "fresh";
       const siblings = listCrafts(store, cfg).filter((c) => c.slug !== files.slug).map((c) => ({ slug: c.slug, covers: c.covers }));
@@ -54452,6 +54490,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
             craft: files.slug,
             scope: files.scope,
             covers,
+            focus,
             distilled,
             mise,
             skill,
@@ -54489,7 +54528,7 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       return;
     }
     fail(
-      "usage: hands craft <ls|ready|unready|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]"
+      "usage: hands craft <ls|ready|unready|focus|sync|sweep-headers|promote|localize|distill|brief|mise|fold|fold-done> [<slug>]"
     );
   } finally {
     store.close();
