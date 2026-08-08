@@ -1,6 +1,6 @@
 ---
 name: last-call
-description: The expo-driven end-of-shift close-out (hands#118) — stand down every station, sweep mergeable dishes, distill every craft's pending notes, close the books with a digest note, and prep tomorrow's in-flight work so each station knows what to pick up. Use when the principal says /hands:last-call, "close out the shift", "end of day", "wrap it up", "call it a night", or is wrapping for the day and wants a clean stop rather than leaving things mid-air.
+description: The expo-driven end-of-shift close-out (hands#118) — stand down every station, sweep mergeable dishes, distill every craft's pending notes, distill your own role-state notes into the efficiency-of-the-pass page (hands#115), close the books with a digest note, and prep tomorrow's in-flight work so each station knows what to pick up. Use when the principal says /hands:last-call, "close out the shift", "end of day", "wrap it up", "call it a night", or is wrapping for the day and wants a clean stop rather than leaving things mid-air.
 ---
 
 # Last call — closing the kitchen for the day
@@ -18,7 +18,7 @@ overnight.
 `hands_send({ to: "*", wake: true, body: "Last call — wrap what you're on, park cleanly (stop
 pushing, no re-runs, no new work), then reply with one status line." })` — the same park-cleanly
 discipline as the utilization beat's stand-down (expo/SKILL.md §4), just deliberate rather than
-saturation-triggered. Wait for each station's status line before moving on — step 5 needs it.
+saturation-triggered. Wait for each station's status line before moving on — step 6 needs it.
 
 **Ask each station to attest before it stands down** (hands#157): *"…then run `/hands:ready` and
 tell me what it says."* This is the only moment in the day when every station is alive at once, so
@@ -27,14 +27,14 @@ morning; a station that attests clean and then sits offline is **still** clean a
 because nothing ran.
 
 A station that **declines** is a good outcome, not a failure — its reason is information only it
-has. Carry that into step 5 rather than pressing it to go green; a station that got clean by
+has. Carry that into step 6 rather than pressing it to go green; a station that got clean by
 discarding something has destroyed the one thing nobody else knew.
 
 ## 2. Merge sweep
 
 For every dish that's ready to ship, run the hands flow (expo/SKILL.md §5) — pull facts, pick
 review depth, merge per `merge.adminMergeLowRisk`. Don't force anything through a hard gate just
-because it's end of day; a dish that isn't ready stays open, carried into step 5.
+because it's end of day; a dish that isn't ready stays open, carried into step 6.
 
 ## 3. Craft distillation (hands#81/#96/#49/#118)
 
@@ -48,13 +48,32 @@ prose, discard restatements, keep the book ≤150 lines, remove the raw-notes se
 general-purpose agent per craft — either way, every craft with a backlog gets distilled before you
 close the books.
 
-## 4. Close the books
+## 4. Role-state distillation (hands#115)
+
+`hands_role_state()` — your own standing page (`journal/<project>/<handle>/roles/expo.md`) plus
+every `hands_role_note` you captured mid-shift, still pending. If there's nothing pending, skip to
+step 5 — this is not a ceremony to perform empty.
+
+Rewrite the page **in place** (Write tool, same discipline as a craft book fold): fold the pending
+notes into the existing curated text, don't just append. For EVERY existing line, not only the new
+notes, ask whether it still holds — a note about a problem that's since been fixed is worse than
+none, because it teaches a false constraint. Supersede rather than accrete when a new note
+contradicts an old one; cap the page around 50–100 lines. Then `hands_role_fold_done({ through })`
+with the highest note id you folded in.
+
+This is a genuinely different lifecycle from a dated digest page: a digest is "what happened this
+day," rendered once from events and never revisited; this page is "what's still true about how the
+pass moves," continuously revised. Don't let anyone "simplify" it back into a digest section —
+pruning a digest page would corrupt the historical record it exists to preserve; pruning this page
+is the whole point.
+
+## 5. Close the books
 
 `hands_digest_note` with the day's narrative (supersedes the lighter version in expo/SKILL.md
 §8) — what moved, what's blocked, what tomorrow opens with. This is the one thing every kitchen
 leaves behind for the next person — yourself tomorrow, or a collaborator — to read cold.
 
-## 5. Prep next day
+## 6. Prep next day
 
 For anything still in flight or blocked (including a dish that didn't clear step 2's merge
 sweep), leave it in a state a station can pick up on wake without you: `hands_task_update` with a
@@ -74,7 +93,7 @@ The server enforces this too: any ticket left `in_progress` by an offline statio
 automatically on the expo's next board read. This step is the deliberate version — do it with a
 status note attached, rather than letting the sweep do it silently with none.
 
-## 6. Report
+## 7. Report
 
 One summary line to the principal: dishes merged, crafts distilled, stations parked, anything
 carried to tomorrow.

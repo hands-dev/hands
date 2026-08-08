@@ -7301,6 +7301,24 @@ var init_store = __esm({
 
       CREATE INDEX IF NOT EXISTS idx_craft_notes_pending ON craft_notes (craft_slug, folded_at);
 
+      -- Role state (hands#115) \u2014 a role's own accumulated situational judgment against a stated
+      -- focus (the expo's is efficiency of the pass; a future sous/role craft would state its own).
+      -- Deliberately NOT the craft_notes mechanism above: a craft is dispatched from every
+      -- worktree concurrently and needs a DB source-of-truth with a single-writer lease-exported
+      -- git snapshot; a role is one identity with no concurrent-writer problem, so its curated page
+      -- is books-native (journal/<project>/<handle>/roles/<role>.md) and this table is purely the
+      -- pending-ingest queue ahead of that page, not a second source of truth for it.
+      CREATE TABLE IF NOT EXISTS role_notes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        role            TEXT NOT NULL,
+        source_agent    TEXT NOT NULL,
+        text            TEXT NOT NULL,
+        folded_at       INTEGER,           -- NULL = pending
+        created_at      INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_role_notes_pending ON role_notes (role, folded_at);
+
       CREATE TABLE IF NOT EXISTS craft_briefs (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         craft_slug   TEXT NOT NULL,
@@ -8472,6 +8490,31 @@ var init_store = __esm({
           () => this.db.prepare("UPDATE craft_notes SET folded_at = ? WHERE id = ? AND folded_at IS NULL").run(now, id)
         );
       }
+      // --- role state (hands#115) ---
+      /**
+       * Ingest a raw role-state note — cheap, mid-shift, the moment friction against the role's own
+       * focus is felt. Undistilled until a `/hands:last-call` fold pass reads it via `pendingRoleNotes`
+       * and rewrites the role's standing books page in place, same two-phase shape as craft notes but
+       * no lease (a role has exactly one writer, unlike a craft dispatched from every worktree).
+       */
+      recordRoleNote(input) {
+        const now = input.now ?? Date.now();
+        const id = this.withRetry(() => {
+          const result = this.db.prepare(`INSERT INTO role_notes (role, source_agent, text, created_at) VALUES (?, ?, ?, ?)`).run(input.role, input.sourceAgent, input.text, now);
+          return Number(result.lastInsertRowid);
+        });
+        this.journal("role.note", { id, role: input.role, by: input.sourceAgent, text: input.text, at: now });
+        return id;
+      }
+      pendingRoleNotes(role) {
+        return this.db.prepare("SELECT * FROM role_notes WHERE role = ? AND folded_at IS NULL ORDER BY id").all(role);
+      }
+      /** Fold-mark every pending note for a role up through `throughNoteId`, after its standing page has been rewritten to include them. */
+      markRoleNotesFolded(role, throughNoteId, now = Date.now()) {
+        this.withRetry(
+          () => this.db.prepare("UPDATE role_notes SET folded_at = ? WHERE role = ? AND id <= ? AND folded_at IS NULL").run(now, role, throughNoteId)
+        );
+      }
       /**
        * Acquire the single-writer fold lease for a craft — an expired (or absent) lease is free to
        * take; a live one held by someone else is refused. Not journaled: purely local coordination
@@ -8757,6 +8800,11 @@ var init_store = __esm({
                 `INSERT OR IGNORE INTO craft_notes (id, craft_slug, brief_id, source_agent, kind, body, spillover_craft, created_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
               ).run(f("id"), f("craft"), f("briefId"), f("by"), f("kind"), f("body"), f("spilloverCraft"), at)
+            );
+            return true;
+          case "role.note":
+            this.withRetry(
+              () => this.db.prepare(`INSERT OR IGNORE INTO role_notes (id, role, source_agent, text, created_at) VALUES (?, ?, ?, ?, ?)`).run(f("id"), f("role"), f("by"), f("text"), at)
             );
             return true;
           default:
@@ -36054,6 +36102,29 @@ function readPreviousPage(opts) {
   }
   return readJournal({ date: previous, env: opts?.env, cwd: opts?.cwd, maxBytes: opts?.maxBytes });
 }
+function readRoleState(role, opts) {
+  const journal = openJournal({ env: opts?.env, cwd: opts?.cwd });
+  if (!journal) {
+    return { ok: false, reason: "no books configured (remote.url) and no local origin" };
+  }
+  const relPath = path17.join("journal", journal.project, journal.handle, "roles", `${role}.md`);
+  const file2 = path17.join(journal.dir, relPath);
+  try {
+    const text = fs17.readFileSync(file2, "utf8");
+    return { ok: true, role, relPath, file: file2, text };
+  } catch {
+    const mirror = mirrorHealth(journal.dir, journal.url);
+    return {
+      ok: mirror.problem === null,
+      reason: mirror.problem ?? "no standing page yet for this role \u2014 never distilled",
+      role,
+      relPath,
+      file: file2,
+      text: "",
+      mirror
+    };
+  }
+}
 
 // src/server.ts
 init_attest();
@@ -37015,6 +37086,71 @@ ${input.body ?? ""}`, [agentId, assignee]);
         store.touch(agentId);
         const result = input.previous ? readPreviousPage({ cwd: process.cwd() }) : readJournal({ date: input.date, limit: input.limit, cwd: process.cwd() });
         return asToolResult(result);
+      }
+    );
+    server.registerTool(
+      "hands_role_note",
+      {
+        title: "Capture a raw role-state note (expo only, hands#115)",
+        description: "Record a raw, undistilled observation about how the PASS is moving \u2014 not what happened (the digest already records that), not a bug (file an issue), a design opinion (todo), or a decision (escalate) \u2014 specifically a constraint or friction point that would help a FUTURE session decide differently at the same moment. Cheap and mid-shift: one sentence, the instant you notice it. Stays pending until a `/hands:last-call` fold pass reads it back (`hands_role_state`) and distills it into the role's standing page \u2014 an append-only pile nobody re-reads is the failure mode this two-phase shape exists to avoid. No-op guidance: requires remote journaling (config remote.url), same as hands_digest_note \u2014 a note that can never reach a shared standing page isn't worth the write.",
+        inputSchema: {
+          text: external_exports3.string().min(1).max(1e3),
+          role: external_exports3.string().optional().describe('defaults to "expo" \u2014 the mechanism generalizes to a future role')
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+      },
+      async (input) => {
+        store.touch(agentId);
+        if (!cfg.remote.url?.trim()) {
+          return {
+            ...asToolResult({ ok: false, error: "remote journaling is not configured (remote.url)" }),
+            isError: true
+          };
+        }
+        const role = input.role ?? "expo";
+        const id = store.recordRoleNote({ role, sourceAgent: agentId, text: input.text });
+        return asToolResult({ ok: true, id, role });
+      }
+    );
+    server.registerTool(
+      "hands_role_state",
+      {
+        title: "Read a role's standing page + pending notes (expo only, hands#115)",
+        description: "Read-only, local \u2014 never blocks on the network. Returns the role's curated standing page (`journal/<project>/<handle>/roles/<role>.md` \u2014 accumulated judgment against the role's own focus, distilled over time, NOT a dated digest) plus every `hands_role_note` still pending a fold. Two uses: at `/hands:line-check`, read the page alone for the resume brief. At `/hands:last-call`, read both, rewrite the page in place yourself (Write tool, same as folding a craft book \u2014 prune what no longer holds, don't just append) to include the pending notes, then call `hands_role_fold_done` with the highest note id you folded in.",
+        inputSchema: {
+          role: external_exports3.string().optional().describe('defaults to "expo"')
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
+      },
+      async (input) => {
+        store.touch(agentId);
+        const role = input.role ?? "expo";
+        const page = readRoleState(role, { cwd: process.cwd() });
+        const pending = store.pendingRoleNotes(role).map((n) => ({
+          id: n.id,
+          by: n.source_agent,
+          text: n.text,
+          at: new Date(n.created_at).toISOString()
+        }));
+        return asToolResult({ ...page, pending });
+      }
+    );
+    server.registerTool(
+      "hands_role_fold_done",
+      {
+        title: "Mark role-state notes folded after rewriting the standing page (expo only, hands#115)",
+        description: "Call after you've rewritten the role's standing page in place to include the notes `hands_role_state` returned as pending. Marks every note up through `through` (inclusive) as folded so the next `hands_role_state` read doesn't hand them back to you again.",
+        inputSchema: {
+          through: external_exports3.number().int().describe("the highest role-note id you folded in"),
+          role: external_exports3.string().optional().describe('defaults to "expo"')
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+      },
+      async (input) => {
+        store.touch(agentId);
+        const role = input.role ?? "expo";
+        store.markRoleNotesFolded(role, input.through);
+        return asToolResult({ ok: true, role, through: input.through });
       }
     );
     server.registerTool(

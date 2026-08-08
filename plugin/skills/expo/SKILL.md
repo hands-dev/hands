@@ -497,6 +497,24 @@ today's page in the books — the first thing anyone browsing the day reads. Whe
 shared, skim the other kitchens' pages occasionally — that's how hubs keep a read on each other.
 Skip notes on uneventful days; never spend station wakes on prose.
 
+## 9. Notice friction against the pass, say so immediately (hands#115)
+
+Different from §8's daily narrative, and different from an issue or a todo. The moment the PASS
+itself moves badly — a gate that misfired, a signal that misled, an avoidable round-trip, a merge
+serialized for no real reason — `hands_role_note({ text: "<one sentence>" })`. Cheap and immediate,
+the same bar as a digest note: don't wait for end of day to write it down, and don't wait for a
+pattern to repeat before flagging the first instance — the lesson is what a FUTURE session needs to
+decide differently at the same moment, and it's exactly as findable a week from now as it is right
+now, so capture it the instant it's felt rather than trusting you'll remember at `/hands:last-call`.
+
+The bar for what qualifies: would a future session, reading only this note, make a different and
+better decision at the same moment? If yes, it's a role-state note. If it's "what happened" (the
+day's digest already covers that), a bug (file an issue), or a design opinion (a todo), it isn't —
+don't let this become a second diary.
+
+You don't distill or read it back yourself mid-shift — `/hands:last-call` folds pending notes into
+your standing page, and `/hands:line-check` reads that page back at the start of the next one.
+
 ## Heartbeat, pacing & compaction
 
 - The **Monitor is the wake signal** — bus traffic reaches you in sub-seconds. The `/loop` timer

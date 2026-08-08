@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { isoDay, mirrorHealth, readJournal, readPreviousPage } from "../src/journal-read.js";
+import { isoDay, mirrorHealth, readJournal, readPreviousPage, readRoleState } from "../src/journal-read.js";
 import { resetProjectCache } from "../src/remote.js";
 import { resetRepoInfoCache } from "../src/paths.js";
 
@@ -118,6 +118,35 @@ describe("readPreviousPage — the shift-start read", () => {
     const res = readPreviousPage({ today: "2026-08-07", cwd: repo, env });
     expect(res.ok).toBe(false);
     expect(res.reason).toContain("first shift");
+  });
+});
+
+describe("readRoleState — the standing page, NOT a dated digest (hands#115)", () => {
+  it("reads a role's curated page back by its own known path, not a date lookup", () => {
+    const dir = path.join(booksDir(), "journal", "demo", "demo", "roles");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "expo.md"), "# expo · role state\n\n- a curated line\n");
+    const res = readRoleState("expo", { cwd: repo, env });
+    expect(res.ok).toBe(true);
+    expect(res.relPath).toBe(path.join("journal", "demo", "demo", "roles", "expo.md"));
+    expect(res.text).toContain("a curated line");
+  });
+
+  it("reports ok:true with empty text — not a failure — when never distilled yet", () => {
+    // no roles/ dir at all: a genuinely first-ever read, distinct from a broken mirror
+    const res = readRoleState("expo", { cwd: repo, env });
+    expect(res.ok).toBe(true);
+    expect(res.text).toBe("");
+    expect(res.reason).toContain("never distilled");
+  });
+
+  it("is scoped per role — a different role's page never leaks into this one's read", () => {
+    const dir = path.join(booksDir(), "journal", "demo", "demo", "roles");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "sous.md"), "# sous's own page\n");
+    const res = readRoleState("expo", { cwd: repo, env });
+    expect(res.text).toBe(""); // expo.md doesn't exist even though sous.md does
+    expect(res.text).not.toContain("sous");
   });
 });
 
