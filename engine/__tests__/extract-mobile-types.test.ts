@@ -31,10 +31,12 @@ describe("extractMobileTypes", () => {
   });
 
   it("is self-contained TypeScript — every referenced type name is declared in the same output", () => {
-    // the real regression this guards: a .d.ts with a dangling type reference
-    // compiles "clean" under tsc's lenient ambient-declaration handling, so
-    // this checks it as a normal module instead (see engine/scripts/
-    // extract-interfaces.mjs's header for why extractInterfaces exists at all)
+    // hands#217: extractClosure derives this set by walking references from
+    // MobileSnapshot, so a dangling reference should now be structurally
+    // impossible rather than something that could silently drift — this is
+    // the belt-and-suspenders check on that guarantee. extract-interfaces.
+    // test.ts covers the underlying mechanism (and the .d.ts-vs-.ts tsc
+    // distinction that made the original bug invisible) directly.
     tmpFile = path.join(os.tmpdir(), `extract-mobile-types-selfcontained-${Date.now()}.ts`);
     fs.writeFileSync(tmpFile, extractMobileTypes());
     expect(() => fs.readFileSync(tmpFile!, "utf8")).not.toThrow();
