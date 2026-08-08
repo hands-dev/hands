@@ -39,7 +39,7 @@ import {
 import { formatRosterContext, listCrafts, roleCraftFoldNudges } from "./crafts.js";
 import { currentMenu, listRecipes } from "./recipes.js";
 import { type MessageRow, Store } from "./store.js";
-import { inboxMonitorAlive } from "./watchers.js";
+import { inboxMonitorAlive as inboxMonitorAliveReal } from "./watchers.js";
 import { readJournal, readPreviousPage } from "./journal-read.js";
 import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { listStations } from "./provision.js";
@@ -96,8 +96,20 @@ export function craftRosterContext(
   return formatRosterContext(roster, cwd, rate, now);
 }
 
-export function buildServer(store: Store, agentId: string, config?: HandsConfig): McpServer {
+export function buildServer(
+  store: Store,
+  agentId: string,
+  config?: HandsConfig,
+  // Injectable for tests (hands#105) — the real scanner spawns/reads real OS processes, which is
+  // exactly right for the ONE dedicated integration suite that proves it (watchers.test.ts) but
+  // wrong for a test that only needs "assume the monitor is alive" to isolate an unrelated code
+  // path. Real-process scans are inherently racy under the heavy concurrent process churn a full
+  // suite run creates; a test whose actual subject is warning-composition logic, not the scanner
+  // itself, should not inherit that flakiness. Defaults to the real scanner everywhere else.
+  deps: { inboxMonitorAlive?: (stationId: string, notifyPath: string) => boolean | null } = {},
+): McpServer {
   const cfg = config ?? loadConfig();
+  const checkMonitorAlive = deps.inboxMonitorAlive ?? inboxMonitorAliveReal;
   const principal = cfg.principal.name;
   // Resolve a recipient ref: canonical/legacy ids pass through; anything else
   // tries the focus-label lookup ("developer API" → station-2). Label matches
@@ -463,7 +475,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
           // nothing to do — it simply never wakes again. null = couldn't look,
           // which must not read as fine.
           // hands#202 — anchored to p.id's resolved path, never a bare substring.
-          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id, notifyPath(p.id)) : undefined,
+          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? checkMonitorAlive(p.id, notifyPath(p.id)) : undefined,
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -737,7 +749,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
         // the write itself; this additionally checks whether a Monitor is
         // even armed on sous.notify, so "sous.enabled but nobody ran
         // /loop /hands:sous" surfaces loudly instead of reading as delivered.
-        if (inboxMonitorAlive("sous", notifyPath("sous")) === false) {
+        if (checkMonitorAlive("sous", notifyPath("sous")) === false) {
           sousWarning =
             "sous.enabled is true but no inbox monitor is tailing sous.notify — this escalation was " +
             "recorded but nothing is running /loop /hands:sous to see it";
@@ -981,7 +993,7 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
       const monitorDead =
         isStation(assignee) &&
         (assigneePeer?.alive ?? true) &&
-        inboxMonitorAlive(assignee, notifyPath(assignee)) === false;
+        checkMonitorAlive(assignee, notifyPath(assignee)) === false;
       const monitorWarning = monitorDead
         ? `${assignee}'s inbox monitor is dead — it cannot be woken until its next pass (self-heal on the fallback ` +
           "heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a " +
