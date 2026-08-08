@@ -7276,7 +7276,7 @@ var init_store = __esm({
       CREATE TABLE IF NOT EXISTS task_signoffs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id     INTEGER NOT NULL,
-        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-return | pre-ship
+        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship | pre-return (hands#111/#112)
         verdict     TEXT NOT NULL,      -- approved | rejected
         note        TEXT,
         origin_sha  TEXT,               -- origin/main HEAD at signoff time \u2014 the staleness anchor
@@ -36580,7 +36580,7 @@ ${input.body}`, [agentId, ...recipients]);
       description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved), 'pre-return' (dispatched by the station before it may return the ticket: is THIS ticket's actual result still right \u2014 neither pre-fire nor pre-ship re-checks a ticket's own diff at the moment it's done), or 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A ticket needs a fresh 'approved' pre-return signoff before hands_task_update will let a station mark it 'returned', and a dish's tickets need a fresh 'approved' pre-ship signoff before hands_task_update will let the expo mark them 'done' (hands#111/#112 \u2014 code-enforced, not just this reminder) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh before you get there. Caller gate: the expo may record any checkpoint; a station may record 'pre-return' only, and only for a task it owns \u2014 never pre-fire/pre-ship, and never a signoff on someone else's ticket.",
       inputSchema: {
         taskId: external_exports3.number().int(),
-        checkpoint: external_exports3.enum(["pre-fire", "pre-return", "pre-ship"]),
+        checkpoint: external_exports3.enum(["pre-fire", "pre-ship", "pre-return"]),
         verdict: external_exports3.enum(["approved", "rejected"]),
         note: external_exports3.string().optional(),
         originSha: external_exports3.string().optional().describe("origin/main HEAD at the moment CDC judged \u2014 the staleness anchor; omit if unavailable")
