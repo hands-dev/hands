@@ -16,14 +16,14 @@
  *   hands craft sweep-headers  drop retired "last held: DATE by AGENT" ownership clauses (hands#167)
  *   hands craft promote <s>    move a personal craft to the repo-shared tier
  *   hands craft localize <s>   move a shared craft back to the personal tier
- *   hands craft distill [<s>]  list a craft's unfolded book/skill notes (mise already applies
- *                              itself immediately on harvest — nothing to distill there)
+ *   hands craft distill [<s>]  list a craft's unfolded book/skill notes (mise is mechanical,
+ *                              rebuilt from the DB on every export — nothing to distill there)
  *   hands craft brief <s>      dispatch: open a brief, print the chit (for a general-purpose Agent)
  *                              [--ticket <id>] names the tasks.id it's for, for the dashboard
  *                              [--mode execute] only if the craft is marked ready (hands craft ready)
  *   hands craft mise <id>      a craft sub-agent's first call: prints its book/mise/skill as JSON
  *   hands craft fold <s>       acquire the fold lease, print pending notes to distill (this also
- *                              catches up any mise notes that missed their immediate write)
+ *                              exports any pending mise/book/skill notes to disk first)
  *   hands craft fold-done <s>  release the lease, mark notes folded (--through <noteId>)
  *   hands recipe ls            every recipe — state, rank, criteria progress (hands#96/#137)
  *   hands recipe new <s>       draft a stub — the principal (or /hands:recipe) fills it in
@@ -100,13 +100,15 @@ import {
   composeChit,
   craftAgentPath,
   craftKnown,
+  exportPendingCraftNotes,
   FOLD_READY_THRESHOLD,
   isRoleCraft,
   listCrafts,
   materializeCraftAgents,
   nearestCraftSlugs,
   parseCraftHeader,
-  readCraftFileCapped,
+  readMiseMerged,
+  readRawMerged,
   stampCraftReadiness,
   sweepHeldSeatHeader,
 } from "./crafts.js";
@@ -645,9 +647,15 @@ function cmdCraft(argv: string[]): void {
       if (!brief) fail(`no such brief: #${briefId}`);
       store.markCraftBriefPickedUp(briefId);
       const files = craftFiles(brief!.craft_slug);
-      const book = readCraftFileCapped(files.book);
-      const mise = readCraftFileCapped(files.mise);
-      const skill = readCraftFileCapped(files.skill);
+      // hands#114/#223 storage fix: best-effort courtesy export first (keeps the git-committed
+      // file caught up for browsability), then read book/mise/skill MERGED with whatever's still
+      // pending — the DB is truth, so this response is always complete regardless of whether the
+      // export above actually landed (lease contention just means this round skipped it).
+      exportPendingCraftNotes(store, files, `mise-read:${process.pid}`);
+      const stillPending = store.pendingCraftNotes(files.slug);
+      const book = readRawMerged(files.book, stillPending, "book");
+      const mise = readMiseMerged(store, files.slug);
+      const skill = readRawMerged(files.skill, stillPending, "skill");
       const { covers, distilled } = parseCraftHeader(book);
       const distilledMs = distilled ? Date.parse(distilled) : Number.NaN;
       const staleness =
@@ -689,9 +697,10 @@ function cmdCraft(argv: string[]): void {
       const slug = argv[1];
       if (!slug) fail("usage: hands craft fold <slug>");
       const files = craftFiles(slug!);
-      const got = store.acquireCraftFoldLease(files.slug, resolveAgentId());
+      const holder = resolveAgentId();
+      const got = store.acquireCraftFoldLease(files.slug, holder);
       if (!got) fail(`fold lease for "${files.slug}" is held by someone else right now — try again shortly`);
-      out(JSON.stringify(buildFoldContext(store, slug!), null, 2));
+      out(JSON.stringify(buildFoldContext(store, slug!, holder), null, 2));
       return;
     }
 

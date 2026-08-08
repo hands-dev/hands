@@ -22962,6 +22962,19 @@ var init_store = __esm({
         return this.db.prepare("SELECT * FROM craft_notes WHERE craft_slug = ? ORDER BY id DESC LIMIT ?").all(craftSlug, limit);
       }
       /**
+       * Every mise-kind note ever inserted for a craft, oldest first, folded or not (hands#114/#223's
+       * storage fix) — mise.md's content is a PURE FUNCTION of this list (replay each body through
+       * upsertMiseLine), not an incrementally-appended file: a mise note is marked folded the instant
+       * it's mechanically applied, so `pendingCraftNotes` alone can't reconstruct the full file once
+       * anything has been applied at least once. Replaying the FULL history from empty is what makes
+       * mise.md reconstructible identically from any worktree, regardless of which one happened to
+       * apply which note first — the actual fix for divergent per-worktree exports, not just "don't
+       * lose data still pending."
+       */
+      allMiseCraftNotes(craftSlug) {
+        return this.db.prepare("SELECT * FROM craft_notes WHERE craft_slug = ? AND kind = 'mise' ORDER BY id").all(craftSlug);
+      }
+      /**
        * Every craft slug carrying at least one pending note — independent of whether a book file
        * exists yet on disk (a craft can accumulate notes before it's ever founded with a file), so
        * doctor's backlog check doesn't miss a craft just because listCrafts()'s file-based roster
@@ -25428,12 +25441,14 @@ function readFileSafe2(p) {
     return null;
   }
 }
-function readCraftFileCapped(p, cap = 6e3) {
-  const body = readFileSafe2(p);
-  if (!body) return null;
-  const points = Array.from(body);
-  return points.length <= cap ? body : `${points.slice(0, cap).join("")}
+function capText(text, cap = 6e3) {
+  if (!text) return null;
+  const points = Array.from(text);
+  return points.length <= cap ? text : `${points.slice(0, cap).join("")}
 \u2026(truncated \u2014 trim this file)`;
+}
+function readCraftFileCapped(p, cap = 6e3) {
+  return capText(readFileSafe2(p), cap);
 }
 function listSlugsIn(dir) {
   if (!dir) return [];
@@ -25745,6 +25760,19 @@ ${line}
 ${line}
 `;
 }
+function stripRawSection(text) {
+  if (!text) return "";
+  const idx = text.indexOf(RAW_NOTES_HEADING);
+  return (idx === -1 ? text : text.slice(0, idx)).replace(/\s+$/, "");
+}
+function rebuildRawSection(currentFileContent, pendingForTarget) {
+  const prefix = stripRawSection(currentFileContent);
+  if (pendingForTarget.length === 0) return prefix ? `${prefix}
+` : "";
+  let text = prefix || null;
+  for (const note of pendingForTarget) text = appendRawNote(text, formatRawTaggedLine(note));
+  return text ?? "";
+}
 function formatRawTaggedLine(note) {
   if (note.kind === "book") return `[book] ${note.body}`;
   if (note.kind === "friction") return `[friction] ${note.body}`;
@@ -25752,40 +25780,56 @@ function formatRawTaggedLine(note) {
   if (note.kind === "spillover") return `[spillover \xB7 from ${note.spillover_craft ?? "unknown"}] ${note.body}`;
   return note.body;
 }
-function applyImmediateCraftNote(store, files, note, holder) {
-  if (note.kind === "mise") {
-    const leaseKey = `${files.slug}:mise`;
-    if (!store.acquireCraftFoldLease(leaseKey, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
+function forTarget(pending, target) {
+  return pending.filter((n) => n.kind !== "mise" && n.kind === "skill" === (target === "skill"));
+}
+function exportPendingCraftNotes(store, files, holder) {
+  let touched = 0;
+  const miseLease = `${files.slug}:mise`;
+  if (store.acquireCraftFoldLease(miseLease, holder, EXPORT_LEASE_TTL_MS)) {
     try {
-      fs15.mkdirSync(files.dir, { recursive: true });
-      fs15.writeFileSync(files.mise, upsertMiseLine(readFileSafe2(files.mise), note.body));
-      store.markCraftNoteFolded(note.id);
-      return true;
+      const allMise = store.allMiseCraftNotes(files.slug);
+      const newlyUnfolded = allMise.filter((n) => !n.folded_at);
+      if (newlyUnfolded.length > 0) {
+        let text = null;
+        for (const note of allMise) text = upsertMiseLine(text, note.body);
+        fs15.mkdirSync(files.dir, { recursive: true });
+        fs15.writeFileSync(files.mise, text ?? "");
+        for (const note of newlyUnfolded) store.markCraftNoteFolded(note.id);
+        touched += newlyUnfolded.length;
+      }
     } finally {
-      store.releaseCraftFoldLease(leaseKey, holder);
+      store.releaseCraftFoldLease(miseLease, holder);
     }
   }
-  const target = note.kind === "skill" ? files.skill : files.book;
-  if (!store.acquireCraftFoldLease(files.slug, holder, IMMEDIATE_WRITE_LEASE_TTL_MS)) return false;
-  try {
-    fs15.mkdirSync(files.dir, { recursive: true });
-    fs15.writeFileSync(target, appendRawNote(readFileSafe2(target), formatRawTaggedLine(note)));
-    return true;
-  } finally {
-    store.releaseCraftFoldLease(files.slug, holder);
+  if (store.acquireCraftFoldLease(files.slug, holder, EXPORT_LEASE_TTL_MS)) {
+    try {
+      const pending = store.pendingCraftNotes(files.slug);
+      for (const [path28, target] of [[files.book, "book"], [files.skill, "skill"]]) {
+        const relevant = forTarget(pending, target);
+        if (relevant.length === 0) continue;
+        fs15.mkdirSync(files.dir, { recursive: true });
+        fs15.writeFileSync(path28, rebuildRawSection(readFileSafe2(path28), relevant));
+        touched += relevant.length;
+      }
+    } finally {
+      store.releaseCraftFoldLease(files.slug, holder);
+    }
   }
+  return touched;
 }
-function applyPendingMiseNotes(store, files, holder) {
-  const pending = store.pendingCraftNotes(files.slug).filter((n) => n.kind === "mise");
-  let applied = 0;
-  for (const note of pending) {
-    if (applyImmediateCraftNote(store, files, note, holder)) applied++;
-  }
-  return applied;
+function readMiseMerged(store, slug, cap = 6e3) {
+  let text = null;
+  for (const note of store.allMiseCraftNotes(slug)) text = upsertMiseLine(text, note.body);
+  return capText(text, cap);
 }
-function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) {
+function readRawMerged(path28, pending, target, cap = 6e3) {
+  const rebuilt = rebuildRawSection(readFileSafe2(path28), forTarget(pending, target));
+  return capText(rebuilt || null, cap);
+}
+function buildFoldContext(store, craft, holder, env = process.env, cwd = process.cwd()) {
   const files = craftFiles(craft, env, cwd);
-  applyPendingMiseNotes(store, files, `fold-catchup:${process.pid}`);
+  exportPendingCraftNotes(store, files, holder);
   const pending = store.pendingCraftNotes(files.slug);
   return {
     craftSlug: files.slug,
@@ -25807,7 +25851,7 @@ function buildFoldContext(store, craft, env = process.env, cwd = process.cwd()) 
     instructions: FOLD_INSTRUCTIONS
   };
 }
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, READY_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, READY_CLAUSE_RE, HELD_SEAT_CLAUSE_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, EXPORT_LEASE_TTL_MS, FOLD_INSTRUCTIONS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -25825,7 +25869,7 @@ var init_crafts = __esm({
     SPILLOVER_RE = /^spillover\(([a-z0-9._-]+)\):\s*(.+)$/i;
     MISE_KEY_DELIM_RE = /\s(?:—|->|→)\s|:\s/;
     RAW_NOTES_HEADING = "## Raw notes (unfolded)";
-    IMMEDIATE_WRITE_LEASE_TTL_MS = 15e3;
+    EXPORT_LEASE_TTL_MS = 15e3;
     FOLD_INSTRUCTIONS = "Distill: rewrite the book/skill IN PLACE from the pending notes below plus what's already there \u2014 never append. The book/skill text you were given already contains a `## Raw notes (unfolded)` section (the same entries listed in pendingNotes below) \u2014 fold them into the curated prose above, then remove that section entirely as part of your rewrite. Placement rule: a sequence of steps is SKILL; a decision, a why, or a fact is BOOK. (mise.md maintains itself automatically now \u2014 nothing to do there unless correcting something wrong.) Discard notes that merely restate what's already written \u2014 that discard step is what keeps a craft from turning into a growing log instead of a distillation. Keep the book \u2264150 lines. Stamp the header when done: `> covers: <domains> \xB7 distilled: <today> from <n> learnings`. Then run `hands craft fold-done <craft> --through <n>` with the same throughNoteId this printed.";
   }
 });
@@ -51405,7 +51449,6 @@ function runPublish(store, opts) {
 
 // src/subagent-stop.ts
 init_crafts();
-init_remote();
 import * as fs16 from "node:fs";
 function totalOutputTokens(transcriptPath) {
   let raw;
@@ -51466,15 +51509,14 @@ function assistantText(transcriptPath) {
   }
   return chunks.join("\n");
 }
-function harvestCraftNote(store, transcriptPath, now, env, cwd) {
+function harvestCraftNote(store, transcriptPath, now) {
   const parsed = parseCraftNoteBlock(assistantText(transcriptPath));
   if (!parsed) return null;
   let entriesHarvested = 0;
   if (parsed.craftSlug) {
-    const holder = `harvest:${process.pid}`;
     for (const entry of parsed.entries) {
       const targetSlug = entry.kind === "spillover" && entry.spilloverCraft ? entry.spilloverCraft : parsed.craftSlug;
-      const id = store.insertCraftNote({
+      store.insertCraftNote({
         craftSlug: targetSlug,
         briefId: parsed.briefId,
         sourceAgent: `subagent:${parsed.craftSlug}`,
@@ -51484,11 +51526,6 @@ function harvestCraftNote(store, transcriptPath, now, env, cwd) {
         now
       });
       entriesHarvested++;
-      try {
-        const row = store.getCraftNote(id);
-        if (row) applyImmediateCraftNote(store, craftFiles(targetSlug, env, cwd), row, holder);
-      } catch {
-      }
     }
   }
   if (parsed.briefId !== null) {
@@ -51506,13 +51543,7 @@ function runSubagentStop(store, opts) {
   const agentType = meta3.agentType ?? opts.agentType ?? null;
   let craftNote = null;
   try {
-    craftNote = harvestCraftNote(
-      store,
-      opts.agentTranscriptPath,
-      now,
-      opts.env ?? process.env,
-      opts.cwd ?? process.cwd()
-    );
+    craftNote = harvestCraftNote(store, opts.agentTranscriptPath, now);
   } catch {
   }
   if (outputTokens === null) {
@@ -54139,9 +54170,11 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       if (!brief) fail(`no such brief: #${briefId}`);
       store.markCraftBriefPickedUp(briefId);
       const files = craftFiles(brief.craft_slug);
-      const book = readCraftFileCapped(files.book);
-      const mise = readCraftFileCapped(files.mise);
-      const skill = readCraftFileCapped(files.skill);
+      exportPendingCraftNotes(store, files, `mise-read:${process.pid}`);
+      const stillPending = store.pendingCraftNotes(files.slug);
+      const book = readRawMerged(files.book, stillPending, "book");
+      const mise = readMiseMerged(store, files.slug);
+      const skill = readRawMerged(files.skill, stillPending, "skill");
       const { covers, distilled } = parseCraftHeader(book);
       const distilledMs = distilled ? Date.parse(distilled) : Number.NaN;
       const staleness = !book && !mise && !skill ? "cold" : Number.isNaN(distilledMs) || Date.now() - distilledMs > 14 * 24 * 60 * 6e4 ? "stale" : "fresh";
@@ -54172,9 +54205,10 @@ ${slug} \u2014 ${pending.length} pending note(s):`);
       const slug = argv[1];
       if (!slug) fail("usage: hands craft fold <slug>");
       const files = craftFiles(slug);
-      const got = store.acquireCraftFoldLease(files.slug, resolveAgentId());
+      const holder = resolveAgentId();
+      const got = store.acquireCraftFoldLease(files.slug, holder);
       if (!got) fail(`fold lease for "${files.slug}" is held by someone else right now \u2014 try again shortly`);
-      out2(JSON.stringify(buildFoldContext(store, slug), null, 2));
+      out2(JSON.stringify(buildFoldContext(store, slug, holder), null, 2));
       return;
     }
     if (sub === "fold-done") {
