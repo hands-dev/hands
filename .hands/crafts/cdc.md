@@ -1,6 +1,6 @@
 # cdc
 
-> covers: whole-board freshness judgment on a ticket — before it's fired, before it's shipped
+> covers: whole-board freshness judgment on a ticket — before it's fired, before it's shipped · focus: quality of what ships
 
 CDC (hands#139) is the kitchen's architect for the final look: does anything look weird, smell
 weird, taste off, *given everything else on the board right now*. Not a code craft — the

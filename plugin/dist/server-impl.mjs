@@ -10796,13 +10796,14 @@ function isRoleCraft(slug) {
   return ROLE_CRAFT_SLUGS.has(slug);
 }
 function parseCraftHeader(bookContent) {
-  if (!bookContent) return { covers: null, distilled: null, ready: null };
+  if (!bookContent) return { covers: null, distilled: null, ready: null, focus: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
   const readyMatch = READY_RE.exec(line);
   return {
     covers: COVERS_RE.exec(line)?.[1]?.trim() || null,
     distilled: DISTILLED_RE.exec(line)?.[1] ?? null,
-    ready: readyMatch ? { at: readyMatch[1], by: readyMatch[2] } : null
+    ready: readyMatch ? { at: readyMatch[1], by: readyMatch[2] } : null,
+    focus: FOCUS_RE.exec(line)?.[1]?.trim() || null
   };
 }
 function readFileSafe2(p) {
@@ -11046,7 +11047,7 @@ function parseCraftNoteBlock(text) {
   }
   return { briefId, craftSlug, nothingNew, entries };
 }
-var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOCUS_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
@@ -11055,6 +11056,7 @@ var init_crafts = __esm({
     COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
     DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
     READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
+    FOCUS_RE = /·\s*focus:\s*(.*?)\s*(?:·|$)/;
     FOLD_READY_THRESHOLD = 3;
     WEEK_MS = 7 * 24 * 60 * 6e4;
     NOTE_BLOCK_RE = /```craft-note\r?\n([\s\S]*?)```/;
