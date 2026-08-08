@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 
@@ -24,10 +23,25 @@ import * as path from "node:path";
  * result carries how it was obtained, and `unsupported` is a distinct outcome
  * from "looked and found nothing" — conflating them is how #152 got a clean
  * bill of health while broken.
+ *
+ * macOS gets `unsupported` unconditionally (hands#100/#206). This used to run
+ * `lsof -a -c claude -d cwd`, which walks the whole process table to filter by
+ * name and triggered a real macOS TCC privacy prompt (Photos/Documents/etc.)
+ * on some machines — `hands doctor` was asking people to grant the terminal
+ * app broad access just to run a health check. A `-p <pid>`-scoped lsof call
+ * (candidates from `pgrep -x claude`, which is pure process-table metadata and
+ * never touches a file descriptor) measured clean against the TCC subsystem
+ * log in testing — no REQUEST/AUTHREQ/GRANT activity, vs. the whole-table scan
+ * this replaced. But that's one observation on one machine, not proof for
+ * every account and OS version, and the fix here is deliberately the
+ * conservative side of that uncertainty: a broken check beats conditioning
+ * someone into clicking through privacy dialogs for a terminal tool. See
+ * `doctor.ts`'s "sessions" check — `unsupported` there is a `warn`, not a
+ * silent pass, so this degrades loudly rather than invisibly.
  */
 
 /** How the scan was performed — `unsupported` means we could not look at all. */
-export type ScanMethod = "proc" | "lsof" | "unsupported";
+export type ScanMethod = "proc" | "unsupported";
 
 export interface ClaudeSession {
   pid: number;
@@ -91,38 +105,15 @@ function scanViaProc(): SessionScan {
   return { method: "proc", sessions };
 }
 
-/**
- * macOS: `lsof` yields the cwd. The environment is NOT read here — `ps eww`
- * only exposes env for your own processes on some versions and is a footgun to
- * rely on, so `handsId` stays null and identity-mismatch detection degrades to
- * "cannot determine" rather than guessing wrong.
- */
-function scanViaLsof(): SessionScan {
-  let out: string;
-  try {
-    out = execFileSync("lsof", ["-a", "-c", "claude", "-d", "cwd", "-Fpn"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 10_000,
-    });
-  } catch {
-    return { method: "unsupported", sessions: [], reason: "lsof unavailable or returned no output" };
-  }
-  const sessions: ClaudeSession[] = [];
-  let pid: number | null = null;
-  for (const line of out.split("\n")) {
-    if (line.startsWith("p")) pid = Number(line.slice(1)) || null;
-    else if (line.startsWith("n") && pid !== null) {
-      sessions.push({ pid, cwd: line.slice(1), handsId: null });
-      pid = null;
-    }
-  }
-  return { method: "lsof", sessions };
-}
-
 export function scanClaudeSessions(platform: NodeJS.Platform = process.platform): SessionScan {
   if (platform === "linux") return scanViaProc();
-  if (platform === "darwin") return scanViaLsof();
+  if (platform === "darwin") {
+    return {
+      method: "unsupported",
+      sessions: [],
+      reason: "session inspection on macOS risks a TCC privacy prompt (hands#206) — see sessions.ts",
+    };
+  }
   return {
     method: "unsupported",
     sessions: [],

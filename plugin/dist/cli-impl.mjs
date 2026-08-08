@@ -40270,7 +40270,7 @@ var init_init = __esm({
 init_config();
 init_identity();
 init_paths();
-import { execFileSync as execFileSync13, spawnSync as spawnSync2 } from "node:child_process";
+import { execFileSync as execFileSync12, spawnSync as spawnSync2 } from "node:child_process";
 import * as os15 from "node:os";
 
 // src/server.ts
@@ -51757,7 +51757,7 @@ function idleMs(cwd, now = Date.now(), home) {
 
 // src/doctor.ts
 init_config();
-import { execFileSync as execFileSync11 } from "node:child_process";
+import { execFileSync as execFileSync10 } from "node:child_process";
 import * as fs25 from "node:fs";
 import * as path24 from "node:path";
 init_paths();
@@ -51767,7 +51767,6 @@ init_remote();
 init_seed_permissions();
 
 // src/sessions.ts
-import { execFileSync as execFileSync10 } from "node:child_process";
 import * as fs24 from "node:fs";
 import * as path23 from "node:path";
 function isClaudeProcess(pid) {
@@ -51811,31 +51810,15 @@ function scanViaProc() {
   }
   return { method: "proc", sessions };
 }
-function scanViaLsof() {
-  let out3;
-  try {
-    out3 = execFileSync10("lsof", ["-a", "-c", "claude", "-d", "cwd", "-Fpn"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1e4
-    });
-  } catch {
-    return { method: "unsupported", sessions: [], reason: "lsof unavailable or returned no output" };
-  }
-  const sessions = [];
-  let pid = null;
-  for (const line of out3.split("\n")) {
-    if (line.startsWith("p")) pid = Number(line.slice(1)) || null;
-    else if (line.startsWith("n") && pid !== null) {
-      sessions.push({ pid, cwd: line.slice(1), handsId: null });
-      pid = null;
-    }
-  }
-  return { method: "lsof", sessions };
-}
 function scanClaudeSessions(platform = process.platform) {
   if (platform === "linux") return scanViaProc();
-  if (platform === "darwin") return scanViaLsof();
+  if (platform === "darwin") {
+    return {
+      method: "unsupported",
+      sessions: [],
+      reason: "session inspection on macOS risks a TCC privacy prompt (hands#206) \u2014 see sessions.ts"
+    };
+  }
   return {
     method: "unsupported",
     sessions: [],
@@ -51905,7 +51888,7 @@ function isProcessAlive(pid) {
 }
 function gitHead(cwd) {
   try {
-    return execFileSync11("git", ["rev-parse", "HEAD"], {
+    return execFileSync10("git", ["rev-parse", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -52276,7 +52259,7 @@ init_watchers();
 init_attest();
 
 // src/version.ts
-import { execFileSync as execFileSync12 } from "node:child_process";
+import { execFileSync as execFileSync11 } from "node:child_process";
 import * as fs26 from "node:fs";
 import * as os13 from "node:os";
 import * as path25 from "node:path";
@@ -52307,7 +52290,7 @@ function readStamp(dir) {
 }
 function gitShort(cwd) {
   try {
-    return execFileSync12("git", ["rev-parse", "--short", "HEAD"], {
+    return execFileSync11("git", ["rev-parse", "--short", "HEAD"], {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
@@ -52629,14 +52612,14 @@ ${distilledCount} book(s) distilled in the last 7 days.`);
       materializeCraftAgents(cfg, info.repoRoot, process.env, info.repoRoot);
       if (sub === "promote") {
         try {
-          execFileSync13("git", ["add", ...moved.map((m) => path27.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
+          execFileSync12("git", ["add", ...moved.map((m) => path27.join(shared, m))], { cwd: info.repoRoot, stdio: "ignore" });
         } catch {
         }
         out2(`\u2714 "${files.slug}" promoted to shared \u2014 staged at ${shared}, not committed`);
         out2(`  next: git commit -m "craft: promote ${files.slug} to shared" && open a PR`);
       } else {
         try {
-          execFileSync13("git", ["rm", "--cached", "-q", ...moved.map((m) => path27.join(shared, m))], {
+          execFileSync12("git", ["rm", "--cached", "-q", ...moved.map((m) => path27.join(shared, m))], {
             cwd: info.repoRoot,
             stdio: "ignore"
           });
