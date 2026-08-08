@@ -21769,7 +21769,7 @@ var init_store = __esm({
       CREATE TABLE IF NOT EXISTS task_signoffs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id     INTEGER NOT NULL,
-        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship
+        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship | pre-return (hands#111)
         verdict     TEXT NOT NULL,      -- approved | rejected
         note        TEXT,
         origin_sha  TEXT,               -- origin/main HEAD at signoff time \u2014 the staleness anchor
@@ -52142,10 +52142,10 @@ ${input.body}`, [agentId, ...recipients]);
     "hands_craft_signoff",
     {
       title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
-      description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved) or 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before hands_task_update will let you mark them 'done' (hands#111 \u2014 code-enforced, not just this reminder) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh before you get there.",
+      description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved), 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight), or 'pre-return' (a station-side checkpoint reserved for a future gate, hands#111 \u2014 not enforced anywhere yet; don't use it until that ships). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before hands_task_update will let you mark them 'done' (hands#111 \u2014 code-enforced, not just this reminder) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh before you get there.",
       inputSchema: {
         taskId: external_exports3.number().int(),
-        checkpoint: external_exports3.enum(["pre-fire", "pre-ship"]),
+        checkpoint: external_exports3.enum(["pre-fire", "pre-ship", "pre-return"]),
         verdict: external_exports3.enum(["approved", "rejected"]),
         note: external_exports3.string().optional(),
         originSha: external_exports3.string().optional().describe("origin/main HEAD at the moment CDC judged \u2014 the staleness anchor; omit if unavailable")

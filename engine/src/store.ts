@@ -169,8 +169,14 @@ export interface Obligation {
 export interface TaskSignoffRow {
   id: number;
   task_id: number;
-  /** pre-fire (before the expo hands the ticket to a station) | pre-ship (before the expo may call hands) */
-  checkpoint: "pre-fire" | "pre-ship";
+  /**
+   * pre-fire (before the expo hands the ticket to a station) | pre-ship (before the expo may call
+   * hands on the dish) | pre-return (hands#111 — added for a future station-side gate, not yet
+   * enforced anywhere: judges one ticket's actual returned result against the board at the moment
+   * a station finishes, a coverage gap neither pre-fire (judges the draft) nor pre-ship (judges the
+   * whole dish at merge) re-checks).
+   */
+  checkpoint: "pre-fire" | "pre-ship" | "pre-return";
   verdict: "approved" | "rejected";
   note: string | null;
   /** origin/main HEAD at signoff time — null if the caller didn't have one (non-git context) */
@@ -540,7 +546,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS task_signoffs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id     INTEGER NOT NULL,
-        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship
+        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship | pre-return (hands#111)
         verdict     TEXT NOT NULL,      -- approved | rejected
         note        TEXT,
         origin_sha  TEXT,               -- origin/main HEAD at signoff time — the staleness anchor
@@ -1362,7 +1368,7 @@ export class Store {
 
   recordSignoff(input: {
     taskId: number;
-    checkpoint: "pre-fire" | "pre-ship";
+    checkpoint: "pre-fire" | "pre-ship" | "pre-return";
     verdict: "approved" | "rejected";
     note?: string | null;
     originSha?: string | null;
@@ -1400,7 +1406,7 @@ export class Store {
   }
 
   /** The most recent sign-off for a task, optionally scoped to one checkpoint. */
-  latestSignoff(taskId: number, checkpoint?: "pre-fire" | "pre-ship"): TaskSignoffRow | undefined {
+  latestSignoff(taskId: number, checkpoint?: "pre-fire" | "pre-ship" | "pre-return"): TaskSignoffRow | undefined {
     const clause = checkpoint ? "AND checkpoint = ?" : "";
     const params = checkpoint ? [taskId, checkpoint] : [taskId];
     return this.db
