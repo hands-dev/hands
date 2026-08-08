@@ -108,7 +108,10 @@ five is the mark, and the mark is the legend.
 |------|------|
 | Wordmark | Archivo 700 |
 | Display & UI | Archivo |
+| Serif (sparing) | Zilla Slab 700, hero/display moments only |
 | Code, data, labels | JetBrains Mono |
+
+Serif is a deliberate exception, not a second default — reach for it, don't drift into it.
 
 ---
 
