@@ -243,6 +243,18 @@ export interface CraftNoteRow {
   created_at: number;
 }
 
+/** One raw, undistilled role-state note (hands#115) — see `Store.recordRoleNote`. */
+export interface RoleNoteRow {
+  id: number;
+  /** "expo" today; the mechanism generalizes to a future sous or other role */
+  role: string;
+  source_agent: string;
+  text: string;
+  /** NULL = pending a fold at /hands:last-call; set once distilled into the role's standing page */
+  folded_at: number | null;
+  created_at: number;
+}
+
 export interface CraftBriefRow {
   id: number;
   craft_slug: string;
@@ -580,6 +592,24 @@ export class Store {
       );
 
       CREATE INDEX IF NOT EXISTS idx_craft_notes_pending ON craft_notes (craft_slug, folded_at);
+
+      -- Role state (hands#115) — a role's own accumulated situational judgment against a stated
+      -- focus (the expo's is efficiency of the pass; a future sous/role craft would state its own).
+      -- Deliberately NOT the craft_notes mechanism above: a craft is dispatched from every
+      -- worktree concurrently and needs a DB source-of-truth with a single-writer lease-exported
+      -- git snapshot; a role is one identity with no concurrent-writer problem, so its curated page
+      -- is books-native (journal/<project>/<handle>/roles/<role>.md) and this table is purely the
+      -- pending-ingest queue ahead of that page, not a second source of truth for it.
+      CREATE TABLE IF NOT EXISTS role_notes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        role            TEXT NOT NULL,
+        source_agent    TEXT NOT NULL,
+        text            TEXT NOT NULL,
+        folded_at       INTEGER,           -- NULL = pending
+        created_at      INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_role_notes_pending ON role_notes (role, folded_at);
 
       CREATE TABLE IF NOT EXISTS craft_briefs (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -2157,6 +2187,41 @@ export class Store {
     );
   }
 
+  // --- role state (hands#115) ---
+
+  /**
+   * Ingest a raw role-state note — cheap, mid-shift, the moment friction against the role's own
+   * focus is felt. Undistilled until a `/hands:last-call` fold pass reads it via `pendingRoleNotes`
+   * and rewrites the role's standing books page in place, same two-phase shape as craft notes but
+   * no lease (a role has exactly one writer, unlike a craft dispatched from every worktree).
+   */
+  recordRoleNote(input: { role: string; sourceAgent: string; text: string; now?: number }): number {
+    const now = input.now ?? Date.now();
+    const id = this.withRetry(() => {
+      const result = this.db
+        .prepare(`INSERT INTO role_notes (role, source_agent, text, created_at) VALUES (?, ?, ?, ?)`)
+        .run(input.role, input.sourceAgent, input.text, now);
+      return Number(result.lastInsertRowid);
+    });
+    this.journal("role.note", { id, role: input.role, by: input.sourceAgent, text: input.text, at: now });
+    return id;
+  }
+
+  pendingRoleNotes(role: string): RoleNoteRow[] {
+    return this.db
+      .prepare("SELECT * FROM role_notes WHERE role = ? AND folded_at IS NULL ORDER BY id")
+      .all(role) as unknown as RoleNoteRow[];
+  }
+
+  /** Fold-mark every pending note for a role up through `throughNoteId`, after its standing page has been rewritten to include them. */
+  markRoleNotesFolded(role: string, throughNoteId: number, now = Date.now()): void {
+    this.withRetry(() =>
+      this.db
+        .prepare("UPDATE role_notes SET folded_at = ? WHERE role = ? AND id <= ? AND folded_at IS NULL")
+        .run(now, role, throughNoteId),
+    );
+  }
+
   /**
    * Acquire the single-writer fold lease for a craft — an expired (or absent) lease is free to
    * take; a live one held by someone else is refused. Not journaled: purely local coordination
@@ -2541,6 +2606,13 @@ export class Store {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
             )
             .run(f("id"), f("craft"), f("briefId"), f("by"), f("kind"), f("body"), f("spilloverCraft"), at),
+        );
+        return true;
+      case "role.note":
+        this.withRetry(() =>
+          this.db
+            .prepare(`INSERT OR IGNORE INTO role_notes (id, role, source_agent, text, created_at) VALUES (?, ?, ?, ?, ?)`)
+            .run(f("id"), f("role"), f("by"), f("text"), at),
         );
         return true;
       default:

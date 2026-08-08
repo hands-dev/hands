@@ -1,6 +1,6 @@
 ---
 name: line-check
-description: The expo-driven shift-open (hands#156/#157) — read the previous shift's page from the books, bring the expo's OWN checkout current, see which stations are ready for service, and re-confirm today's menu against what actually happened. The counterpart to /hands:last-call. Use when the principal says /hands:line-check, "open the kitchen", "start of shift", "what happened yesterday", or on the first pass of a new day before dispatching anything.
+description: The expo-driven shift-open (hands#156/#157) — read the previous shift's page from the books, read your own standing role-state page (hands#115), bring the expo's OWN checkout current, see which stations are ready for service, and re-confirm today's menu against what actually happened. The counterpart to /hands:last-call. Use when the principal says /hands:line-check, "open the kitchen", "start of shift", "what happened yesterday", or on the first pass of a new day before dispatching anything.
 ---
 
 # Line check — opening the kitchen
@@ -34,6 +34,12 @@ branch it wasn't true of, while the status board sat disputed for an hour.
 
 If it reports a **mirror problem** (diverged, behind, no upstream), say so plainly and stop
 relying on the books until it's fixed — a journal you cannot read is not a handoff.
+
+**Also read your own standing state** (hands#115): `hands_role_state()`. This is NOT the same read
+as the previous day's page above — that's the narrative of what happened; this is your own
+accumulated judgment about how the pass moves, distilled and pruned over many shifts, not scoped
+to yesterday. Skim it before dispatching anything; it's short by construction (kept to ~50–100
+lines at each `/hands:last-call` fold) so this costs little.
 
 ## 2. Bring your OWN checkout current
 

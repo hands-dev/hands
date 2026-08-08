@@ -266,3 +266,54 @@ export function readPreviousPage(opts?: {
   }
   return readJournal({ date: previous, env: opts?.env, cwd: opts?.cwd, maxBytes: opts?.maxBytes });
 }
+
+export interface RoleStateResult {
+  ok: boolean;
+  /** why nothing could be read — books unconfigured, mirror problem, etc. Absent alongside ok:true with empty text just means "never distilled yet." */
+  reason?: string;
+  role?: string;
+  /** `journal/<project>/<handle>/roles/<role>.md` */
+  relPath?: string;
+  /** absolute path — a fold pass rewrites this file in place directly (Write tool), same as a craft book fold */
+  file?: string;
+  /** "" when the page has never been distilled — not itself a failure */
+  text?: string;
+  mirror?: MirrorHealth;
+}
+
+/**
+ * A role's own standing, curated page (hands#115) — NOT a dated digest. Deliberately outside
+ * `regenerateDigests`' deterministic re-render: a digest page is "what happened this day," rebuilt
+ * from raw events and never revisited; a role's page is "current accumulated judgment," distilled
+ * and pruned in place at `/hands:last-call`. Rendering it from events the way digests are would
+ * make pruning impossible — you cannot re-derive "this is no longer true" from the historical fact
+ * that it was once written. Riding the same `journal/<project>/<handle>/` tree it does mean the
+ * existing `syncPush`/`syncPull` staging (which stages that whole directory, not just dated files)
+ * carries this page for free — no separate sync path to build or maintain.
+ */
+export function readRoleState(role: string, opts?: { env?: NodeJS.ProcessEnv; cwd?: string }): RoleStateResult {
+  const journal = openJournal({ env: opts?.env, cwd: opts?.cwd });
+  if (!journal) {
+    return { ok: false, reason: "no books configured (remote.url) and no local origin" };
+  }
+  const relPath = path.join("journal", journal.project, journal.handle, "roles", `${role}.md`);
+  const file = path.join(journal.dir, relPath);
+  try {
+    const text = fs.readFileSync(file, "utf8");
+    return { ok: true, role, relPath, file, text };
+  } catch {
+    // Missing has two different causes, same trap readJournal already guards against: a
+    // genuinely first-ever distillation, or a mirror that can't see a page that exists on
+    // origin. Only the second is actually bad news.
+    const mirror = mirrorHealth(journal.dir, journal.url);
+    return {
+      ok: mirror.problem === null,
+      reason: mirror.problem ?? "no standing page yet for this role — never distilled",
+      role,
+      relPath,
+      file,
+      text: "",
+      mirror,
+    };
+  }
+}

@@ -332,6 +332,47 @@ describe("Store.recordSignoff / latestSignoff / signoffsForTask (hands#139/#91/#
   });
 });
 
+describe("Store.recordRoleNote / pendingRoleNotes / markRoleNotesFolded (hands#115)", () => {
+  it("records a note and reads it back as pending", () => {
+    const store = open();
+    const id = store.recordRoleNote({ role: "expo", sourceAgent: "expo", text: "gates re-attest on every merge", now: 1000 });
+    expect(id).toBeGreaterThan(0);
+    const pending = store.pendingRoleNotes("expo");
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ role: "expo", source_agent: "expo", text: "gates re-attest on every merge", folded_at: null });
+    store.close();
+  });
+
+  it("is scoped per role — a different role's notes never leak into this one's pending list", () => {
+    const store = open();
+    store.recordRoleNote({ role: "expo", sourceAgent: "expo", text: "expo's own note", now: 1000 });
+    store.recordRoleNote({ role: "sous", sourceAgent: "sous", text: "sous's own note", now: 1000 });
+    expect(store.pendingRoleNotes("expo")).toHaveLength(1);
+    expect(store.pendingRoleNotes("expo")[0]?.text).toBe("expo's own note");
+    store.close();
+  });
+
+  it("markRoleNotesFolded through a cutoff clears exactly those, leaving later ones pending", () => {
+    const store = open();
+    const a = store.recordRoleNote({ role: "expo", sourceAgent: "expo", text: "first", now: 1000 });
+    store.recordRoleNote({ role: "expo", sourceAgent: "expo", text: "second", now: 2000 });
+    store.markRoleNotesFolded("expo", a);
+    const pending = store.pendingRoleNotes("expo");
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.text).toBe("second");
+    store.close();
+  });
+
+  it("folding is idempotent — re-marking an already-folded note through the same cutoff is a no-op, not an error", () => {
+    const store = open();
+    const a = store.recordRoleNote({ role: "expo", sourceAgent: "expo", text: "only note", now: 1000 });
+    store.markRoleNotesFolded("expo", a);
+    expect(() => store.markRoleNotesFolded("expo", a)).not.toThrow();
+    expect(store.pendingRoleNotes("expo")).toHaveLength(0);
+    store.close();
+  });
+});
+
 describe("isSignoffStale (hands#139/#91/#95)", () => {
   it("is fresh when the origin sha matches what was captured at signoff time", () => {
     expect(isSignoffStale({ origin_sha: "abc" }, "abc")).toBe(false);

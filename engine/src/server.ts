@@ -40,7 +40,7 @@ import { formatRosterContext, listCrafts, roleCraftFoldNudges } from "./crafts.j
 import { currentMenu, listRecipes } from "./recipes.js";
 import { isSignoffStale, type MessageRow, Store, type TaskRow } from "./store.js";
 import { inboxMonitorAlive as inboxMonitorAliveReal } from "./watchers.js";
-import { readJournal, readPreviousPage } from "./journal-read.js";
+import { readJournal, readPreviousPage, readRoleState } from "./journal-read.js";
 import { attestationValid, currentWorktreeFacts } from "./attest.js";
 import { listStations } from "./provision.js";
 import { activity, computeCollisions } from "./snapshot.js";
@@ -1463,6 +1463,94 @@ export function buildServer(
         // A missing page is a fact, not a failure — "first shift" and "books
         // unconfigured" are both normal states a caller should read and move on from.
         return asToolResult(result);
+      },
+    );
+
+    server.registerTool(
+      "hands_role_note",
+      {
+        title: "Capture a raw role-state note (expo only, hands#115)",
+        description:
+          "Record a raw, undistilled observation about how the PASS is moving — not what happened " +
+          "(the digest already records that), not a bug (file an issue), a design opinion (todo), " +
+          "or a decision (escalate) — specifically a constraint or friction point that would help a " +
+          "FUTURE session decide differently at the same moment. Cheap and mid-shift: one sentence, " +
+          "the instant you notice it. Stays pending until a `/hands:last-call` fold pass reads it " +
+          "back (`hands_role_state`) and distills it into the role's standing page — an append-only " +
+          "pile nobody re-reads is the failure mode this two-phase shape exists to avoid. No-op " +
+          "guidance: requires remote journaling (config remote.url), same as hands_digest_note — a " +
+          "note that can never reach a shared standing page isn't worth the write.",
+        inputSchema: {
+          text: z.string().min(1).max(1000),
+          role: z.string().optional().describe('defaults to "expo" — the mechanism generalizes to a future role'),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        if (!cfg.remote.url?.trim()) {
+          return {
+            ...asToolResult({ ok: false, error: "remote journaling is not configured (remote.url)" }),
+            isError: true,
+          };
+        }
+        const role = input.role ?? "expo";
+        const id = store.recordRoleNote({ role, sourceAgent: agentId, text: input.text });
+        return asToolResult({ ok: true, id, role });
+      },
+    );
+
+    server.registerTool(
+      "hands_role_state",
+      {
+        title: "Read a role's standing page + pending notes (expo only, hands#115)",
+        description:
+          "Read-only, local — never blocks on the network. Returns the role's curated standing " +
+          "page (`journal/<project>/<handle>/roles/<role>.md` — accumulated judgment against the " +
+          "role's own focus, distilled over time, NOT a dated digest) plus every `hands_role_note` " +
+          "still pending a fold. Two uses: at `/hands:line-check`, read the page alone for the " +
+          "resume brief. At `/hands:last-call`, read both, rewrite the page in place yourself " +
+          "(Write tool, same as folding a craft book — prune what no longer holds, don't just " +
+          "append) to include the pending notes, then call `hands_role_fold_done` with the highest " +
+          "note id you folded in.",
+        inputSchema: {
+          role: z.string().optional().describe('defaults to "expo"'),
+        },
+        annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        const role = input.role ?? "expo";
+        const page = readRoleState(role, { cwd: process.cwd() });
+        const pending = store.pendingRoleNotes(role).map((n) => ({
+          id: n.id,
+          by: n.source_agent,
+          text: n.text,
+          at: new Date(n.created_at).toISOString(),
+        }));
+        return asToolResult({ ...page, pending });
+      },
+    );
+
+    server.registerTool(
+      "hands_role_fold_done",
+      {
+        title: "Mark role-state notes folded after rewriting the standing page (expo only, hands#115)",
+        description:
+          "Call after you've rewritten the role's standing page in place to include the notes " +
+          "`hands_role_state` returned as pending. Marks every note up through `through` (inclusive) " +
+          "as folded so the next `hands_role_state` read doesn't hand them back to you again.",
+        inputSchema: {
+          through: z.number().int().describe("the highest role-note id you folded in"),
+          role: z.string().optional().describe('defaults to "expo"'),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      },
+      async (input) => {
+        store.touch(agentId);
+        const role = input.role ?? "expo";
+        store.markRoleNotesFolded(role, input.through);
+        return asToolResult({ ok: true, role, through: input.through });
       },
     );
 
