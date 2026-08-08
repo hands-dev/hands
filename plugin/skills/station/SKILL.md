@@ -118,6 +118,19 @@ chatty behavior is visible.
      false "no trace."
    - **Freshly assigned** (`state: "assigned"`): `hands_task_update({ id, state: "in_progress" })`,
      do it **fully in your workspace**.
+   - **Before you return it — the pre-return CDC gate (hands#112), code-enforced, not a
+     reminder.** `hands_task_update({ state: "returned" })` refuses without a fresh, approved CDC
+     pre-return sign-off for THAT ticket: `hands craft brief cdc --mode plan --task "pre-return:
+     <ticket + your result>"`, paste the chit into a general-purpose Agent (CDC is a role craft —
+     `hands craft ls`'s roster doesn't list it), then record its verdict yourself —
+     `hands_craft_signoff({ taskId, checkpoint: "pre-return", verdict, note, originSha })`; you may
+     record this one (ownership-gated: only for a ticket you hold, never someone else's).
+     `rejected` → revise against CDC's stated reason and re-dispatch once; still rejected, or the
+     reason is genuinely ambiguous → `hands_ask` the expo rather than looping — **never self-skip
+     to get unstuck without escalating first.** Genuinely trivial ticket (typo, one-liner) → skip
+     the dispatch and pass `skipSignoff: "<reason>"` on the same `hands_task_update` call instead —
+     recorded in the journal, never silent, and a materially cheaper bar than a full CDC dispatch,
+     so use it rather than treating every return as worth the round-trip.
    - Either way, finish with
      `hands_task_update({ id, state: "returned", result: "<the plan / findings / done + summary>" })`.
    The `result` is your report — the expo reads it at the pass without being woken. Plans and

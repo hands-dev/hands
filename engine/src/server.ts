@@ -802,18 +802,21 @@ export function buildServer(
   server.registerTool(
     "hands_craft_signoff",
     {
-      title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
+      title: "Record CDC's verdict for a ticket (hands#139/#91/#95/#112)",
       description:
         "Record CDC's whole-board checkpoint verdict for a ticket — 'pre-fire' (dispatched before " +
         "handing the ticket to a station: is this still the right build given how the board moved), " +
-        "'pre-ship' (dispatched before you may call hands on the dish: still right given everything " +
-        "that moved while it was in flight), or 'pre-return' (a station-side checkpoint reserved for " +
-        "a future gate, hands#111 — not enforced anywhere yet; don't use it until that ships). CDC " +
-        "returns its verdict as text from its own dispatch; you record it here — CDC never calls " +
-        "this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before " +
-        "hands_task_update will let you mark them 'done' (hands#111 — code-enforced, not just this " +
-        "reminder) — see hands_tasks' `signoff` field for whether the most recent one is still fresh " +
-        "before you get there.",
+        "'pre-return' (dispatched by the station before it may return the ticket: is THIS ticket's " +
+        "actual result still right — neither pre-fire nor pre-ship re-checks a ticket's own diff at " +
+        "the moment it's done), or 'pre-ship' (dispatched before you may call hands on the dish: still " +
+        "right given everything that moved while it was in flight). CDC returns its verdict as text " +
+        "from its own dispatch; you record it here — CDC never calls this itself. A ticket needs a " +
+        "fresh 'approved' pre-return signoff before hands_task_update will let a station mark it " +
+        "'returned', and a dish's tickets need a fresh 'approved' pre-ship signoff before hands_task_update " +
+        "will let the expo mark them 'done' (hands#111/#112 — code-enforced, not just this reminder) — " +
+        "see hands_tasks' `signoff` field for whether the most recent one is still fresh before you get " +
+        "there. Caller gate: the expo may record any checkpoint; a station may record 'pre-return' only, " +
+        "and only for a task it owns — never pre-fire/pre-ship, and never a signoff on someone else's ticket.",
       inputSchema: {
         taskId: z.number().int(),
         checkpoint: z.enum(["pre-fire", "pre-ship", "pre-return"]),
@@ -828,14 +831,20 @@ export function buildServer(
     },
     async (input) => {
       store.touch(agentId);
-      if (!isExpo(agentId)) {
-        return {
-          ...asToolResult({ ok: false, error: "Only the expo records a CDC signoff — it's the one running the dispatch." }),
-          isError: true,
-        };
-      }
       const task = store.getTask(input.taskId);
       if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
+      // hands#112: ownership, not role, is the boundary — a station may
+      // record pre-return for a task it owns (the checkpoint exists FOR a
+      // station's own returned work), but pre-fire/pre-ship stay
+      // expo-exclusive (whole-dish/board judgment, not a single ticket's).
+      const ownsPreReturn = input.checkpoint === "pre-return" && task.assignee === agentId;
+      if (!isExpo(agentId) && !ownsPreReturn) {
+        const reason =
+          input.checkpoint !== "pre-return"
+            ? `Only the expo records a '${input.checkpoint}' signoff — it's the one running that dispatch.`
+            : `You may only record 'pre-return' for a task you own — task #${input.taskId} is assigned to ${task.assignee ?? "nobody"}.`;
+        return { ...asToolResult({ ok: false, error: reason }), isError: true };
+      }
       const id = store.recordSignoff({
         taskId: input.taskId,
         checkpoint: input.checkpoint,
@@ -1064,10 +1073,11 @@ export function buildServer(
             priority: t.priority_ref ?? undefined,
             dish: t.dish ?? undefined,
             updatedAt: new Date(t.updated_at).toISOString(),
-            // hands#139/#91/#95 — the most recent CDC checkpoint verdict, if
-            // any. `originSha` is the staleness anchor: compare against the
+            // hands#139/#91/#95/#112 — the most recent CDC checkpoint
+            // verdict (any of pre-fire/pre-return/pre-ship), if any.
+            // `originSha` is the staleness anchor: compare against the
             // CURRENT origin/main HEAD yourself before trusting an
-            // "approved" pre-ship signoff — a stale one is not a signoff.
+            // "approved" signoff — a stale one is not a signoff.
             signoff: signoff
               ? {
                   checkpoint: signoff.checkpoint,
@@ -1133,6 +1143,52 @@ export function buildServer(
     return null;
   }
 
+  /**
+   * hands#112: the pre-return gate — the per-ticket counterpart to
+   * preShipSignoffProblem above. pre-fire judges the DRAFT before any work
+   * happens; pre-ship judges the whole DISH right before merge; neither
+   * re-checks a single ticket's actual returned result against the board at
+   * the moment a station finishes it. Same staleness detector, same shape of
+   * refusal (names the ticket, what's wrong, the exact commands to fix it) —
+   * deliberately identical structure to preShipSignoffProblem, just scoped
+   * to one ticket instead of a dish and dispatched by the station that owns
+   * it instead of the expo.
+   */
+  function preReturnSignoffProblem(t: TaskRow): string | null {
+    const howTo =
+      `dispatch CDC: \`hands craft brief cdc --mode plan --task "pre-return: ${t.title}"\`, then record its verdict — ` +
+      `\`hands_craft_signoff({ taskId: ${t.id}, checkpoint: "pre-return", verdict, note, originSha })\`. To return anyway ` +
+      "(trivial ticket, or CDC genuinely unavailable), pass `skipSignoff` with a reason on this call — recorded, never silent.";
+
+    const signoff = store.latestSignoff(t.id, "pre-return");
+    if (!signoff) return `task #${t.id} has no pre-return CDC sign-off — ${howTo}`;
+    if (signoff.verdict !== "approved") {
+      return (
+        `task #${t.id}'s latest pre-return sign-off was REJECTED` +
+        (signoff.note ? ` — ${signoff.note}` : "") +
+        `. Revise and get a fresh approved sign-off, or ${howTo}`
+      );
+    }
+
+    const currentOriginSha = getCurrentOriginSha();
+    const collisionAgents = store.listPeers(Date.now()).map((p) => {
+      const a = activity(p.activity);
+      return { id: p.id, online: p.online, files: a.files, ticket: a.ticket };
+    });
+    const hasNewCollision =
+      t.assignee != null &&
+      computeCollisions(collisionAgents).some(
+        (c) => c.kind === "file" && (c.a === t.assignee || c.b === t.assignee),
+      );
+    if (isSignoffStale(signoff, currentOriginSha, hasNewCollision)) {
+      const reason = hasNewCollision
+        ? `a live collision now involves ${t.assignee}`
+        : `origin/main has moved since it was judged (signed off against ${signoff.origin_sha}, HEAD is now ${currentOriginSha})`;
+      return `task #${t.id}'s pre-return sign-off is stale — ${reason}. Get a fresh one: ${howTo}`;
+    }
+    return null;
+  }
+
   server.registerTool(
     "hands_task_update",
     {
@@ -1140,9 +1196,10 @@ export function buildServer(
       description:
         "Move a ticket through its lifecycle. Station: 'in_progress' when you fire it (claims an unassigned one), " +
         "'returned' with result when you plate it back to the pass. Expo: 'done' to serve/accept, 'cancelled' to 86 it. " +
-        "'done' requires a fresh, approved CDC pre-ship sign-off (hands#111/#139) — code-enforced, refuses otherwise. " +
-        "Pass `skipSignoff` with a reason to ship without one (trivial dish, CDC genuinely unavailable) — recorded in " +
-        "the journal, never silent.",
+        "'returned' requires a fresh, approved CDC pre-return sign-off for THIS ticket (hands#112) — code-enforced. " +
+        "'done' requires a fresh, approved CDC pre-ship sign-off for the dish (hands#111/#139) — also code-enforced. " +
+        "Pass `skipSignoff` with a reason to proceed without one (trivial ticket/dish, CDC genuinely unavailable) — " +
+        "recorded in the journal, never silent.",
       inputSchema: {
         id: z.number().int(),
         state: z.enum(["in_progress", "returned", "done", "cancelled"]),
@@ -1150,7 +1207,9 @@ export function buildServer(
         skipSignoff: z
           .string()
           .optional()
-          .describe("explicit reason to mark 'done' without a fresh CDC pre-ship sign-off — recorded, never silent"),
+          .describe(
+            "explicit reason to proceed (return or ship) without a fresh CDC sign-off at that checkpoint — recorded, never silent",
+          ),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -1158,16 +1217,17 @@ export function buildServer(
       store.touch(agentId);
       const task = store.getTask(input.id);
       if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
-      if (input.state === "done") {
+      if (input.state === "done" || input.state === "returned") {
         if (input.skipSignoff) {
+          const checkpoint = input.state === "done" ? "pre-ship" : "pre-return";
           store.journalAdd({
             agentId,
             kind: "note",
             ref: `task:${input.id}`,
-            text: `CDC pre-ship sign-off overridden for task #${input.id} — ${input.skipSignoff}`,
+            text: `CDC ${checkpoint} sign-off overridden for task #${input.id} — ${input.skipSignoff}`,
           });
         } else {
-          const problem = preShipSignoffProblem(task);
+          const problem = input.state === "done" ? preShipSignoffProblem(task) : preReturnSignoffProblem(task);
           if (problem) return { ...asToolResult({ ok: false, error: problem }), isError: true };
         }
       }

@@ -113,7 +113,15 @@ describe("strict-hub topology (server-enforced)", () => {
     const w1 = await connect("station-1", DEFAULT_CONFIG);
     const start = await call(w1, "hands_task_update", { id: 1, state: "in_progress" });
     expect(start.isError).toBe(false);
-    const ret = await call(w1, "hands_task_update", { id: 1, state: "returned", result: "plan" });
+    // skipSignoff sidesteps the unrelated hands#112 pre-return CDC gate —
+    // this test is about topology permission, not signoff gating (see
+    // pre-return-gate.test.ts for that).
+    const ret = await call(w1, "hands_task_update", {
+      id: 1,
+      state: "returned",
+      result: "plan",
+      skipSignoff: "topology test, not exercising the CDC gate",
+    });
     expect(ret.isError).toBe(false);
   });
 

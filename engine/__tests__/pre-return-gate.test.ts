@@ -14,7 +14,7 @@ let stores: Store[];
 let cleanups: Array<() => Promise<void>>;
 
 beforeEach(() => {
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-preship-"));
+  home = fs.mkdtempSync(path.join(os.tmpdir(), "hands-prereturn-"));
   env = { HANDS_HOME: home };
   process.env.HANDS_HOME = home;
   process.env.HANDS_TEST_HOME = home;
@@ -32,12 +32,15 @@ afterEach(async () => {
   fs.rmSync(home, { recursive: true, force: true });
 });
 
-/** currentOriginSha injected as "HEAD" throughout — deterministic, no real git repo needed (hands#111). */
-async function connectExpo(currentOriginSha: string | null = "HEAD"): Promise<{ client: Client; store: Store }> {
+/** currentOriginSha injected as "HEAD" throughout — deterministic, no real git repo needed (hands#111/#112). */
+async function connect(
+  id: string,
+  currentOriginSha: string | null = "HEAD",
+): Promise<{ client: Client; store: Store }> {
   const store = new Store({ env });
   stores.push(store);
-  store.registerAgent({ id: "expo", cwd: "/", pid: 1 });
-  const server = buildServer(store, "expo", DEFAULT_CONFIG, { currentOriginSha: () => currentOriginSha });
+  store.registerAgent({ id, cwd: "/", pid: 1 });
+  const server = buildServer(store, id, DEFAULT_CONFIG, { currentOriginSha: () => currentOriginSha });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "test", version: "0.0.0" });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -55,113 +58,108 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 }
 
 /**
- * hands#111/#139: `store.latestSignoff` used to be read in exactly one place
- * (hands_tasks, for display) and consulted nowhere that actually gates
- * shipping — the expo could mark any ticket `done` with no CDC pre-ship
- * sign-off at all, and nothing noticed. These prove the gate actually
- * refuses in every case it should, and actually proceeds in the ones it
- * shouldn't block — a gate demonstrated only against the happy path is the
- * same category of thing this ticket exists to replace.
+ * hands#112: the pre-return gate — a station may not return a ticket
+ * without a fresh, approved CDC pre-return sign-off for THAT ticket.
+ * Mirrors pre-ship-gate.test.ts exactly (same isSignoffStale detector, same
+ * refusal shape, same skipSignoff escape hatch) — deliberately, since it's
+ * the same mechanism at a different checkpoint, not a new one.
  */
-describe("hands_task_update('done') — the pre-ship CDC sign-off gate (hands#111/#139)", () => {
-  it("REFUSES with no pre-ship sign-off at all, naming the ticket and the exact commands to fix it", async () => {
-    const { client, store } = await connectExpo();
+describe("hands_task_update('returned') — the pre-return CDC sign-off gate (hands#112)", () => {
+  it("REFUSES with no pre-return sign-off at all, naming the ticket and the exact commands to fix it", async () => {
+    const { client, store } = await connect("station-1");
     const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 1000 });
-    const res = await call(client, "hands_task_update", { id, state: "done" });
+    await call(client, "hands_task_update", { id, state: "in_progress" });
+    const res = await call(client, "hands_task_update", { id, state: "returned", result: "done, see PR" });
     expect(res.isError).toBe(true);
     expect(String(res.body.error)).toContain(`task #${id}`);
-    expect(String(res.body.error)).toContain("no pre-ship CDC sign-off");
+    expect(String(res.body.error)).toContain("no pre-return CDC sign-off");
     expect(String(res.body.error)).toContain("hands craft brief cdc");
     expect(String(res.body.error)).toContain("hands_craft_signoff");
     expect(String(res.body.error)).toContain("skipSignoff"); // the escape hatch is named, not hidden
   });
 
-  it("REFUSES when the latest pre-ship sign-off was REJECTED, surfacing CDC's own note", async () => {
-    const { client, store } = await connectExpo();
+  it("REFUSES when the latest pre-return sign-off was REJECTED, surfacing CDC's own note", async () => {
+    const { client, store } = await connect("station-1");
     const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 1000 });
     store.recordSignoff({
       taskId: id,
-      checkpoint: "pre-ship",
+      checkpoint: "pre-return",
       verdict: "rejected",
-      note: "collides with #42's rename",
-      by: "expo",
+      note: "still collides with #42's rename",
+      by: "station-1",
       now: 2000,
     });
-    const res = await call(client, "hands_task_update", { id, state: "done" });
+    const res = await call(client, "hands_task_update", { id, state: "returned", result: "done, see PR" });
     expect(res.isError).toBe(true);
     expect(String(res.body.error)).toContain("REJECTED");
-    expect(String(res.body.error)).toContain("collides with #42's rename");
+    expect(String(res.body.error)).toContain("still collides with #42's rename");
   });
 
   it("REFUSES a STALE sign-off — origin/main moved past the sha CDC judged against", async () => {
-    const { client, store } = await connectExpo("HEAD-NOW"); // current HEAD, injected
+    const { client, store } = await connect("station-1", "HEAD-NOW");
     const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 1000 });
     store.recordSignoff({
       taskId: id,
-      checkpoint: "pre-ship",
+      checkpoint: "pre-return",
       verdict: "approved",
-      originSha: "HEAD-OLD", // stale relative to the injected current sha
-      by: "expo",
+      originSha: "HEAD-OLD",
+      by: "station-1",
       now: 2000,
     });
-    const res = await call(client, "hands_task_update", { id, state: "done" });
+    const res = await call(client, "hands_task_update", { id, state: "returned", result: "done, see PR" });
     expect(res.isError).toBe(true);
     expect(String(res.body.error)).toContain("stale");
     expect(String(res.body.error)).toContain("origin/main has moved");
   });
 
   it("REFUSES a STALE sign-off — a live collision now involves the ticket's own assignee", async () => {
-    const { client, store } = await connectExpo("HEAD");
+    const { client, store } = await connect("station-1", "HEAD");
     const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 1000 });
-    store.recordSignoff({ taskId: id, checkpoint: "pre-ship", verdict: "approved", originSha: "HEAD", by: "expo", now: 2000 });
-    // Two ONLINE stations both touching the same file right now — the exact
-    // shape hands_board's own collision strip already detects.
-    store.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
-    store.setStatus({ id: "station-1", cwd: "/", pid: 2, files: ["src/x.ts"] });
+    store.recordSignoff({ taskId: id, checkpoint: "pre-return", verdict: "approved", originSha: "HEAD", by: "station-1", now: 2000 });
     store.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
+    store.setStatus({ id: "station-1", cwd: "/", pid: 1, files: ["src/x.ts"] });
     store.setStatus({ id: "station-2", cwd: "/", pid: 3, files: ["src/x.ts"] });
-    const res = await call(client, "hands_task_update", { id, state: "done" });
+    const res = await call(client, "hands_task_update", { id, state: "returned", result: "done, see PR" });
     expect(res.isError).toBe(true);
     expect(String(res.body.error)).toContain("stale");
     expect(String(res.body.error)).toContain("collision now involves station-1");
   });
 
   it("PROCEEDS when the sign-off is fresh and approved", async () => {
-    const { client, store } = await connectExpo("HEAD");
+    const { client, store } = await connect("station-1", "HEAD");
     const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 1000 });
-    store.recordSignoff({ taskId: id, checkpoint: "pre-ship", verdict: "approved", originSha: "HEAD", by: "expo", now: 2000 });
-    const res = await call(client, "hands_task_update", { id, state: "done" });
+    store.recordSignoff({ taskId: id, checkpoint: "pre-return", verdict: "approved", originSha: "HEAD", by: "station-1", now: 2000 });
+    const res = await call(client, "hands_task_update", { id, state: "returned", result: "done, see PR" });
     expect(res.isError).toBe(false);
-    expect(res.body.ok).toBe(true);
-    expect(store.getTask(id)?.state).toBe("done");
+    expect(store.getTask(id)?.state).toBe("returned");
   });
 
   it("PROCEEDS with no sign-off at all when skipSignoff names a reason — and records it, never silently", async () => {
-    const { client, store } = await connectExpo();
+    const { client, store } = await connect("station-1");
     const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix a typo", now: 1000 });
     const res = await call(client, "hands_task_update", {
       id,
-      state: "done",
+      state: "returned",
+      result: "one-liner",
       skipSignoff: "one-line typo fix, not worth a CDC dispatch",
     });
     expect(res.isError).toBe(false);
-    expect(store.getTask(id)?.state).toBe("done");
+    expect(store.getTask(id)?.state).toBe("returned");
 
     const journal = store.journalSince(0);
     const entry = journal.find((j) => j.text.includes(`task #${id}`) && j.text.includes("overridden"));
     expect(entry, "the override must land in the journal, not vanish silently").toBeDefined();
+    expect(entry?.text).toContain("pre-return");
     expect(entry?.text).toContain("one-line typo fix, not worth a CDC dispatch");
-    expect(entry?.agent_id).toBe("expo");
+    expect(entry?.agent_id).toBe("station-1");
   });
 
-  it("does NOT gate 'in_progress' or 'cancelled' — only 'done' is the pre-ship gate's own moment", async () => {
-    const { client, store } = await connectExpo();
+  it("a pre-SHIP sign-off does not satisfy the pre-RETURN gate — the checkpoints are distinct, not interchangeable", async () => {
+    const { client, store } = await connect("station-1", "HEAD");
     const id = store.createTask({ createdBy: "expo", assignee: "station-1", title: "fix the thing", now: 1000 });
-    // No sign-off recorded anywhere, and neither should even ask for one.
-    expect((await call(client, "hands_task_update", { id, state: "in_progress" })).isError).toBe(false);
-    const id2 = store.createTask({ createdBy: "expo", assignee: "station-1", title: "dead ticket", now: 1000 });
-    expect((await call(client, "hands_task_update", { id: id2, state: "cancelled" })).isError).toBe(false);
-    // 'returned' now has its OWN gate (the pre-return checkpoint, hands#112)
-    // — see pre-return-gate.test.ts, not this file, for that coverage.
+    store.recordSignoff({ taskId: id, checkpoint: "pre-ship", verdict: "approved", originSha: "HEAD", by: "expo", now: 2000 });
+    const res = await call(client, "hands_task_update", { id, state: "returned", result: "done, see PR" });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("no pre-return CDC sign-off");
   });
 });
