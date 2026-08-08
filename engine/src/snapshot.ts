@@ -448,6 +448,62 @@ export interface PublicSnapshot {
 }
 
 /**
+ * Narrow, local-only view of the bus for apps/mobile's walking skeleton
+ * (hands#107) — a phone on the same LAN connecting straight to `hands
+ * serve`'s `/api/events`, not the redacted cross-repo PublicSnapshot below.
+ * UNLIKE PublicSnapshot, this keeps live agent presence (online/idle,
+ * focus, ticket) — the mobile skeleton's whole "the line" surface needs it,
+ * and there's no privacy boundary to redact across on a local connection.
+ * Drops everything else SnapshotAgent/SnapshotTask/SnapshotQuestion carry
+ * (pid/cwd/wakes/branch/pendingCommands/body/etc) that the skeleton doesn't
+ * render — a genuinely new, narrow view, same pattern as PublicCraft below,
+ * not an extracted-and-renamed copy of the full local type. Mechanically
+ * vendored into apps/mobile the same way PublicSnapshot is vendored into
+ * hands-website — see engine/scripts/extract-mobile-types.mjs.
+ */
+export interface MobileAgent {
+  id: string;
+  state: AgentState;
+  online: boolean;
+  focus: string | null;
+  ticket: string | null;
+}
+
+export interface MobileTask {
+  id: number;
+  title: string;
+  from: string;
+  assignee: string;
+  state: string;
+  priority: string | null;
+  dish: string | null;
+  at: number;
+}
+
+export interface MobileQuestion {
+  id: number;
+  asker: string;
+  question: string;
+  state: string;
+  recommendation: string | null;
+  priority: string | null;
+  at: number;
+}
+
+export interface MobileSnapshot {
+  now: number;
+  agents: MobileAgent[];
+  tasks: MobileTask[];
+  questions: MobileQuestion[];
+  counts: {
+    activeTasks: number;
+    returnedTasks: number;
+    openQuestions: number;
+    needsHuman: number;
+  };
+}
+
+/**
  * Redacted, remote-safe view of the bus — pushed to the journal repo
  * alongside digests (see remote.ts syncPush) so a hosted dashboard can read
  * it with no server-side replay. Derived from the same buildSnapshot() the
