@@ -36,7 +36,7 @@ import {
   sharedCraftsDir,
   syncPush,
 } from "./remote.js";
-import { formatRosterContext, listCrafts } from "./crafts.js";
+import { formatRosterContext, listCrafts, roleCraftFoldNudges } from "./crafts.js";
 import { currentMenu, listRecipes } from "./recipes.js";
 import { type MessageRow, Store } from "./store.js";
 import { inboxMonitorAlive } from "./watchers.js";
@@ -180,7 +180,11 @@ export function buildServer(store: Store, agentId: string, config?: HandsConfig)
             "worktree, and you dispatch crafts as sub-agents (`hands craft brief`) for the slices " +
             "of work they cover — see the roster below."
           : "") +
-        craftRosterContext(cfg, store),
+        craftRosterContext(cfg, store) +
+        // Role crafts (e.g. CDC) are excluded from the roster above by design (hands#139) — a
+        // station shouldn't browse or dispatch one ad hoc. But only the expo ever dispatches a
+        // role craft, so it's the only agent who needs to hear when one's book is ready to fold.
+        (isExpo(agentId) ? roleCraftFoldNudges(store, cfg) : ""),
     },
   );
 

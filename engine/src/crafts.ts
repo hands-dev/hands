@@ -460,6 +460,37 @@ export function booksDistilledRecently(entries: CraftRosterEntry[], now: number,
 }
 
 /**
+ * Fold-readiness for role crafts, surfaced ONLY to the expo (hands#139 follow-up). `listCrafts`
+ * excludes role crafts from the browsable roster on purpose (isRoleCraft's doc comment) because
+ * they aren't a domain specialization a generalist picks ad hoc — but the fold-readiness nudge
+ * (#198) rides on that same filtered roster, so a role craft's book could accumulate notes
+ * indefinitely with nobody ever told it was ready to fold. A role craft is dispatched
+ * exclusively by the expo (never a station — see plugin/skills/expo/SKILL.md's CDC dispatch),
+ * so the expo is the only legitimate audience. Deliberately returned as its own string, never
+ * merged into `formatRosterContext`'s bulleted list — that list is what a station browses to
+ * pick a craft to dispatch, and role crafts still must not appear there.
+ */
+export function roleCraftFoldNudges(
+  store: Store,
+  config: HandsConfig,
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): string {
+  const ready = listCraftFiles(config, env, cwd)
+    .filter((e) => isRoleCraft(e.slug))
+    .map((e) => ({ slug: e.slug, pendingNotes: store.pendingCraftNotes(e.slug).length }))
+    .filter((e) => e.pendingNotes >= FOLD_READY_THRESHOLD);
+  if (ready.length === 0) return "";
+  const lines = ready.map(
+    (e) => `${e.slug} has ${e.pendingNotes} pending note(s) — ready to fold (hands craft fold ${e.slug}).`,
+  );
+  return (
+    "\n\nRole craft(s) ready to fold — not on the roster above by design (hands#139), still yours to fold:\n" +
+    lines.join("\n")
+  );
+}
+
+/**
  * The roster injected into every station's AND the expo's MCP instructions at
  * connect (server.ts's craftRosterContext) — a summary, not content, so the
  * orchestrator's own context cost stays constant regardless of how fat a book

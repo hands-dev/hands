@@ -13,6 +13,7 @@ import {
   craftAgentPath,
   craftKnown,
   craftSkillPath,
+  FOLD_READY_THRESHOLD,
   formatRosterContext,
   isRoleCraft,
   listCrafts,
@@ -20,6 +21,7 @@ import {
   nearestCraftSlugs,
   parseCraftHeader,
   parseCraftNoteBlock,
+  roleCraftFoldNudges,
   stampCraftReadiness,
   sweepHeldSeatHeader,
   upsertMiseLine,
@@ -362,6 +364,49 @@ describe("role crafts — dispatch still works even though the roster hides them
   });
 });
 
+describe("roleCraftFoldNudges — the expo-only fold-readiness signal for role crafts (hands#103 follow-up)", () => {
+  it("is empty when no role craft is founded", () => {
+    const store = new Store({ env });
+    expect(roleCraftFoldNudges(store, loadConfig({ env }), env)).toBe("");
+    store.close();
+  });
+
+  it("stays silent below FOLD_READY_THRESHOLD", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+
+    const store = new Store({ env });
+    for (let i = 0; i < FOLD_READY_THRESHOLD - 1; i++) {
+      store.insertCraftNote({ craftSlug: "cdc", sourceAgent: "expo", kind: "book", body: `n${i}` });
+    }
+    expect(roleCraftFoldNudges(store, loadConfig({ cwd: repo, env }), env, repo)).toBe("");
+    store.close();
+  });
+
+  it("names the role craft once its pending notes reach FOLD_READY_THRESHOLD — the gap hands#103 closes", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+    fs.writeFileSync(path.join(shared, "saucier.md"), "> covers: sauces\n"); // ordinary craft, own pile of notes
+
+    const store = new Store({ env });
+    for (let i = 0; i < FOLD_READY_THRESHOLD; i++) {
+      store.insertCraftNote({ craftSlug: "cdc", sourceAgent: "expo", kind: "book", body: `n${i}` });
+      store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "station-1", kind: "book", body: `n${i}` });
+    }
+    const nudge = roleCraftFoldNudges(store, loadConfig({ cwd: repo, env }), env, repo);
+    expect(nudge).toContain("cdc has 3 pending note(s) — ready to fold (hands craft fold cdc).");
+    // an ordinary craft's fold-readiness already rides the roster list — this surface is role-craft-only
+    expect(nudge).not.toContain("saucier");
+    store.close();
+  });
+});
+
 describe("craftRosterContext (roster injection, not full content — hands#81/#96)", () => {
   it("says so plainly when nothing is founded yet", () => {
     const store = new Store({ env });
@@ -407,6 +452,23 @@ describe("craftRosterContext (roster injection, not full content — hands#81/#9
 
     const after = craftRosterContext(loadConfig({ env }), store, env, undefined, 10_000);
     expect(after).toContain("Dispatch rate (7d): 1 of 1 finished ticket(s) went through a craft (0 execute, 1 plan).");
+    store.close();
+  });
+
+  it("never surfaces a role craft, even once its notes reach fold-ready (hands#103 follow-up)", () => {
+    const repo = fs.mkdtempSync(path.join(home, "repo-"));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    const shared = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(shared, { recursive: true });
+    fs.writeFileSync(path.join(shared, "cdc.md"), "> covers: whole-board judgment\n");
+
+    const store = new Store({ env });
+    for (let i = 0; i < FOLD_READY_THRESHOLD; i++) {
+      store.insertCraftNote({ craftSlug: "cdc", sourceAgent: "expo", kind: "book", body: `n${i}` });
+    }
+    const ctx = craftRosterContext(loadConfig({ cwd: repo, env }), store, env, repo);
+    expect(ctx).toContain("No crafts founded yet"); // cdc is the only craft on disk, still excluded
+    expect(ctx).not.toContain("cdc");
     store.close();
   });
 });
