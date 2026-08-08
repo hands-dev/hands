@@ -119,8 +119,12 @@ five is the mark, and the mark is the legend.
               safari-pinned-tab.svg, site.webmanifest, head-snippet.html
     ios/      AppIcon.appiconset with Contents.json — drop into Xcode
     android/  mipmap-*/ic_launcher.png, adaptive foreground + background, Play 512
-    social/   og-image.png (1200×630), twitter-card.png, github-avatar-512.png
+    social/   og-image.png (1200×630), twitter-card.png, og-image-light.png (1200×630),
+              github-avatar-512.png
     tokens/   CSS, SCSS, JSON, Swift, Android XML, Tailwind, TUI/ANSI table
+
+`og-image.png` is the default (dark) — use it unless a surface is known to render OG images
+on a light background, where `og-image-light.png` avoids a dark card floating on white.
 
 ### Favicon note
 At 16 px each nail is ~2 device px; five hues inside 2 px land within a couple of 8-bit
