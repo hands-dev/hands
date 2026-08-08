@@ -462,6 +462,54 @@ describe("hands_craft_signoff (hands#139/#91/#95)", () => {
     const mine = (tasks.body.tasks as Array<{ signoff?: unknown }>)[0];
     expect(mine?.signoff).toBeUndefined();
   });
+
+  it("hands#112: a station MAY record 'pre-return' for a task it owns", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const w1 = await connect("station-1");
+
+    const res = await call(w1, "hands_craft_signoff", {
+      taskId: del.body.id as number,
+      checkpoint: "pre-return",
+      verdict: "approved",
+    });
+    expect(res.isError).toBe(false);
+  });
+
+  it("hands#112: a station may NOT record 'pre-return' for someone ELSE's task — ownership, not role, is the boundary", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    stores[0]!.registerAgent({ id: "station-2", cwd: "/", pid: 3 });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const w2 = await connect("station-2");
+
+    const res = await call(w2, "hands_craft_signoff", {
+      taskId: del.body.id as number,
+      checkpoint: "pre-return",
+      verdict: "approved",
+    });
+    expect(res.isError).toBe(true);
+    expect(String(res.body.error)).toContain("you own");
+    expect(String(res.body.error)).toContain("station-1");
+  });
+
+  it("hands#112: a station still may NOT record 'pre-fire' or 'pre-ship' even for its own task — those stay expo-exclusive", async () => {
+    const expo = await connect("expo");
+    stores[0]!.registerAgent({ id: "station-1", cwd: "/", pid: 2 });
+    const del = await call(expo, "hands_delegate", { title: "plan X", to: "station-1" });
+    const w1 = await connect("station-1");
+
+    for (const checkpoint of ["pre-fire", "pre-ship"] as const) {
+      const res = await call(w1, "hands_craft_signoff", {
+        taskId: del.body.id as number,
+        checkpoint,
+        verdict: "approved",
+      });
+      expect(res.isError).toBe(true);
+      expect(String(res.body.error)).toContain("Only the expo");
+    }
+  });
 });
 
 describe("board stateHash + full bundle", () => {

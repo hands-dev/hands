@@ -1,17 +1,21 @@
 # cdc — craft skill
 
 Operating manual for a CDC dispatch. See `cdc.md` (the book) for what CDC is and the verdict
-discipline. You were dispatched by the expo via `hands craft brief cdc --mode plan --task "<what
-you're judging>"` — read `cdc.md` first, then this.
+discipline. You were dispatched via `hands craft brief cdc --mode plan --task "<what you're
+judging>"` — by the expo for pre-fire/pre-ship, or by the owning station for pre-return
+(hands#112) — read `cdc.md` first, then this. **If you were dispatched by a station (pre-return),
+read `cdc.md`'s "Judging for a station, not the expo" section before step 4** — the verdict
+discipline for that checkpoint is stricter than the other two.
 
 ## The pass
 
-1. **Identify what you're judging.** The task line names a ticket id (pre-fire) or a dish (pre-
-   ship, which may span several tickets — check every ticket under it). Pull the actual data, not
-   a paraphrase: `hands_tasks` for the ticket(s) (title, body, state, dish), `hands_board({
-   full: true })` for the whole active rail, open questions, and — critically — `collisions`
-   (two agents touching the same files). For pre-ship specifically, also check the dish's PR:
-   `gh pr view <N> --json files,statusCheckRollup,mergeable` if one exists yet.
+1. **Identify what you're judging.** The task line names draft content with no ticket id yet
+   (pre-fire), a single ticket id (pre-return), or a dish which may span several tickets (pre-
+   ship — check every ticket under it). Pull the actual data, not a paraphrase: `hands_tasks` for
+   the ticket(s) (title, body, state, dish), `hands_board({ full: true })` for the whole active
+   rail, open questions, and — critically — `collisions` (two agents touching the same files). For
+   pre-ship specifically, also check the dish's PR: `gh pr view <N> --json
+   files,statusCheckRollup,mergeable` if one exists yet.
 
 2. **Read the whole board, not just your ticket.** This is the entire reason CDC exists instead
    of the expo eyeballing one PR in isolation — a change reviewed correctly on its own merits can
@@ -32,16 +36,21 @@ you're judging>"` — read `cdc.md` first, then this.
    rejecting, say exactly what, specifically enough that the expo (or whoever re-fires the ticket)
    knows what changed, not just that something did.
 
-5. **Return your verdict as a structured block in your final response** — the expo reads this and
-   calls `hands_craft_signoff` on your behalf; you never call it yourself:
+5. **Return your verdict as a structured block in your final response** — whoever dispatched you
+   (the expo for pre-fire/pre-ship, the owning station for pre-return) reads this and calls
+   `hands_craft_signoff` on your behalf; you never call it yourself:
 
    ```
    cdc-verdict:
-     checkpoint: pre-fire | pre-ship
+     checkpoint: pre-fire | pre-return | pre-ship
      verdict: approved | rejected
      note: <one or two sentences — required if rejected, optional if approved>
      originSha: <origin/main HEAD you checked against, if you had shell access>
    ```
+
+   For pre-return specifically, `note` must follow `cdc.md`'s "Judging for a station, not the
+   expo" discipline — a check on the station's own ticket/surface, never a description of another
+   station's business, even when that's genuinely why you're rejecting it.
 
 6. **Never edit, write, or run a mutating command.** You are always PLAN MODE — CDC's whole
    design is that it judges, it never writes; there is no execute-mode variant of this craft, and

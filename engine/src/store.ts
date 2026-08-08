@@ -171,10 +171,10 @@ export interface TaskSignoffRow {
   task_id: number;
   /**
    * pre-fire (before the expo hands the ticket to a station) | pre-ship (before the expo may call
-   * hands on the dish) | pre-return (hands#111 — added for a future station-side gate, not yet
-   * enforced anywhere: judges one ticket's actual returned result against the board at the moment
-   * a station finishes, a coverage gap neither pre-fire (judges the draft) nor pre-ship (judges the
-   * whole dish at merge) re-checks).
+   * hands on the dish) | pre-return (hands#111/#112 — enforced: `hands_task_update` refuses
+   * `state: "returned"` without a fresh, approved one for the ticket. Judges one ticket's actual
+   * returned result against the board at the moment a station finishes, a coverage gap neither
+   * pre-fire (judges the draft) nor pre-ship (judges the whole dish at merge) re-checks).
    */
   checkpoint: "pre-fire" | "pre-ship" | "pre-return";
   verdict: "approved" | "rejected";
@@ -536,17 +536,20 @@ export class Store {
 
       CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
 
-      -- hands#139/#91/#95 — CDC's two whole-board checkpoints (pre-fire triage,
-      -- pre-ship sign-off) collapsed into one record shape, mirroring
-      -- wake_outcomes/rec_outcome's enum+note pattern rather than inventing a
-      -- second table for the second checkpoint. Written by the expo (the
-      -- identity actually running the CDC dispatch), never by CDC itself —
-      -- CDC returns a verdict in its own response text, same as any craft's
-      -- craft-note contract; the caller records it.
+      -- hands#139/#91/#95/#112 — CDC's three whole-board checkpoints (pre-fire
+      -- triage, pre-return per-ticket check, pre-ship dish-level sign-off)
+      -- collapsed into one record shape, mirroring wake_outcomes/rec_outcome's
+      -- enum+note pattern rather than inventing a table per checkpoint.
+      -- Written by whoever actually ran the CDC dispatch, never by CDC
+      -- itself — CDC returns a verdict in its own response text, same as any
+      -- craft's craft-note contract; the caller records it. pre-fire/pre-ship
+      -- stay expo-exclusive (whole-dish/board judgment); pre-return is
+      -- ownership-gated — a station may record one for a task it owns, since
+      -- that's the checkpoint that exists for a station's OWN returned work.
       CREATE TABLE IF NOT EXISTS task_signoffs (
         id          INTEGER PRIMARY KEY AUTOINCREMENT,
         task_id     INTEGER NOT NULL,
-        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship | pre-return (hands#111)
+        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship | pre-return (hands#111/#112)
         verdict     TEXT NOT NULL,      -- approved | rejected
         note        TEXT,
         origin_sha  TEXT,               -- origin/main HEAD at signoff time — the staleness anchor

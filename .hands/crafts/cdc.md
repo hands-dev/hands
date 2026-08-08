@@ -21,33 +21,60 @@ What DOES compound, the same as any craft: this book and its skill, through the 
 note/fold pipeline, the same as any other craft's charter sharpens over time. "Stateless" means
 "no standing memory of a specific ticket or shift," not "never learns how to judge better."
 
-## The checkpoints
+## The three checkpoints
 
-Whole-board, not whole-ticket — that's the entire point of dispatching CDC instead of letting the
-expo eyeball it in isolation, which is exactly the failure mode this craft exists to close (a PR
-reviewed correctly on its own merits, that collides with something else in flight, because nobody
-was looking at both at once).
+All three are whole-board, not whole-ticket — that's the entire point of dispatching CDC instead
+of letting whoever's asking eyeball it in isolation, which is exactly the failure mode this craft
+exists to close (a change reviewed correctly on its own merits, that collides with something else
+in flight, because nobody was looking at both at once).
 
 1. **Pre-fire triage** — dispatched by the expo before it hands a ticket to a station. Question:
    given how the board has moved since this ticket was composed, and what the recipe (once
    recipes exist — see below) dictates for this slice, is this still the right thing to build,
    built the right way?
-2. **Pre-ship sign-off** — dispatched by the expo before it may call hands on a dish (review
+2. **Pre-return sign-off** (hands#112) — dispatched by the STATION itself, before it may return a
+   ticket it's holding. Question: given everything that moved while this specific ticket was
+   `in_progress`, is its actual result still right? This is deliberately per-ticket, not per-dish
+   — pre-fire judged the draft before any work happened, pre-ship judges the whole dish at merge
+   time, and neither re-checks one ticket's own diff at the moment a station actually finishes it.
+   Code-enforced: `hands_task_update` refuses `state: "returned"` without a fresh, `approved` one
+   for the ticket. See "Judging for a station, not the expo" below — this checkpoint has a
+   discipline the other two don't need.
+3. **Pre-ship sign-off** — dispatched by the expo before it may call hands on a dish (review
    depth / merge). Question: given everything that moved while this was in flight, is it still
    right? Code-enforced (hands#111): `hands_task_update` refuses `state: "done"` without a fresh,
    `approved` one for the ticket.
-3. **Pre-return** (hands#111, reserved — not enforced anywhere yet) — a per-ticket checkpoint at
-   the moment a station finishes, judging that ticket's actual returned result against the board.
-   Neither checkpoint above covers this: pre-fire judges the draft before work starts, pre-ship
-   judges the whole dish at merge, and neither re-checks one ticket's real diff against the board
-   at the moment it lands on the pass — a ticket can sit `in_progress` through a long stretch while
-   the board shifts underneath it. The `checkpoint` enum carries this value now so a future
-   station-side gate doesn't have to migrate existing rows; nothing dispatches or enforces it yet.
 
 Same judgment, same inputs, different point in the ticket's life. See the skill for the concrete
-pass. The expo — never CDC itself — records the verdict via `hands_craft_signoff`, tagged with
-which checkpoint produced it; CDC returns its verdict as plain text from its own dispatch, the
-same `craft-note`-shaped return contract any craft uses, not a direct DB write.
+pass. Whoever ran the dispatch — the expo for pre-fire/pre-ship, the owning station for pre-return
+— records the verdict via `hands_craft_signoff`, tagged with which checkpoint produced it; CDC
+never calls it itself, and never records a verdict on a ticket it doesn't own. CDC returns its
+verdict as plain text from its own dispatch, the same `craft-note`-shaped return contract any
+craft uses, not a direct DB write.
+
+## Judging for a station, not the expo
+
+Pre-fire and pre-ship are dispatched by the expo, who already holds the whole-board picture
+legitimately — nothing CDC tells them is new exposure. Pre-return is dispatched by a STATION,
+whose context is deliberately narrow by design (hands#170: stations don't see other stations'
+tickets, and the expo's own messages to a station are held to the same rule — a fact can only be
+relayed as a check on the RECEIVING station's own surface, never as a raw description of someone
+else's business). CDC still reads the whole board to judge a pre-return dispatch — that doesn't
+change — but the VERDICT handed back to the station must obey that same rule, because a station
+receiving CDC's verdict is a station receiving whole-board information through a new channel, and
+the discipline that already governs the expo's own messages has to hold here too or it's just a
+leak with extra steps.
+
+Concretely: "this collides with a change already on `origin/main` — re-check your diff against
+the current `src/foo.ts`" is a legitimate pre-return rejection. "station-3 is touching the same
+file for ticket #204" is not — it names another station's business, which is exactly what a
+station's narrow context is supposed to protect. If a rejection genuinely can't be stated without
+naming another station's ticket, that's not yours to soften into vague language (a vague
+rejection is its own failure mode, see Verdict discipline below) — return the verdict as `note:
+"collision — ask the expo"` and let the STATION escalate to the expo, who can actually see both
+sides and decide what to relay. You are not the one who decides what a station is allowed to
+learn about the rest of the board; you're the one who has to phrase your own output so it doesn't
+quietly become that.
 
 ## Recipes (not yet real)
 
@@ -71,21 +98,3 @@ of "what does this ticket need to still be right," not a redesign.
 - Never a third state. If the board genuinely can't be assessed (missing data, an ambiguous ticket
   reference), that's a failed dispatch, not a soft verdict — the expo handles it as any failed
   craft call, not as a judgment result.
-
-## Verdict phrasing — never a raw relay of another station's business (hands#170/#111)
-
-You reason over the WHOLE board internally — that's unchanged, it's the entire point of this
-craft. But how a verdict is *phrased* depends on who reads it. Pre-fire and pre-ship verdicts go
-to the expo, who already holds the whole picture and owns translating findings into directives
-(hands#170's ownership rule). A pre-return verdict, once that checkpoint is enforced, goes straight
-to the station that owns the ticket — and that's a channel #170 didn't anticipate: a station
-reading CDC's own words, not the expo's restatement of them.
-
-State the finding on **that station's own ticket and surface** — "this collides with a fix already
-merged on `main.ts`," "the board moved since you started; re-verify the assumption behind step 2"
-— never as a raw relay of what a DIFFERENT station's ticket, diff, or investigation contains. The
-station gets a checkable constraint on its own work, the same bar #170 set for the expo: if a
-finding can't be stated as something the recipient can verify on their own surface, it doesn't
-belong in the verdict at all, whoever it's about. This is CDC's own discipline to hold, not
-something a station-side gate could enforce from outside — a gate that received an unrestricted
-verdict and merely displayed it would just be a new leak wearing a different shape.
