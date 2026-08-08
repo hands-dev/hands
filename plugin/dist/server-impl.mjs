@@ -7257,6 +7257,26 @@ var init_store = __esm({
       );
 
       CREATE INDEX IF NOT EXISTS idx_wake_outcomes_agent ON wake_outcomes (agent_id, created_at);
+
+      -- hands#139/#91/#95 \u2014 CDC's two whole-board checkpoints (pre-fire triage,
+      -- pre-ship sign-off) collapsed into one record shape, mirroring
+      -- wake_outcomes/rec_outcome's enum+note pattern rather than inventing a
+      -- second table for the second checkpoint. Written by the expo (the
+      -- identity actually running the CDC dispatch), never by CDC itself \u2014
+      -- CDC returns a verdict in its own response text, same as any craft's
+      -- craft-note contract; the caller records it.
+      CREATE TABLE IF NOT EXISTS task_signoffs (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id     INTEGER NOT NULL,
+        checkpoint  TEXT NOT NULL,      -- pre-fire | pre-ship
+        verdict     TEXT NOT NULL,      -- approved | rejected
+        note        TEXT,
+        origin_sha  TEXT,               -- origin/main HEAD at signoff time \u2014 the staleness anchor
+        by          TEXT NOT NULL,
+        created_at  INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_task_signoffs_task ON task_signoffs (task_id, created_at);
     `);
         this.db.exec(`
       CREATE TABLE IF NOT EXISTS craft_notes (
@@ -7863,6 +7883,44 @@ var init_store = __esm({
       /** Record that an obligation was just nudged, so the next pass doesn't immediately re-nudge it. */
       markChased(kind, id, now = Date.now()) {
         this.setWatermark("*", `chase:${kind}:${id}`, String(now));
+      }
+      // --- CDC checkpoint sign-offs (hands#139/#91/#95) ---
+      recordSignoff(input) {
+        const now = input.now ?? Date.now();
+        const id = this.withRetry(() => {
+          const result = this.db.prepare(
+            `INSERT INTO task_signoffs (task_id, checkpoint, verdict, note, origin_sha, by, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`
+          ).run(
+            input.taskId,
+            input.checkpoint,
+            input.verdict,
+            input.note ?? null,
+            input.originSha ?? null,
+            input.by,
+            now
+          );
+          return Number(result.lastInsertRowid);
+        });
+        this.journal("task.signoff", {
+          id,
+          taskId: input.taskId,
+          checkpoint: input.checkpoint,
+          verdict: input.verdict,
+          note: input.note ?? null,
+          by: input.by,
+          at: now
+        });
+        return id;
+      }
+      /** The most recent sign-off for a task, optionally scoped to one checkpoint. */
+      latestSignoff(taskId, checkpoint) {
+        const clause = checkpoint ? "AND checkpoint = ?" : "";
+        const params = checkpoint ? [taskId, checkpoint] : [taskId];
+        return this.db.prepare(`SELECT * FROM task_signoffs WHERE task_id = ? ${clause} ORDER BY id DESC LIMIT 1`).get(...params);
+      }
+      signoffsForTask(taskId) {
+        return this.db.prepare("SELECT * FROM task_signoffs WHERE task_id = ? ORDER BY id ASC").all(taskId);
       }
       // --- questions (worktree → expo escalation) ---
       askQuestion(input) {
@@ -8520,6 +8578,26 @@ var init_store = __esm({
           result.set(row.agent_type.slice("craft-".length), { totalOutputTokens: row.total, calls: row.calls });
         }
         return result;
+      }
+      /**
+       * hands#103c — subagent_samples has been written on every sub-agent finish since the
+       * SubagentStop hook landed, but craftTokenUsage() above only ever reads the "craft-<slug>"
+       * slice of it; a plain "general-purpose"/"Explore"/etc. dispatch (not routed through a synced
+       * craft) was invisible. This is the whole table, grouped by whatever agent_type it actually
+       * dispatched as — "which agents are used most/least, and is a craft earning its place" needs
+       * that comparison, not just the craft subset. Same 7-day self-trimmed window as the table.
+       */
+      subagentUsageSummary() {
+        const rows = this.db.prepare(
+          `SELECT COALESCE(agent_type, '(untyped)') as agent_type, SUM(output_tokens) as total, COUNT(*) as calls
+         FROM subagent_samples GROUP BY agent_type ORDER BY calls DESC, total DESC, agent_type ASC`
+        ).all();
+        return rows.map((row) => ({
+          agentType: row.agent_type,
+          calls: row.calls,
+          totalOutputTokens: row.total,
+          avgOutputTokens: row.calls > 0 ? Math.round(row.total / row.calls) : 0
+        }));
       }
       /** Every craft dispatch tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used." */
       listCraftBriefsByTicket(ticketId) {
@@ -9293,8 +9371,8 @@ function watchersFor(stationId, opts) {
     return { stationId, watchers: null, inboxAlive: null };
   }
   const watchers = [];
-  const inboxNeedle = opts?.notifyPath ?? `${stationId}.notify`;
-  const worktree = opts?.worktree;
+  const inboxNeedle = opts.notifyPath;
+  const worktree = opts.worktree;
   const mine = selfLineage();
   for (const pid of pids) {
     if (mine.has(pid)) continue;
@@ -9316,10 +9394,13 @@ function watchersFor(stationId, opts) {
     inboxAlive: watchers.some((w) => w.isInbox)
   };
 }
-function inboxMonitorAlive(stationId, notifyPath2) {
+function escapeForPgrep(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function inboxMonitorAliveOnce(stationId, notifyPath2) {
   if (process.platform !== "linux") {
     try {
-      const out = execFileSync4("pgrep", ["-f", `tail -F .*${stationId}\\.notify`], {
+      const out = execFileSync4("pgrep", ["-f", `tail -F .*${escapeForPgrep(notifyPath2)}`], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         timeout: 5e3
@@ -9330,6 +9411,12 @@ function inboxMonitorAlive(stationId, notifyPath2) {
     }
   }
   return watchersFor(stationId, { notifyPath: notifyPath2 }).inboxAlive;
+}
+function inboxMonitorAlive(stationId, notifyPath2) {
+  const first = inboxMonitorAliveOnce(stationId, notifyPath2);
+  if (first !== false) return first;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  return inboxMonitorAliveOnce(stationId, notifyPath2);
 }
 var LOOP_PATTERNS, WATCHER_BINARIES, SHELLS;
 var init_watchers = __esm({
@@ -10632,6 +10719,9 @@ var init_remote = __esm({
 // src/crafts.ts
 import * as fs15 from "node:fs";
 import * as path16 from "node:path";
+function isRoleCraft(slug) {
+  return ROLE_CRAFT_SLUGS.has(slug);
+}
 function parseCraftHeader(bookContent) {
   if (!bookContent) return { covers: null, distilled: null, ready: null };
   const line = bookContent.split("\n").find((l) => l.trim().startsWith(">")) ?? "";
@@ -10684,7 +10774,7 @@ function listCraftFiles(config2, env = process.env, cwd = process.cwd()) {
   return [...seen.values()].sort((a, b) => a.slug.localeCompare(b.slug));
 }
 function listCrafts(store, config2, env = process.env, cwd = process.cwd()) {
-  return listCraftFiles(config2, env, cwd).map((e) => ({
+  return listCraftFiles(config2, env, cwd).filter((e) => !isRoleCraft(e.slug)).map((e) => ({
     ...e,
     pendingNotes: store.pendingCraftNotes(e.slug).length
   }));
@@ -10759,7 +10849,7 @@ distinct from \`friction\`, which is about whether YOUR OWN book/skill/mise stee
 `;
 }
 function materializeCraftAgents(config2, targetDir, env = process.env, cwd = process.cwd()) {
-  const roster = listCraftFiles(config2, env, cwd);
+  const roster = listCraftFiles(config2, env, cwd).filter((e) => !isRoleCraft(e.slug));
   const agentsDir = path16.join(targetDir, ".claude", "agents");
   const skillsDir = path16.join(targetDir, ".claude", "skills");
   fs15.mkdirSync(agentsDir, { recursive: true });
@@ -10941,11 +11031,12 @@ function applyImmediateCraftNote(store, files, note, holder) {
     store.releaseCraftFoldLease(files.slug, holder);
   }
 }
-var COVERS_RE, DISTILLED_RE, READY_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS;
+var ROLE_CRAFT_SLUGS, COVERS_RE, DISTILLED_RE, READY_RE, FOLD_READY_THRESHOLD, WEEK_MS, NOTE_BLOCK_RE, KV_RE, SPILLOVER_RE, MISE_KEY_DELIM_RE, RAW_NOTES_HEADING, IMMEDIATE_WRITE_LEASE_TTL_MS;
 var init_crafts = __esm({
   "src/crafts.ts"() {
     "use strict";
     init_remote();
+    ROLE_CRAFT_SLUGS = /* @__PURE__ */ new Set(["cdc"]);
     COVERS_RE = /^>\s*covers:\s*(.*?)\s*(?:·|$)/;
     DISTILLED_RE = /(?:distilled|last held):\s*(\S+)/;
     READY_RE = /·\s*ready:\s*(\S+)\s+by\s+(\S+)/;
@@ -11061,6 +11152,49 @@ var init_chat = __esm({
       "mcp__hands__hands_todos"
     ];
     SYSTEM_PROMPT = "You are the read-only assistant embedded in the hands dashboard. Answer questions about the kitchen's current work using only the hands_* tools available to you. You cannot send messages, delegate tickets, or change anything \u2014 if asked to take an action, say so plainly and explain that you're read-only.";
+  }
+});
+
+// src/context-signals.ts
+function total(s) {
+  return s.inputTokens + s.cacheReadTokens + s.cacheCreationTokens;
+}
+function deriveContextSignals(samples, now) {
+  const sorted = [...samples].sort((a, b) => a.at - b.at);
+  let compactionsLastHour = 0;
+  let learnedCeiling = null;
+  let lastCompactionIndex = -1;
+  for (let i = 1; i < sorted.length; i++) {
+    const prevTotal = total(sorted[i - 1]);
+    const curTotal = total(sorted[i]);
+    if (prevTotal > 0 && curTotal < prevTotal * COMPACTION_DROP_RATIO) {
+      if (now - sorted[i].at < HOUR_MS) compactionsLastHour++;
+      learnedCeiling = learnedCeiling === null ? prevTotal : Math.max(learnedCeiling, prevTotal);
+      lastCompactionIndex = i;
+    }
+  }
+  const window = sorted.slice(Math.max(lastCompactionIndex + 1, sorted.length - SLOPE_WINDOW));
+  let slopePerMin = null;
+  if (window.length >= 2) {
+    const first = window[0];
+    const last = window[window.length - 1];
+    const dtMin = (last.at - first.at) / 6e4;
+    if (dtMin > 0) slopePerMin = (total(last) - total(first)) / dtMin;
+  }
+  let etaToCompactionMin = null;
+  if (learnedCeiling !== null && slopePerMin !== null && slopePerMin > 0 && sorted.length > 0) {
+    const current = total(sorted[sorted.length - 1]);
+    if (current < learnedCeiling) etaToCompactionMin = (learnedCeiling - current) / slopePerMin;
+  }
+  return { compactionsLastHour, slopePerMin, etaToCompactionMin };
+}
+var COMPACTION_DROP_RATIO, SLOPE_WINDOW, HOUR_MS;
+var init_context_signals = __esm({
+  "src/context-signals.ts"() {
+    "use strict";
+    COMPACTION_DROP_RATIO = 0.5;
+    SLOPE_WINDOW = 6;
+    HOUR_MS = 60 * 6e4;
   }
 });
 
@@ -11523,6 +11657,13 @@ function serve(opts) {
     });
   };
   const buildContextUsage = (agentIds) => store.contextSamplesForAgents(agentIds);
+  const buildContextSignals = (contextUsage, now) => {
+    const result = {};
+    for (const [agentId, samples] of Object.entries(contextUsage)) {
+      result[agentId] = deriveContextSignals(samples, now);
+    }
+    return result;
+  };
   const buildAgentMessages = (agentIds) => {
     const result = {};
     for (const id of agentIds) {
@@ -11551,8 +11692,10 @@ function serve(opts) {
     const craftRoster = buildCraftRoster();
     const agentIds = snapshot.agents.map((a) => a.id);
     const contextUsage = buildContextUsage(agentIds);
+    const contextSignals = buildContextSignals(contextUsage, snapshot.now);
     const agentMessages = buildAgentMessages(agentIds);
     const craftBriefsByTicket = buildCraftBriefsByTicket();
+    const subagentUsage = store.subagentUsageSummary();
     const chatAvailable = hasAgentSdkInstalledFn();
     return {
       json: JSON.stringify({
@@ -11567,11 +11710,13 @@ function serve(opts) {
         tokens,
         taskCosts,
         contextUsage,
+        contextSignals,
         agentMessages,
         craftBriefsByTicket,
+        subagentUsage,
         chatAvailable
       }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages) + JSON.stringify(craftBriefsByTicket) + JSON.stringify(chatAvailable)
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages) + JSON.stringify(craftBriefsByTicket) + JSON.stringify(subagentUsage) + JSON.stringify(chatAvailable)
     };
   };
   const clients = /* @__PURE__ */ new Set();
@@ -11951,6 +12096,7 @@ var init_serve = __esm({
     "use strict";
     init_chat();
     init_config();
+    init_context_signals();
     init_crafts();
     init_feedback();
     init_notify();
@@ -35648,9 +35794,9 @@ function totalOutputTokens(transcriptPath) {
     }
   }
   if (byMessage.size === 0) return null;
-  let total = 0;
-  for (const tokens of byMessage.values()) total += tokens;
-  return total;
+  let total2 = 0;
+  for (const tokens of byMessage.values()) total2 += tokens;
+  return total2;
 }
 function readMeta(transcriptPath) {
   try {
@@ -36156,7 +36302,8 @@ ${input.body}`, [agentId, ...recipients]);
           // this. A station whose inbox tail died looks exactly like one with
           // nothing to do — it simply never wakes again. null = couldn't look,
           // which must not read as fine.
-          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id) : void 0
+          // hands#202 — anchored to p.id's resolved path, never a bare substring.
+          inboxMonitorAlive: /^station-\d+$/.test(p.id) ? inboxMonitorAlive(p.id, notifyPath(p.id)) : void 0
         };
       });
       const journal = store.journalSince(0, 20).map((j) => ({
@@ -36368,7 +36515,7 @@ ${input.body}`, [agentId, ...recipients]);
           wokeSous = result.notified.includes("sous");
         } catch {
         }
-        if (inboxMonitorAlive("sous") === false) {
+        if (inboxMonitorAlive("sous", notifyPath("sous")) === false) {
           sousWarning = "sous.enabled is true but no inbox monitor is tailing sous.notify \u2014 this escalation was recorded but nothing is running /loop /hands:sous to see it";
         }
       }
@@ -36398,6 +36545,41 @@ ${input.body}`, [agentId, ...recipients]);
       if (!q) return { ...asToolResult({ ok: false, error: "no such question" }), isError: true };
       store.setQuestionOutcome({ id: input.id, outcome: input.outcome, note: input.note ?? null });
       return asToolResult({ ok: true, id: input.id, outcome: input.outcome });
+    }
+  );
+  server.registerTool(
+    "hands_craft_signoff",
+    {
+      title: "Record CDC's verdict for a ticket (expo only, hands#139/#91/#95)",
+      description: "Record CDC's whole-board checkpoint verdict for a ticket \u2014 'pre-fire' (dispatched before handing the ticket to a station: is this still the right build given how the board moved) or 'pre-ship' (dispatched before you may call hands on the dish: still right given everything that moved while it was in flight). CDC returns its verdict as text from its own dispatch; you record it here \u2014 CDC never calls this itself. A dish's tickets need a fresh 'approved' pre-ship signoff before you may act on \xA75 (review depth / merge) \u2014 see hands_tasks' `signoff` field for whether the most recent one is still fresh.",
+      inputSchema: {
+        taskId: external_exports3.number().int(),
+        checkpoint: external_exports3.enum(["pre-fire", "pre-ship"]),
+        verdict: external_exports3.enum(["approved", "rejected"]),
+        note: external_exports3.string().optional(),
+        originSha: external_exports3.string().optional().describe("origin/main HEAD at the moment CDC judged \u2014 the staleness anchor; omit if unavailable")
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+    },
+    async (input) => {
+      store.touch(agentId);
+      if (!isExpo(agentId)) {
+        return {
+          ...asToolResult({ ok: false, error: "Only the expo records a CDC signoff \u2014 it's the one running the dispatch." }),
+          isError: true
+        };
+      }
+      const task = store.getTask(input.taskId);
+      if (!task) return { ...asToolResult({ ok: false, error: "no such task" }), isError: true };
+      const id = store.recordSignoff({
+        taskId: input.taskId,
+        checkpoint: input.checkpoint,
+        verdict: input.verdict,
+        note: input.note ?? null,
+        originSha: input.originSha ?? null,
+        by: agentId
+      });
+      return asToolResult({ ok: true, id });
     }
   );
   server.registerTool(
@@ -36495,7 +36677,7 @@ ${input.body}`, [agentId, ...recipients]);
       deliverWake([assignee], { from: agentId, subject: "task" });
       const assigneePeer = store.listPeers().find((p) => p.id === assignee);
       const deadWarning = assigneePeer && !assigneePeer.alive ? `${assignee} process not found (pid ${assigneePeer.pid} not running) \u2014 ticket created but may sit unclaimed` : void 0;
-      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee) === false;
+      const monitorDead = isStation(assignee) && (assigneePeer?.alive ?? true) && inboxMonitorAlive(assignee, notifyPath(assignee)) === false;
       const monitorWarning = monitorDead ? `${assignee}'s inbox monitor is dead \u2014 it cannot be woken until its next pass (self-heal on the fallback heartbeat, or a message from someone it CAN still reach). Ticket created but may sit unseen for a while; run \`hands doctor\` to confirm, or restart the station to fix it now.` : void 0;
       const leakWarning = crossPeerMentionWarning(`${input.title}
 ${input.body ?? ""}`, [agentId, assignee]);
@@ -36531,18 +36713,33 @@ ${input.body ?? ""}`, [agentId, assignee]);
       });
       return asToolResult({
         count: rows.length,
-        tasks: rows.map((t) => ({
-          id: t.id,
-          title: t.title,
-          body: t.body ?? void 0,
-          from: t.created_by,
-          assignee: t.assignee ?? "queue",
-          state: t.state,
-          result: t.result ?? void 0,
-          priority: t.priority_ref ?? void 0,
-          dish: t.dish ?? void 0,
-          updatedAt: new Date(t.updated_at).toISOString()
-        }))
+        tasks: rows.map((t) => {
+          const signoff = store.latestSignoff(t.id);
+          return {
+            id: t.id,
+            title: t.title,
+            body: t.body ?? void 0,
+            from: t.created_by,
+            assignee: t.assignee ?? "queue",
+            state: t.state,
+            result: t.result ?? void 0,
+            priority: t.priority_ref ?? void 0,
+            dish: t.dish ?? void 0,
+            updatedAt: new Date(t.updated_at).toISOString(),
+            // hands#139/#91/#95 — the most recent CDC checkpoint verdict, if
+            // any. `originSha` is the staleness anchor: compare against the
+            // CURRENT origin/main HEAD yourself before trusting an
+            // "approved" pre-ship signoff — a stale one is not a signoff.
+            signoff: signoff ? {
+              checkpoint: signoff.checkpoint,
+              verdict: signoff.verdict,
+              note: signoff.note ?? void 0,
+              originSha: signoff.origin_sha ?? void 0,
+              by: signoff.by,
+              at: new Date(signoff.created_at).toISOString()
+            } : void 0
+          };
+        })
       });
     }
   );
