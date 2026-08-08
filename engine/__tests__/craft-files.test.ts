@@ -1163,7 +1163,8 @@ describe("exportPendingCraftNotes — write-on-export (hands#114/#223, supersedi
       body: "engine/src/foo.ts — exports bar()",
     });
     const applied = exportPendingCraftNotes(store, files, "export:test");
-    expect(applied).toBe(1);
+    expect(applied.touched).toBe(1);
+    expect(applied.refused).toEqual([]);
     expect(fs.readFileSync(files.mise, "utf8")).toContain("engine/src/foo.ts — exports bar()");
     expect(store.getCraftNote(id)?.folded_at).not.toBeNull();
     expect(store.pendingCraftNotes("saucier")).toEqual([]);
@@ -1179,7 +1180,7 @@ describe("exportPendingCraftNotes — write-on-export (hands#114/#223, supersedi
       kind: "book",
       body: "beurre blanc breaks over 58C",
     });
-    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(1);
+    expect(exportPendingCraftNotes(store, files, "export:test").touched).toBe(1);
     const bookText = fs.readFileSync(files.book, "utf8");
     expect(bookText).toContain("## Raw notes (unfolded)");
     expect(bookText).toContain("- [book] beurre blanc breaks over 58C");
@@ -1245,7 +1246,7 @@ describe("exportPendingCraftNotes — write-on-export (hands#114/#223, supersedi
       kind: "book",
       body: "held-out learning",
     });
-    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(0);
+    expect(exportPendingCraftNotes(store, files, "export:test").touched).toBe(0);
     expect(store.pendingCraftNotes("saucier").map((n) => n.id)).toEqual([id]);
     expect(fs.existsSync(files.book)).toBe(false); // never written
     store.close();
@@ -1261,7 +1262,7 @@ describe("exportPendingCraftNotes — write-on-export (hands#114/#223, supersedi
       kind: "mise",
       body: "engine/src/bar.ts — does Y",
     });
-    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(1);
+    expect(exportPendingCraftNotes(store, files, "export:test").touched).toBe(1);
     store.close();
   });
 
@@ -1270,7 +1271,7 @@ describe("exportPendingCraftNotes — write-on-export (hands#114/#223, supersedi
     const files = craftFiles("saucier", env);
     store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a/b.ts — does A" });
     exportPendingCraftNotes(store, files, "export:test");
-    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(0);
+    expect(exportPendingCraftNotes(store, files, "export:test").touched).toBe(0);
     store.close();
   });
 });
@@ -1284,7 +1285,7 @@ describe("exportPendingCraftNotes — the sole write path (hands#114/#223 storag
     const bookId = store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "a fact" });
 
     const applied = exportPendingCraftNotes(store, files, "export:test");
-    expect(applied).toBe(3); // unlike the old mise-only sweep, this lands book/skill too
+    expect(applied.touched).toBe(3); // unlike the old mise-only sweep, this lands book/skill too
     const miseText = fs.readFileSync(files.mise, "utf8");
     expect(miseText).toContain("a/b.ts — does A");
     expect(miseText).toContain("c/d.ts — does C");
@@ -1299,7 +1300,105 @@ describe("exportPendingCraftNotes — the sole write path (hands#114/#223 storag
     const files = craftFiles("saucier", env);
     store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "mise", body: "a/b.ts — does A" });
     exportPendingCraftNotes(store, files, "export:test");
-    expect(exportPendingCraftNotes(store, files, "export:test")).toBe(0);
+    expect(exportPendingCraftNotes(store, files, "export:test").touched).toBe(0);
+    store.close();
+  });
+});
+
+describe("exportPendingCraftNotes — floor check refuses a drastic silent shrink (hands#114/#223 hardening, the cdc.md clobber)", () => {
+  function initSharedCraftRepo(bookBody: string): { repo: string; files: ReturnType<typeof craftFiles> } {
+    const repo = fs.realpathSync(fs.mkdtempSync(path.join(home, "repo-")));
+    execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    const sharedDir = path.join(repo, ".hands", "crafts");
+    fs.mkdirSync(sharedDir, { recursive: true });
+    fs.writeFileSync(path.join(sharedDir, "cdc.md"), bookBody);
+    execFileSync("git", ["add", "-A"], { cwd: repo });
+    execFileSync("git", ["commit", "-q", "-m", "seed"], { cwd: repo });
+    const files = craftFiles("cdc", env, repo);
+    return { repo, files };
+  }
+
+  it("refuses a rebuild that would land drastically below the file's last git-committed size, leaving on-disk content untouched", () => {
+    const healthyBody = `> covers: whole board\n\n${"curated prose ".repeat(40)}\n`;
+    const { files } = initSharedCraftRepo(healthyBody);
+    // simulate the clobber: something external overwrote the tracked file down to a bare header
+    fs.writeFileSync(files.book, "> covers: whole board\n");
+
+    const store = new Store({ env });
+    const journalCalls: Array<{ type: string; data: Record<string, unknown> }> = [];
+    store.setJournal((type, data) => journalCalls.push({ type, data }));
+    store.insertCraftNote({ craftSlug: "cdc", sourceAgent: "s", kind: "book", body: "a new learning" });
+
+    const result = exportPendingCraftNotes(store, files, "export:test");
+
+    expect(result.touched).toBe(0);
+    expect(result.refused).toEqual([{ target: "book", reason: expect.any(String) }]);
+    // the write was refused outright — the already-clobbered on-disk content is left exactly as is
+    expect(fs.readFileSync(files.book, "utf8")).toBe("> covers: whole board\n");
+    expect(store.pendingCraftNotes("cdc")).toHaveLength(1); // note stays pending, nothing silently dropped
+    expect(journalCalls.some((c) => c.type === "craft.rebuild_refused" && c.data.target === "book")).toBe(true);
+    store.close();
+  });
+
+  it("allows a normal rebuild that stays within the floor ratio of the committed version", () => {
+    const healthyBody = `> covers: whole board\n\n${"curated prose ".repeat(40)}\n`;
+    const { files } = initSharedCraftRepo(healthyBody);
+
+    const store = new Store({ env });
+    store.insertCraftNote({ craftSlug: "cdc", sourceAgent: "s", kind: "book", body: "a new learning" });
+    const result = exportPendingCraftNotes(store, files, "export:test");
+
+    expect(result.refused).toEqual([]);
+    expect(result.touched).toBe(1);
+    expect(fs.readFileSync(files.book, "utf8")).toContain("a new learning");
+    store.close();
+  });
+
+  it("does not refuse when the committed baseline is itself below the floor — a young/short book may still shrink", () => {
+    const { files } = initSharedCraftRepo("> covers: x\n"); // well under SHRINK_REFUSAL_FLOOR_BYTES
+
+    const store = new Store({ env });
+    store.insertCraftNote({ craftSlug: "cdc", sourceAgent: "s", kind: "book", body: "first note" });
+    const result = exportPendingCraftNotes(store, files, "export:test");
+
+    expect(result.refused).toEqual([]);
+    expect(result.touched).toBe(1);
+    store.close();
+  });
+
+  it("does not refuse when the file has no git history at all (gitCommittedContent returns null)", () => {
+    const files = craftFiles("saucier", env); // personal scope — not inside any git repo
+    fs.mkdirSync(files.dir, { recursive: true });
+    const staleRawSection = Array.from({ length: 20 }, (_, i) => `- [book] stale note ${i}`).join("\n");
+    fs.writeFileSync(files.book, `> covers: sauces\n\nprefix\n\n## Raw notes (unfolded)\n${staleRawSection}\n`);
+
+    const store = new Store({ env });
+    store.insertCraftNote({ craftSlug: "saucier", sourceAgent: "s", kind: "book", body: "one new note" });
+    const result = exportPendingCraftNotes(store, files, "export:test");
+
+    expect(result.refused).toEqual([]);
+    expect(result.touched).toBe(1);
+    const after = fs.readFileSync(files.book, "utf8");
+    expect(after).toContain("one new note");
+    expect(after).not.toContain("stale note 5"); // a genuine shrink, uncontested — no git baseline to check against
+    store.close();
+  });
+
+  it("buildFoldContext surfaces the refusal via exportRefused, and the refused note stays in pendingNotes", () => {
+    const healthyBody = `> covers: whole board\n\n${"curated prose ".repeat(40)}\n`;
+    const { files, repo } = initSharedCraftRepo(healthyBody);
+    fs.writeFileSync(files.book, "> covers: whole board\n"); // clobbered
+
+    const store = new Store({ env });
+    store.insertCraftNote({ craftSlug: "cdc", sourceAgent: "s", kind: "book", body: "a new learning" });
+    const holder = "fold-holder";
+    expect(store.acquireCraftFoldLease("cdc", holder)).toBe(true);
+    const ctx = buildFoldContext(store, "cdc", holder, env, repo);
+
+    expect(ctx.exportRefused).toEqual([{ target: "book", reason: expect.any(String) }]);
+    expect(ctx.pendingNotes.map((n) => n.body)).toContain("a new learning");
     store.close();
   });
 });

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { HandsConfig } from "./config.js";
@@ -794,6 +795,57 @@ function forTarget(pending: readonly CraftNoteRow[], target: "book" | "skill"): 
 const EXPORT_LEASE_TTL_MS = 15_000;
 
 /**
+ * Best-effort: `filePath`'s content as last committed to git HEAD, or null when that can't be
+ * determined (not a git repo, file not yet tracked — e.g. a brand-new craft, git unavailable).
+ * Never throws — a missing safety net is strictly better than blocking a legitimate write for a
+ * craft that simply hasn't been committed yet. `HEAD:./<basename>` (git's cwd-relative syntax,
+ * run from the file's own directory) sidesteps computing a repo-root-relative path by hand.
+ */
+function gitCommittedContent(filePath: string): string | null {
+  try {
+    return execFileSync("git", ["show", `HEAD:./${path.basename(filePath)}`], {
+      cwd: path.dirname(filePath),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 3000,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Below this many committed bytes, a big relative shrink is normal (a young/short book) — not worth refusing over. */
+const SHRINK_REFUSAL_FLOOR_BYTES = 200;
+/** How much smaller than the committed version a rebuild's candidate output can be before it's refused rather than written. */
+const SHRINK_REFUSAL_RATIO = 0.5;
+
+/**
+ * Would writing `candidate` to `filePath` lose most of the file's last-committed body? Guards
+ * against exactly the failure mode a live production incident (hands#114/#223's own follow-up)
+ * couldn't fully explain: something OUTSIDE this pipeline reduced a craft's file to a single
+ * header line between commits, and — because this rebuild reads whatever's currently on disk as
+ * its "stable prefix" — a write immediately after that moment would faithfully persist and
+ * effectively launder the corruption rather than catching it. This function can't identify WHO
+ * corrupted the file; it only refuses to be the mechanism that makes a transient bad read
+ * permanent. Best-effort: `gitCommittedContent` returning null (no baseline to compare against)
+ * always allows the write — see its own doc comment.
+ */
+function wouldShrinkDrastically(filePath: string, candidate: string): boolean {
+  const committed = gitCommittedContent(filePath);
+  if (committed === null) return false;
+  const committedSize = Buffer.byteLength(committed, "utf8");
+  if (committedSize < SHRINK_REFUSAL_FLOOR_BYTES) return false;
+  return Buffer.byteLength(candidate, "utf8") < committedSize * SHRINK_REFUSAL_RATIO;
+}
+
+export interface CraftExportResult {
+  /** how many notes' content is now reflected on disk this round */
+  touched: number;
+  /** targets where a write was computed but refused — see wouldShrinkDrastically's doc comment */
+  refused: Array<{ target: "book" | "skill"; reason: string }>;
+}
+
+/**
  * The ONLY write path into a craft's git-committed files (hands#114/#223's storage fix). Every
  * note is already durable the instant it's harvested — `insertCraftNote` writes to `craft_notes`
  * in the coordination DB, one shared DB per kitchen, concurrency-safe by construction. The
@@ -823,11 +875,13 @@ const EXPORT_LEASE_TTL_MS = 15_000;
  * Called from `hands craft fold` (guaranteed, lease-already-held) and opportunistically from
  * `hands craft mise` (best-effort, its own lease attempt — contention just means this round
  * skips; readMiseMerged/readRawMerged cover reads regardless of whether export landed anything).
- * Returns how many notes' content is now reflected on disk this round (0 if both leases were
- * contended).
+ * Returns how many notes' content is now reflected on disk this round, plus any book/skill target
+ * where a write was computed but refused (wouldShrinkDrastically) — 0 touched and empty refused
+ * when both leases were contended.
  */
-export function exportPendingCraftNotes(store: Store, files: CraftFiles, holder: string): number {
+export function exportPendingCraftNotes(store: Store, files: CraftFiles, holder: string): CraftExportResult {
   let touched = 0;
+  const refused: CraftExportResult["refused"] = [];
 
   const miseLease = `${files.slug}:mise`;
   if (store.acquireCraftFoldLease(miseLease, holder, EXPORT_LEASE_TTL_MS)) {
@@ -857,8 +911,21 @@ export function exportPendingCraftNotes(store: Store, files: CraftFiles, holder:
       for (const [path, target] of [[files.book, "book"], [files.skill, "skill"]] as const) {
         const relevant = forTarget(pending, target);
         if (relevant.length === 0) continue;
+        const candidate = rebuildRawSection(readFileSafe(path), relevant);
+        if (wouldShrinkDrastically(path, candidate)) {
+          const reason =
+            "candidate export was drastically smaller than the file's last git-committed version " +
+            "— refused to write; on-disk content left untouched, notes stay pending";
+          refused.push({ target, reason });
+          // Durable and loud, not just a return value nobody reads: this is exactly the shape of
+          // failure (a silent partial loss reading as success) hands#223's own investigation
+          // named as the worst outcome — journal it so `hands_board`/the dashboard/anyone reading
+          // history sees it even if nothing captures this call's return value.
+          store.journal("craft.rebuild_refused", { craft: files.slug, target, reason });
+          continue;
+        }
         fs.mkdirSync(files.dir, { recursive: true });
-        fs.writeFileSync(path, rebuildRawSection(readFileSafe(path), relevant));
+        fs.writeFileSync(path, candidate);
         touched += relevant.length;
       }
     } finally {
@@ -866,7 +933,7 @@ export function exportPendingCraftNotes(store: Store, files: CraftFiles, holder:
     }
   }
 
-  return touched;
+  return { touched, refused };
 }
 
 /**
@@ -921,6 +988,8 @@ export interface FoldContext {
   pendingNotes: Array<{ id: number; kind: string; body: string; sourceAgent: string; spilloverCraft: string | null }>;
   throughNoteId: number;
   instructions: string;
+  /** Non-empty means the export below refused a drastic shrink for that target — see wouldShrinkDrastically. */
+  exportRefused: CraftExportResult["refused"];
 }
 
 /**
@@ -943,7 +1012,7 @@ export function buildFoldContext(
   // be arbitrarily behind `pendingNotes`, breaking FOLD_INSTRUCTIONS' assumption that the two
   // already match. This also means pendingNotes below naturally excludes mise entries (they're
   // marked folded the instant they're mechanically applied) without any extra filtering.
-  exportPendingCraftNotes(store, files, holder);
+  const { refused } = exportPendingCraftNotes(store, files, holder);
   const pending = store.pendingCraftNotes(files.slug);
   return {
     craftSlug: files.slug,
@@ -963,5 +1032,6 @@ export function buildFoldContext(
     })),
     throughNoteId: pending.reduce((max, n) => Math.max(max, n.id), 0),
     instructions: FOLD_INSTRUCTIONS,
+    exportRefused: refused,
   };
 }

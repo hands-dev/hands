@@ -689,7 +689,7 @@ function cmdCraft(argv: string[]): void {
       // file caught up for browsability), then read book/mise/skill MERGED with whatever's still
       // pending — the DB is truth, so this response is always complete regardless of whether the
       // export above actually landed (lease contention just means this round skipped it).
-      exportPendingCraftNotes(store, files, `mise-read:${process.pid}`);
+      const { refused: exportRefused } = exportPendingCraftNotes(store, files, `mise-read:${process.pid}`);
       const stillPending = store.pendingCraftNotes(files.slug);
       const book = readRawMerged(files.book, stillPending, "book");
       const mise = readMiseMerged(store, files.slug);
@@ -718,6 +718,7 @@ function cmdCraft(argv: string[]): void {
             book,
             siblings,
             staleness,
+            exportRefused,
             usageMode: cfg.usage.mode,
             readIn: staleness !== "fresh" ? `git log --oneline --since "${distilled ?? "30 days ago"}" -- ${covers ?? "."}` : null,
             returnContract:

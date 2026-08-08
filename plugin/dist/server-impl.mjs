@@ -10941,6 +10941,7 @@ var init_remote = __esm({
 });
 
 // src/crafts.ts
+import { execFileSync as execFileSync8 } from "node:child_process";
 import * as fs15 from "node:fs";
 import * as path16 from "node:path";
 function isRoleCraft(slug) {
@@ -11364,7 +11365,7 @@ var init_context_signals = __esm({
 });
 
 // src/feedback.ts
-import { execFileSync as execFileSync9 } from "node:child_process";
+import { execFileSync as execFileSync10 } from "node:child_process";
 function githubHandle(cwd, gh2) {
   try {
     return gh2(["api", "user", "--jq", ".login"], cwd).trim() || null;
@@ -11421,7 +11422,7 @@ var init_feedback = __esm({
   "src/feedback.ts"() {
     "use strict";
     FEEDBACK_REPO = "hands-dev/hands";
-    runGh = (args, cwd) => execFileSync9("gh", args, {
+    runGh = (args, cwd) => execFileSync10("gh", args, {
       cwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
@@ -36057,7 +36058,7 @@ init_watchers();
 
 // src/journal-read.ts
 init_remote();
-import { execFileSync as execFileSync8 } from "node:child_process";
+import { execFileSync as execFileSync9 } from "node:child_process";
 import * as fs17 from "node:fs";
 import * as path17 from "node:path";
 var DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -36066,7 +36067,7 @@ function mirrorHealth(dir, url2) {
   if (!isRemote) return { behind: 0, ahead: 0, problem: null };
   const git6 = (args) => {
     try {
-      return execFileSync8("git", args, {
+      return execFileSync9("git", args, {
         cwd: dir,
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],

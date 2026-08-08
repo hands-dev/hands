@@ -140,7 +140,7 @@ describe("runSubagentStop — craft-note harvest (hands#81/#96/#56)", () => {
     const files = craftFiles("ordering-api", craftEnv, root);
     const applied = exportPendingCraftNotes(store, files, "test-export");
 
-    expect(applied).toBe(2);
+    expect(applied.touched).toBe(2);
     expect(fs.readFileSync(files.mise, "utf8")).toContain("engine/src/orders/validate.ts — moved here");
     expect(fs.readFileSync(files.book, "utf8")).toContain("[book] menu validation runs before auth");
     // mise is mechanical — fully applied means folded; book still awaits real distillation.
