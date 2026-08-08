@@ -233,6 +233,24 @@ describe("Store observability samples (hands#103, #106)", () => {
     store.close();
   });
 
+  it("subagentUsageSummary groups by agent type ACROSS every owner, not just craft-<slug> (hands#103c)", () => {
+    const store = open();
+    // two stations dispatching the same craft — must aggregate together
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "craft-saucier", spawnDepth: 1, outputTokens: 1000, now: 1000 });
+    store.recordSubagentSample({ ownerAgentId: "station-2", agentType: "craft-saucier", spawnDepth: 1, outputTokens: 3000, now: 2000 });
+    // a plain, non-craft dispatch — craftTokenUsage() (LIKE 'craft-%') would miss this entirely
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: "Explore", spawnDepth: 1, outputTokens: 500, now: 3000 });
+    // untyped (no .meta.json sidecar) — must not be silently dropped
+    store.recordSubagentSample({ ownerAgentId: "station-1", agentType: null, spawnDepth: null, outputTokens: 20, now: 4000 });
+
+    expect(store.subagentUsageSummary()).toEqual([
+      { agentType: "craft-saucier", calls: 2, totalOutputTokens: 4000, avgOutputTokens: 2000 },
+      { agentType: "Explore", calls: 1, totalOutputTokens: 500, avgOutputTokens: 500 },
+      { agentType: "(untyped)", calls: 1, totalOutputTokens: 20, avgOutputTokens: 20 },
+    ]);
+    store.close();
+  });
+
   it("records wake outcomes and aggregates counts since a cutoff", () => {
     const store = open();
     store.recordWakeOutcome({ agentId: "station-1", messageId: 1, outcome: "fired", now: 1000 });

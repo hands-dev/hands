@@ -14,14 +14,22 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import { fmtClock, fmtTokens } from "@/lib/format";
+import { fmtClock, fmtDuration, fmtTokens } from "@/lib/format";
 import { orderedSeriesIds, SERIES_PALETTE } from "@/lib/series";
+import { cn } from "@/lib/utils";
 
 export interface ContextSample {
   inputTokens: number;
   cacheReadTokens: number;
   cacheCreationTokens: number;
   at: number;
+}
+
+/** Mirrors engine/src/context-signals.ts's ContextSignals. */
+export interface ContextSignals {
+  compactionsLastHour: number;
+  slopePerMin: number | null;
+  etaToCompactionMin: number | null;
 }
 
 /**
@@ -32,7 +40,13 @@ export interface ContextSample {
  * into one shared, sorted row set and leaves a series' value undefined at any row it has no
  * sample for; `connectNulls` draws through those gaps rather than showing a jagged zero-drop.
  */
-export function ContextUsage({ contextUsage }: { contextUsage: Record<string, ContextSample[]> }) {
+export function ContextUsage({
+  contextUsage,
+  contextSignals,
+}: {
+  contextUsage: Record<string, ContextSample[]>;
+  contextSignals: Record<string, ContextSignals>;
+}) {
   const withSamples = Object.entries(contextUsage).filter(([, samples]) => samples.length > 0);
 
   if (withSamples.length === 0) {
@@ -121,7 +135,53 @@ export function ContextUsage({ contextUsage }: { contextUsage: Record<string, Co
             ))}
           </LineChart>
         </ChartContainer>
+        {/* hands#103a — the derived signals: a compacting-too-often pane, or one about to hit the
+            wall, was invisible before this; the raw line above only shows "it went up". */}
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
+          {shown.map((id, i) => (
+            <ContextSignalBadge key={id} id={id} color={SERIES_PALETTE[i]!} signals={contextSignals[id]} />
+          ))}
+        </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ContextSignalBadge({
+  id,
+  color,
+  signals,
+}: {
+  id: string;
+  color: string;
+  signals: ContextSignals | undefined;
+}) {
+  if (!signals) return null;
+  const { compactionsLastHour, slopePerMin, etaToCompactionMin } = signals;
+  const thrashing = compactionsLastHour >= 2;
+  return (
+    <div className="flex items-center gap-1.5 text-xs">
+      <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+      <span className="font-medium">{id}</span>
+      {compactionsLastHour > 0 ? (
+        <span
+          className={cn(
+            "rounded px-1 py-0.5",
+            thrashing ? "bg-destructive/15 text-destructive" : "bg-amber-500/15 text-amber-600 dark:text-amber-500",
+          )}
+          title={thrashing ? "compacting repeatedly — thrashing" : undefined}
+        >
+          {compactionsLastHour} compaction{compactionsLastHour === 1 ? "" : "s"}/h
+        </span>
+      ) : null}
+      {slopePerMin !== null && slopePerMin > 0 ? (
+        <span className="text-muted-foreground">+{fmtTokens(Math.round(slopePerMin))}/min</span>
+      ) : null}
+      {etaToCompactionMin !== null ? (
+        <span className="text-muted-foreground">
+          ~{fmtDuration(etaToCompactionMin * 60_000)} to next compaction
+        </span>
+      ) : null}
+    </div>
   );
 }

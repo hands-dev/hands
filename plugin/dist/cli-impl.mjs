@@ -23075,6 +23075,26 @@ var init_store = __esm({
         }
         return result;
       }
+      /**
+       * hands#103c — subagent_samples has been written on every sub-agent finish since the
+       * SubagentStop hook landed, but craftTokenUsage() above only ever reads the "craft-<slug>"
+       * slice of it; a plain "general-purpose"/"Explore"/etc. dispatch (not routed through a synced
+       * craft) was invisible. This is the whole table, grouped by whatever agent_type it actually
+       * dispatched as — "which agents are used most/least, and is a craft earning its place" needs
+       * that comparison, not just the craft subset. Same 7-day self-trimmed window as the table.
+       */
+      subagentUsageSummary() {
+        const rows = this.db.prepare(
+          `SELECT COALESCE(agent_type, '(untyped)') as agent_type, SUM(output_tokens) as total, COUNT(*) as calls
+         FROM subagent_samples GROUP BY agent_type ORDER BY calls DESC, total DESC, agent_type ASC`
+        ).all();
+        return rows.map((row) => ({
+          agentType: row.agent_type,
+          calls: row.calls,
+          totalOutputTokens: row.total,
+          avgOutputTokens: row.calls > 0 ? Math.round(row.total / row.calls) : 0
+        }));
+      }
       /** Every craft dispatch tied to a ticket (`hands craft brief --ticket <id>`) — a chit's "crafts used." */
       listCraftBriefsByTicket(ticketId) {
         return this.db.prepare("SELECT * FROM craft_briefs WHERE ticket_id = ? ORDER BY created_at ASC").all(ticketId);
@@ -25840,6 +25860,49 @@ var init_chat = __esm({
   }
 });
 
+// src/context-signals.ts
+function total(s) {
+  return s.inputTokens + s.cacheReadTokens + s.cacheCreationTokens;
+}
+function deriveContextSignals(samples, now) {
+  const sorted = [...samples].sort((a, b) => a.at - b.at);
+  let compactionsLastHour = 0;
+  let learnedCeiling = null;
+  let lastCompactionIndex = -1;
+  for (let i = 1; i < sorted.length; i++) {
+    const prevTotal = total(sorted[i - 1]);
+    const curTotal = total(sorted[i]);
+    if (prevTotal > 0 && curTotal < prevTotal * COMPACTION_DROP_RATIO) {
+      if (now - sorted[i].at < HOUR_MS) compactionsLastHour++;
+      learnedCeiling = learnedCeiling === null ? prevTotal : Math.max(learnedCeiling, prevTotal);
+      lastCompactionIndex = i;
+    }
+  }
+  const window = sorted.slice(Math.max(lastCompactionIndex + 1, sorted.length - SLOPE_WINDOW));
+  let slopePerMin = null;
+  if (window.length >= 2) {
+    const first = window[0];
+    const last = window[window.length - 1];
+    const dtMin = (last.at - first.at) / 6e4;
+    if (dtMin > 0) slopePerMin = (total(last) - total(first)) / dtMin;
+  }
+  let etaToCompactionMin = null;
+  if (learnedCeiling !== null && slopePerMin !== null && slopePerMin > 0 && sorted.length > 0) {
+    const current = total(sorted[sorted.length - 1]);
+    if (current < learnedCeiling) etaToCompactionMin = (learnedCeiling - current) / slopePerMin;
+  }
+  return { compactionsLastHour, slopePerMin, etaToCompactionMin };
+}
+var COMPACTION_DROP_RATIO, SLOPE_WINDOW, HOUR_MS;
+var init_context_signals = __esm({
+  "src/context-signals.ts"() {
+    "use strict";
+    COMPACTION_DROP_RATIO = 0.5;
+    SLOPE_WINDOW = 6;
+    HOUR_MS = 60 * 6e4;
+  }
+});
+
 // src/feedback.ts
 var feedback_exports = {};
 __export(feedback_exports, {
@@ -26307,6 +26370,13 @@ function serve(opts) {
     });
   };
   const buildContextUsage = (agentIds) => store.contextSamplesForAgents(agentIds);
+  const buildContextSignals = (contextUsage, now) => {
+    const result = {};
+    for (const [agentId, samples] of Object.entries(contextUsage)) {
+      result[agentId] = deriveContextSignals(samples, now);
+    }
+    return result;
+  };
   const buildAgentMessages = (agentIds) => {
     const result = {};
     for (const id of agentIds) {
@@ -26335,8 +26405,10 @@ function serve(opts) {
     const craftRoster = buildCraftRoster();
     const agentIds = snapshot.agents.map((a) => a.id);
     const contextUsage = buildContextUsage(agentIds);
+    const contextSignals = buildContextSignals(contextUsage, snapshot.now);
     const agentMessages = buildAgentMessages(agentIds);
     const craftBriefsByTicket = buildCraftBriefsByTicket();
+    const subagentUsage = store.subagentUsageSummary();
     const chatAvailable = hasAgentSdkInstalledFn();
     return {
       json: JSON.stringify({
@@ -26351,11 +26423,13 @@ function serve(opts) {
         tokens,
         taskCosts,
         contextUsage,
+        contextSignals,
         agentMessages,
         craftBriefsByTicket,
+        subagentUsage,
         chatAvailable
       }),
-      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages) + JSON.stringify(craftBriefsByTicket) + JSON.stringify(chatAvailable)
+      key: snapshotKey(snapshot) + JSON.stringify(kitchens) + JSON.stringify(crafts) + JSON.stringify(craftRoster) + JSON.stringify(booksSync) + JSON.stringify(tokens?.totals24h ?? null) + JSON.stringify(taskCosts) + JSON.stringify(contextUsage) + JSON.stringify(agentMessages) + JSON.stringify(craftBriefsByTicket) + JSON.stringify(subagentUsage) + JSON.stringify(chatAvailable)
     };
   };
   const clients = /* @__PURE__ */ new Set();
@@ -26735,6 +26809,7 @@ var init_serve = __esm({
     "use strict";
     init_chat();
     init_config();
+    init_context_signals();
     init_crafts();
     init_feedback();
     init_notify();
@@ -50113,9 +50188,9 @@ function totalOutputTokens(transcriptPath) {
     }
   }
   if (byMessage.size === 0) return null;
-  let total = 0;
-  for (const tokens of byMessage.values()) total += tokens;
-  return total;
+  let total2 = 0;
+  for (const tokens of byMessage.values()) total2 += tokens;
+  return total2;
 }
 function readMeta(transcriptPath) {
   try {
@@ -52579,14 +52654,14 @@ ${distilledCount} book(s) distilled in the last 7 days.`);
       for (const station of listStations(info.repoRoot, cfg)) {
         if (station.present) targets.push({ label: station.id, dir: station.dir });
       }
-      let total = 0;
+      let total2 = 0;
       for (const t of targets) {
         const res = materializeCraftAgents(cfg, t.dir, process.env, info.repoRoot);
         if (res.written.length > 0) out2(`${t.label}: synced ${res.written.join(", ")}`);
         if (res.removed.length > 0) out2(`${t.label}: removed stale ${res.removed.join(", ")}`);
-        total += res.written.length;
+        total2 += res.written.length;
       }
-      if (total === 0) {
+      if (total2 === 0) {
         out2("no crafts to sync \u2014 /hands:crafts surveys a repo for the ones worth establishing");
       } else {
         out2(`

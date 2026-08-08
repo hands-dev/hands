@@ -12,6 +12,7 @@ import { RolePage } from "@/components/role-page";
 import { Specials } from "@/components/specials";
 import { StatCards, StatCardsHosted } from "@/components/stat-cards";
 import { StationsGrid, StationsGridHosted } from "@/components/stations-grid";
+import { SubagentUsage } from "@/components/subagent-usage";
 import { TicketRail } from "@/components/ticket-rail";
 import { TokenBurn } from "@/components/token-burn";
 import { Todos } from "@/components/todos";
@@ -288,12 +289,7 @@ export function App() {
         <main className="space-y-4 px-6 py-5">
           {activeTab === "overview" ? (
             <>
-              <StationsGrid
-                agents={snapshot.agents}
-                collisions={snapshot.collisions}
-                tokens={snapshot.tokens}
-                now={snapshot.now}
-              />
+              <StationsGrid agents={snapshot.agents} collisions={snapshot.collisions} now={snapshot.now} />
               <NeedsYou questions={needsHuman} principal={snapshot.principal} now={snapshot.now} />
               <StatCards snapshot={snapshot} />
               <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
@@ -328,7 +324,8 @@ export function App() {
           {activeTab === "tokens" ? (
             <div className="space-y-4">
               <TokenBurn tokens={snapshot.tokens} agents={snapshot.agents} />
-              <ContextUsage contextUsage={snapshot.contextUsage} />
+              <ContextUsage contextUsage={snapshot.contextUsage} contextSignals={snapshot.contextSignals} />
+              <SubagentUsage rows={snapshot.subagentUsage} />
             </div>
           ) : null}
 
